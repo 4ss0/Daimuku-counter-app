@@ -1,13 +1,6 @@
-use crate::audio::{self, AudioState, RecordedAudio};
-use serde::Serialize;
+use crate::audio::{self, AudioState};
+use crate::training::{TrainingStore, TrainingTakeMeta};
 use tauri::State;
-
-#[derive(Debug, Serialize)]
-pub struct RecordingSummary {
-    pub samples_count: usize,
-    pub duration_ms: u64,
-    pub sample_rate: u32,
-}
 
 #[tauri::command]
 pub fn list_input_devices() -> Result<Vec<audio::DeviceInfo>, String> {
@@ -20,53 +13,24 @@ pub fn start_recording(state: State<'_, AudioState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn stop_recording(state: State<'_, AudioState>) -> Result<RecordingSummary, String> {
-    let rx = state.stop()?;
+pub async fn stop_recording(
+    audio_state: State<'_, AudioState>,
+    training_store: State<'_, TrainingStore>,
+    expected_daimoku_count: u32,
+) -> Result<TrainingTakeMeta, String> {
+    let rx = audio_state.stop()?;
     let audio = rx
         .await
         .map_err(|e| format!("audio thread dropped reply: {e}"))?;
-    Ok(summary_of(audio))
+    Ok(training_store.add(audio, expected_daimoku_count))
 }
 
-fn summary_of(audio: RecordedAudio) -> RecordingSummary {
-    let samples_count = audio.samples.len();
-    let duration_ms = if audio.sample_rate > 0 {
-        (samples_count as u64 * 1000) / audio.sample_rate as u64
-    } else {
-        0
-    };
-    RecordingSummary {
-        samples_count,
-        duration_ms,
-        sample_rate: audio.sample_rate,
-    }
+#[tauri::command]
+pub fn list_training_takes(store: State<'_, TrainingStore>) -> Vec<TrainingTakeMeta> {
+    store.list()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn summary_computes_duration() {
-        // 48000 samples at 48000 Hz = 1000 ms
-        let audio = RecordedAudio {
-            samples: vec![0.0; 48000],
-            sample_rate: 48000,
-        };
-        let summary = summary_of(audio);
-        assert_eq!(summary.samples_count, 48000);
-        assert_eq!(summary.duration_ms, 1000);
-        assert_eq!(summary.sample_rate, 48000);
-    }
-
-    #[test]
-    fn summary_handles_zero_sample_rate() {
-        let audio = RecordedAudio {
-            samples: vec![],
-            sample_rate: 0,
-        };
-        let summary = summary_of(audio);
-        assert_eq!(summary.samples_count, 0);
-        assert_eq!(summary.duration_ms, 0);
-    }
+#[tauri::command]
+pub fn clear_training_takes(store: State<'_, TrainingStore>) -> usize {
+    store.clear()
 }

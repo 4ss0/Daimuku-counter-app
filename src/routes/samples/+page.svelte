@@ -1,26 +1,31 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
 
-  interface DeviceInfo {
-    name: string;
-    is_default: boolean;
-  }
+  const MIN_SECONDS_PER_DAIMOKU = 1.5;
+  const MAX_SECONDS_PER_DAIMOKU = 10;
 
-  interface RecordingSummary {
-    samples_count: number;
+  interface TrainingTakeMeta {
+    id: number;
+    expected_daimoku_count: number;
     duration_ms: number;
     sample_rate: number;
+    created_at: string;
   }
 
-  let devices: DeviceInfo[] = [];
-  let summary: RecordingSummary | null = null;
-  let recording = false;
-  let error: string | null = null;
+  let takes = $state<TrainingTakeMeta[]>([]);
+  let expectedCount = $state(10);
+  let recording = $state(false);
+  let error = $state<string | null>(null);
 
-  async function loadDevices() {
-    error = null;
+  let hasTake = $derived(takes.length > 0);
+  let lastTake = $derived(takes.length > 0 ? takes[takes.length - 1] : null);
+  let lastTakeSecondsPerDaimoku = $derived(
+    lastTake ? lastTake.duration_ms / 1000 / lastTake.expected_daimoku_count : 0
+  );
+
+  async function refresh() {
     try {
-      devices = await invoke<DeviceInfo[]>('list_input_devices');
+      takes = await invoke<TrainingTakeMeta[]>('list_training_takes');
     } catch (e) {
       error = String(e);
     }
@@ -28,7 +33,6 @@
 
   async function start() {
     error = null;
-    summary = null;
     try {
       await invoke('start_recording');
       recording = true;
@@ -40,48 +44,90 @@
   async function stop() {
     error = null;
     try {
-      summary = await invoke<RecordingSummary>('stop_recording');
+      const meta = await invoke<TrainingTakeMeta>('stop_recording', {
+        expectedDaimokuCount: expectedCount,
+      });
       recording = false;
+      await refresh();
+      const secondsPer = meta.duration_ms / 1000 / meta.expected_daimoku_count;
+      if (secondsPer < MIN_SECONDS_PER_DAIMOKU) {
+        error = `Too short: ${secondsPer.toFixed(1)}s per Daimoku. Recite more slowly or reduce the count.`;
+      } else if (secondsPer > MAX_SECONDS_PER_DAIMOKU) {
+        error = `Too long: ${secondsPer.toFixed(1)}s per Daimoku. Check the count or the recording.`;
+      }
     } catch (e) {
       error = String(e);
     }
   }
+
+  async function clearAll() {
+    if (!confirm('Delete all training recordings?')) return;
+    error = null;
+    try {
+      await invoke<number>('clear_training_takes');
+      await refresh();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  refresh();
 </script>
 
 <div class="page">
-  <h1>Samples</h1>
-  <p>Audio pipeline test. Real sample recording arrives in Fase 2.2.</p>
+  <h1>Teach the Daimoku</h1>
+
+  <p class="instructions">
+    Recite <strong>{expectedCount}</strong> Daimoku in one continuous take — no need to
+    stop between them. Press <em>Start</em>, recite, then press <em>Stop</em>.
+    The system will learn the rhythm and the boundaries between recitations.
+  </p>
+
+  <label class="count-input">
+    Number of Daimoku to recite:
+    <input
+      type="number"
+      min="3"
+      max="30"
+      bind:value={expectedCount}
+      disabled={recording}
+    />
+  </label>
 
   <div class="actions">
-    <button on:click={loadDevices}>List input devices</button>
     <button on:click={start} disabled={recording}>Start</button>
     <button on:click={stop} disabled={!recording}>Stop</button>
+    <button class="secondary" on:click={clearAll} disabled={recording || !hasTake}>
+      Clear all
+    </button>
   </div>
+
+  {#if recording}
+    <div class="status recording">● Recording… recite {expectedCount} Daimoku then press Stop</div>
+  {/if}
 
   {#if error}
     <div class="error">{error}</div>
   {/if}
 
-  {#if devices.length > 0}
-    <section>
-      <h2>Devices</h2>
+  {#if lastTake}
+    <section class="list">
+      <h2>Recordings</h2>
       <ul>
-        {#each devices as d}
-          <li>{d.name}{d.is_default ? ' (default)' : ''}</li>
+        {#each takes as t (t.id)}
+          <li>
+            <span class="count">{t.expected_daimoku_count} Daimoku</span>
+            <span class="dur">{(t.duration_ms / 1000).toFixed(1)} s</span>
+          </li>
         {/each}
       </ul>
     </section>
   {/if}
 
-  {#if summary}
-    <section>
-      <h2>Last recording</h2>
-      <ul>
-        <li>Samples: {summary.samples_count}</li>
-        <li>Duration: {summary.duration_ms} ms</li>
-        <li>Sample rate: {summary.sample_rate} Hz</li>
-      </ul>
-    </section>
+  {#if hasTake}
+    <div class="ready">
+      ✓ Training data ready. Learning will be implemented in Fase 2.3.
+    </div>
   {/if}
 </div>
 
@@ -91,28 +137,46 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     text-align: center;
-    gap: 1rem;
+    gap: 1.25rem;
+    padding-top: 1rem;
+    max-width: 42rem;
+    margin: 0 auto;
+    width: 100%;
   }
 
-  h1 {
+  h1 { margin: 0; }
+
+  .instructions {
     margin: 0;
+    opacity: 0.8;
+    line-height: 1.6;
+    max-width: 34rem;
   }
 
-  p {
-    opacity: 0.75;
-    margin: 0;
-  }
-
-  .actions {
+  .count-input {
     display: flex;
-    gap: 1rem;
-    margin-top: 1rem;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.95rem;
   }
+
+  .count-input input {
+    width: 5rem;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid #444;
+    border-radius: 6px;
+    background-color: #1e1e1e;
+    color: inherit;
+    font-size: 1rem;
+    text-align: center;
+  }
+
+  .actions { display: flex; gap: 1rem; }
 
   button {
-    padding: 0.6rem 1.2rem;
+    padding: 0.6rem 1.4rem;
     border: none;
     border-radius: 8px;
     background-color: #3b6ea5;
@@ -120,40 +184,49 @@
     cursor: pointer;
     font-size: 1rem;
   }
+  button.secondary { background-color: #4a4a4a; }
+  button:disabled { background-color: #2f2f2f; color: #666; cursor: not-allowed; }
+  button:hover:not(:disabled) { filter: brightness(1.15); }
 
-  button:disabled {
-    background-color: #444;
-    cursor: not-allowed;
-  }
-
-  button:hover:not(:disabled) {
-    background-color: #4a7fb8;
-  }
-
-  section {
-    margin-top: 1rem;
-    padding: 1rem;
-    background-color: #242424;
-    border-radius: 8px;
-    text-align: left;
-    min-width: 20rem;
-  }
-
-  section h2 {
-    margin: 0 0 0.5rem;
-    font-size: 1rem;
-    opacity: 0.75;
-  }
-
-  section ul {
-    margin: 0;
-    padding-left: 1.2rem;
-  }
+  .recording { color: #ff6b6b; }
 
   .error {
-    color: #ff6b6b;
+    color: #ff9b9b;
     background-color: #2a1515;
     padding: 0.75rem 1rem;
     border-radius: 8px;
+    max-width: 32rem;
   }
+
+  .ready {
+    color: #8fe38f;
+    background-color: #152a15;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+  }
+
+  .list {
+    width: 100%;
+    max-width: 22rem;
+    text-align: left;
+  }
+  .list h2 {
+    font-size: 0.95rem;
+    opacity: 0.7;
+    margin: 0 0 0.5rem;
+    font-weight: normal;
+  }
+  .list ul { list-style: none; padding: 0; margin: 0; }
+  .list li {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.4rem 0.75rem;
+    background-color: #242424;
+    border-radius: 6px;
+    margin-bottom: 0.3rem;
+    font-family: ui-monospace, monospace;
+    font-size: 0.85rem;
+  }
+  .count { color: #cfcfcf; }
+  .dur { color: #888; }
 </style>
