@@ -9,14 +9,35 @@
     created_at: string;
   }
 
+  interface OnsetInfo {
+    count: number;
+    times_secs: number[];
+    ioi_ms: number[];
+    mean_ioi_ms: number | null;
+  }
+
+  interface DaimokuTemplate {
+    period: number;
+    normalized_ioi: number[];
+    mean_ioi_ms: number;
+    training_error: number;
+    training_daimoku_count: number;
+  }
+
+  interface LearnResult {
+    onsets: OnsetInfo;
+    template: DaimokuTemplate;
+  }
+
   let takes = $state<TrainingTakeMeta[]>([]);
   let expectedCount = $state(10);
   let recording = $state(false);
   let error = $state<string | null>(null);
   let exportedPath = $state<string | null>(null);
+  let onsetResult = $state<{ index: number; info: OnsetInfo } | null>(null);
+  let learnResult = $state<{ index: number; result: LearnResult } | null>(null);
 
   let hasTake = $derived(takes.length > 0);
-  let lastTake = $derived(takes.length > 0 ? takes[takes.length - 1] : null);
 
   async function refresh() {
     try {
@@ -29,6 +50,8 @@
   async function start() {
     error = null;
     exportedPath = null;
+    onsetResult = null;
+    learnResult = null;
     try {
       await invoke('start_recording');
       recording = true;
@@ -55,6 +78,8 @@
     if (!confirm('Delete all training recordings?')) return;
     error = null;
     exportedPath = null;
+    onsetResult = null;
+    learnResult = null;
     try {
       await invoke<number>('clear_training_takes');
       await refresh();
@@ -73,6 +98,30 @@
     }
   }
 
+  async function detectOnsets(index: number) {
+    error = null;
+    onsetResult = null;
+    learnResult = null;
+    try {
+      const info = await invoke<OnsetInfo>('debug_detect_onsets', { index });
+      onsetResult = { index, info };
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function learn(index: number) {
+    error = null;
+    learnResult = null;
+    onsetResult = null;
+    try {
+      const result = await invoke<LearnResult>('learn_template_from_take', { index });
+      learnResult = { index, result };
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   refresh();
 </script>
 
@@ -82,7 +131,8 @@
   <p class="instructions">
     Recite <strong>{expectedCount}</strong> Daimoku in one continuous take — no need to
     stop between them. Press <em>Start</em>, recite, then press <em>Stop</em>.
-    The system will learn the rhythm and the boundaries between recitations.
+    Syllables must be clearly articulated: if they get fused, the training will be
+    rejected and you will be asked to re-record.
   </p>
 
   <label class="count-input">
@@ -118,7 +168,7 @@
     </div>
   {/if}
 
-  {#if lastTake}
+  {#if hasTake}
     <section class="list">
       <h2>Recordings</h2>
       <ul>
@@ -126,17 +176,39 @@
           <li>
             <span class="count">{t.expected_daimoku_count} Daimoku</span>
             <span class="dur">{(t.duration_ms / 1000).toFixed(1)} s</span>
-            <button class="export" on:click={() => exportWav(t.id)}>Export WAV</button>
+            <button class="btn-mini" on:click={() => detectOnsets(t.id)}>Detect</button>
+            <button class="btn-mini primary" on:click={() => learn(t.id)}>Learn</button>
+            <button class="btn-mini" on:click={() => exportWav(t.id)}>WAV</button>
           </li>
         {/each}
       </ul>
     </section>
   {/if}
 
-  {#if hasTake}
-    <div class="ready">
-      ✓ Training data ready. Learning will be implemented in Fase 2.3.
-    </div>
+  {#if onsetResult}
+    <section class="onsets">
+      <h2>Onsets — take #{onsetResult.index}</h2>
+      <p>
+        Detected <strong>{onsetResult.info.count}</strong> onsets
+        {#if onsetResult.info.mean_ioi_ms !== null}
+          · mean IOI {onsetResult.info.mean_ioi_ms.toFixed(1)} ms
+        {/if}
+      </p>
+    </section>
+  {/if}
+
+  {#if learnResult}
+    <section class="learned">
+      <h2>Template — take #{learnResult.index}</h2>
+      <p>
+        Period: <strong>{learnResult.result.template.period}</strong> syllables
+        · Mean IOI: <strong>{learnResult.result.template.mean_ioi_ms.toFixed(1)} ms</strong>
+        · Training error: <strong>{(learnResult.result.template.training_error * 100).toFixed(1)}%</strong>
+      </p>
+      <p class="signature">
+        Signature: {learnResult.result.template.normalized_ioi.map((v) => v.toFixed(2)).join(', ')}
+      </p>
+    </section>
   {/if}
 </div>
 
@@ -197,6 +269,13 @@
   button:disabled { background-color: #2f2f2f; color: #666; cursor: not-allowed; }
   button:hover:not(:disabled) { filter: brightness(1.15); }
 
+  .btn-mini {
+    padding: 0.25rem 0.6rem;
+    font-size: 0.75rem;
+    background-color: #4a4a4a;
+  }
+  .btn-mini.primary { background-color: #3b6ea5; }
+
   .recording { color: #ff6b6b; }
 
   .error {
@@ -204,7 +283,7 @@
     background-color: #2a1515;
     padding: 0.75rem 1rem;
     border-radius: 8px;
-    max-width: 32rem;
+    max-width: 34rem;
   }
 
   .info {
@@ -220,16 +299,9 @@
     font-size: 0.85rem;
   }
 
-  .ready {
-    color: #8fe38f;
-    background-color: #152a15;
-    padding: 0.75rem 1rem;
-    border-radius: 8px;
-  }
-
   .list {
     width: 100%;
-    max-width: 24rem;
+    max-width: 30rem;
     text-align: left;
   }
   .list h2 {
@@ -243,7 +315,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.75rem;
+    gap: 0.5rem;
     padding: 0.4rem 0.75rem;
     background-color: #242424;
     border-radius: 6px;
@@ -253,9 +325,32 @@
   }
   .count { flex: 1; color: #cfcfcf; }
   .dur { flex: 1; color: #888; text-align: right; }
-  .export {
-    padding: 0.25rem 0.6rem;
-    font-size: 0.75rem;
-    background-color: #4a4a4a;
+
+  .onsets, .learned {
+    width: 100%;
+    max-width: 34rem;
+    text-align: left;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+  }
+  .onsets {
+    background-color: #1e2a1e;
+    border: 1px solid #2f4a2f;
+  }
+  .learned {
+    background-color: #1e2430;
+    border: 1px solid #2f3a4a;
+  }
+  .onsets h2, .learned h2 {
+    font-size: 0.95rem;
+    opacity: 0.7;
+    margin: 0 0 0.5rem;
+    font-weight: normal;
+  }
+  .onsets p, .learned p { margin: 0.25rem 0; font-size: 0.9rem; }
+  .learned .signature {
+    font-family: ui-monospace, monospace;
+    font-size: 0.85rem;
+    color: #b8c8e0;
   }
 </style>

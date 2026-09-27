@@ -29,14 +29,6 @@ impl TrainingStore {
         }
     }
 
-    pub fn get(&self, index: usize) -> Result<RecordedAudio, String> {
-        let takes = self.takes.lock().unwrap();
-        takes
-            .get(index)
-            .map(|t| t.audio.clone())
-            .ok_or_else(|| format!("training take {index} not found"))
-    }
-
     pub fn add(&self, audio: RecordedAudio, expected_daimoku_count: u32) -> TrainingTakeMeta {
         let mut takes = self.takes.lock().unwrap();
         let id = takes.len();
@@ -56,9 +48,7 @@ impl TrainingStore {
             .unwrap()
             .iter()
             .enumerate()
-            .map(|(i, t)| {
-                meta_for(i, &t.audio, t.expected_daimoku_count, t.created_at)
-            })
+            .map(|(i, t)| meta_for(i, &t.audio, t.expected_daimoku_count, t.created_at))
             .collect()
     }
 
@@ -67,6 +57,24 @@ impl TrainingStore {
         let count = takes.len();
         takes.clear();
         count
+    }
+
+    pub fn get(&self, index: usize) -> Result<RecordedAudio, String> {
+        let takes = self.takes.lock().unwrap();
+        takes
+            .get(index)
+            .map(|t| t.audio.clone())
+            .ok_or_else(|| format!("training take {index} not found"))
+    }
+
+    /// Returns the audio plus the expected Daimoku count declared during
+    /// recording. Needed by the learning step.
+    pub fn get_with_expected(&self, index: usize) -> Result<(RecordedAudio, u32), String> {
+        let takes = self.takes.lock().unwrap();
+        takes
+            .get(index)
+            .map(|t| (t.audio.clone(), t.expected_daimoku_count))
+            .ok_or_else(|| format!("training take {index} not found"))
     }
 }
 
@@ -124,7 +132,7 @@ mod tests {
         assert!(store.list().is_empty());
     }
 
-        #[test]
+    #[test]
     fn get_returns_stored_audio() {
         let store = TrainingStore::new();
         store.add(fake_audio(2.0, 48000), 5);
@@ -137,5 +145,13 @@ mod tests {
     fn get_errors_on_missing_index() {
         let store = TrainingStore::new();
         assert!(store.get(0).is_err());
+    }
+
+    #[test]
+    fn get_with_expected_returns_count() {
+        let store = TrainingStore::new();
+        store.add(fake_audio(1.0, 48000), 7);
+        let (_, count) = store.get_with_expected(0).expect("get failed");
+        assert_eq!(count, 7);
     }
 }

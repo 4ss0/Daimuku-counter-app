@@ -1,5 +1,8 @@
 use crate::audio::{self, AudioState, RecordedAudio};
+use crate::dsp::{detect_onsets, OnsetConfig, OnsetInfo};
+use crate::learning::{learn_template, DaimokuTemplate};
 use crate::training::{TrainingStore, TrainingTakeMeta};
+use serde::Serialize;
 use std::path::Path;
 use tauri::State;
 
@@ -48,6 +51,32 @@ pub fn export_training_wav(
     let path = dir.join(format!("daimuku-training-{index}.wav"));
     write_wav(&path, &audio)?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub fn debug_detect_onsets(
+    store: State<'_, TrainingStore>,
+    index: usize,
+) -> Result<OnsetInfo, String> {
+    let audio = store.get(index)?;
+    Ok(detect_onsets(&audio.samples, audio.sample_rate, OnsetConfig::default()))
+}
+
+#[derive(Debug, Serialize)]
+pub struct LearnResult {
+    pub onsets: OnsetInfo,
+    pub template: DaimokuTemplate,
+}
+
+#[tauri::command]
+pub fn learn_template_from_take(
+    store: State<'_, TrainingStore>,
+    index: usize,
+) -> Result<LearnResult, String> {
+    let (audio, expected) = store.get_with_expected(index)?;
+    let onsets = detect_onsets(&audio.samples, audio.sample_rate, OnsetConfig::default());
+    let template = learn_template(&onsets.ioi_ms, expected)?;
+    Ok(LearnResult { onsets, template })
 }
 
 fn write_wav(path: &Path, audio: &RecordedAudio) -> Result<(), String> {
