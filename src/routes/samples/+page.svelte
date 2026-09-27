@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
+  import { onDestroy } from 'svelte';
 
   interface TrainingTakeMeta {
     id: number;
@@ -16,6 +17,10 @@
     duration_secs: number;
     segment_count: number;
     active_duration_secs: number;
+    // new fields (kept optional for safety)
+    mean_period_ms?: number;
+    phrase_count?: number;
+    method?: string;
   }
 
   interface ValidationResult {
@@ -25,6 +30,15 @@
     analysis: DaimokuCountResult;
   }
 
+  type StreamingState = 'warming' | 'locked' | 'idle';
+
+  interface LiveStatus {
+    count: number;
+    state: StreamingState;
+    period_ms: number | null;
+    sample_rate: number;
+  }
+
   let takes = $state<TrainingTakeMeta[]>([]);
   let expectedCount = $state(10);
   let recording = $state(false);
@@ -32,7 +46,47 @@
   let exportedPath = $state<string | null>(null);
   let validation = $state<{ index: number; result: ValidationResult } | null>(null);
 
+  // ---------------------------------------------------------------------------
+  // Live counter
+  // ---------------------------------------------------------------------------
+  let live = $state<LiveStatus>({
+    count: 0,
+    state: 'idle',
+    period_ms: null,
+    sample_rate: 0,
+  });
+  let pollHandle: number | null = null;
+
   let hasTake = $derived(takes.length > 0);
+  let targetReached = $derived(recording && live.count >= expectedCount);
+
+  let stateLabel = $derived(
+    live.state === 'warming'
+      ? 'Listening…'
+      : live.state === 'locked'
+        ? 'Counting'
+        : recording
+          ? 'Waiting for voice'
+          : 'Idle'
+  );
+
+  let stateClass = $derived(
+    live.state === 'locked'
+      ? 'badge locked'
+      : live.state === 'warming'
+        ? 'badge warming'
+        : 'badge idle'
+  );
+
+  let periodLabel = $derived(
+    live.period_ms && live.period_ms > 0
+      ? `${(live.period_ms / 1000).toFixed(2)} s / Daimoku`
+      : '—'
+  );
+
+  let progressPct = $derived(
+    Math.min(100, (live.count / Math.max(1, expectedCount)) * 100)
+  );
 
   async function refresh() {
     try {
@@ -49,6 +103,7 @@
     try {
       await invoke('start_recording');
       recording = true;
+      startPolling();
     } catch (e) {
       error = String(e);
     }
@@ -56,6 +111,7 @@
 
   async function stop() {
     error = null;
+    stopPolling();
     try {
       await invoke<TrainingTakeMeta>('stop_recording', {
         expectedDaimokuCount: expectedCount,
@@ -102,6 +158,34 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Live counter polling
+  // ---------------------------------------------------------------------------
+  function startPolling() {
+    stopPolling();
+    void tick();
+    pollHandle = window.setInterval(tick, 150);
+  }
+
+  function stopPolling() {
+    if (pollHandle !== null) {
+      clearInterval(pollHandle);
+      pollHandle = null;
+    }
+    // Reset displayed live values when we stop.
+    live = { count: 0, state: 'idle', period_ms: null, sample_rate: 0 };
+  }
+
+  async function tick() {
+    try {
+      live = await invoke<LiveStatus>('live_status');
+    } catch {
+      /* keep last value */
+    }
+  }
+
+  onDestroy(stopPolling);
+
   refresh();
 </script>
 
@@ -133,8 +217,33 @@
     </button>
   </div>
 
+  <!-- ---------------------------------------------------------------------- -->
+  <!-- Live counter (visible only while recording)                             -->
+  <!-- ---------------------------------------------------------------------- -->
   {#if recording}
-    <div class="status recording">● Recording… recite {expectedCount} Daimoku then press Stop</div>
+    <section class="live">
+      <div class="live-count">
+        <span class="live-number">{live.count}</span>
+        <span class="live-target">/ {expectedCount}</span>
+      </div>
+
+      <div class="live-meta">
+        <span class={stateClass}>{stateLabel}</span>
+        <span class="live-period">{periodLabel}</span>
+      </div>
+
+      <div class="progress">
+        <div class="progress-fill" style="width: {progressPct}%"></div>
+      </div>
+
+      <div class="recording">
+        {#if targetReached}
+          ● Target reached — press Stop to save
+        {:else}
+          ● Recording… recite {expectedCount - live.count} more
+        {/if}
+      </div>
+    </section>
   {/if}
 
   {#if error}
@@ -254,6 +363,74 @@
 
   .recording { color: #ff6b6b; }
 
+  /* ---- Live counter --------------------------------------------------- */
+  .live {
+    width: 100%;
+    max-width: 34rem;
+    padding: 1.25rem 1.5rem 1rem;
+    background-color: #1a1d21;
+    border: 1px solid #23272c;
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .live-count {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .live-number {
+    font-size: 3.5rem;
+    font-weight: 700;
+    color: #7dd3fc;
+    line-height: 1;
+  }
+  .live-target {
+    font-size: 1.4rem;
+    color: #8a8a8a;
+  }
+
+  .live-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.85rem;
+    color: #b8b8b8;
+  }
+
+  .badge {
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .badge.warming { background: #3a2f10; color: #f0c674; }
+  .badge.locked  { background: #133a1c; color: #6ee7a8; }
+  .badge.idle    { background: #2a2a2a; color: #b8b8b8; }
+
+  .live-period {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .progress {
+    width: 100%;
+    height: 6px;
+    background: #1f2226;
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3b6ea5, #7dd3fc);
+    transition: width 0.15s linear;
+  }
+
+  /* ---- Messages ------------------------------------------------------- */
   .error {
     color: #ff9b9b;
     background-color: #2a1515;
@@ -275,6 +452,7 @@
     font-size: 0.85rem;
   }
 
+  /* ---- Recordings list ------------------------------------------------ */
   .list {
     width: 100%;
     max-width: 30rem;
@@ -302,6 +480,7 @@
   .count { flex: 1; color: #cfcfcf; }
   .dur { flex: 1; color: #888; text-align: right; }
 
+  /* ---- Validation ----------------------------------------------------- */
   .validation {
     width: 100%;
     max-width: 34rem;

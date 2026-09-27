@@ -14,9 +14,15 @@ pub fn run() {
         .manage(audio_state)
         .manage(training_store)
         .invoke_handler(tauri::generate_handler![
+            // devices & recording
             commands::list_input_devices,
             commands::start_recording,
             commands::stop_recording,
+            // live counter
+            commands::live_status,
+            commands::live_snapshot,
+            commands::reset_live_counter,
+            // training store
             commands::list_training_takes,
             commands::clear_training_takes,
             commands::export_training_wav,

@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use tokio::sync::oneshot;
 
+use crate::dsp::{DaimokuCountResult, StreamingCounter, StreamingState};
+
 // -----------------------------------------------------------------------------
 // Device enumeration
 // -----------------------------------------------------------------------------
@@ -35,6 +37,68 @@ pub fn list_input_devices() -> Result<Vec<DeviceInfo>, String> {
 }
 
 // -----------------------------------------------------------------------------
+// Live counter
+// -----------------------------------------------------------------------------
+
+/// Thread-safe wrapper around `StreamingCounter`. The audio callback pushes
+/// mono samples into it; the Tauri commands poll it to display a live count.
+pub struct LiveCounter {
+    inner: Mutex<LiveInner>,
+}
+
+struct LiveInner {
+    counter: StreamingCounter,
+    sample_rate: u32,
+}
+
+impl LiveCounter {
+    pub fn new(initial_sample_rate: u32) -> Self {
+        Self {
+            inner: Mutex::new(LiveInner {
+                counter: StreamingCounter::new(initial_sample_rate),
+                sample_rate: initial_sample_rate,
+            }),
+        }
+    }
+
+    pub fn reset(&self, sample_rate: u32) {
+        let mut g = self.inner.lock().unwrap();
+        g.sample_rate = sample_rate;
+        g.counter = StreamingCounter::new(sample_rate);
+    }
+
+    pub fn push(&self, samples: &[f32]) {
+        // Short critical section: StreamingCounter::push is O(chunk).
+        if let Ok(mut g) = self.inner.lock() {
+            g.counter.push(samples);
+        }
+    }
+
+    pub fn count(&self) -> usize {
+        self.inner.lock().map(|g| g.counter.count()).unwrap_or(0)
+    }
+
+    pub fn state(&self) -> StreamingState {
+        self.inner
+            .lock()
+            .map(|g| g.counter.state())
+            .unwrap_or(StreamingState::Idle)
+    }
+
+    pub fn period_secs(&self) -> Option<f32> {
+        self.inner.lock().ok().and_then(|g| g.counter.period_secs())
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        self.inner.lock().map(|g| g.sample_rate).unwrap_or(48_000)
+    }
+
+    pub fn finish(&self) -> Option<DaimokuCountResult> {
+        self.inner.lock().ok().and_then(|g| g.counter.finish())
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Recording engine
 // -----------------------------------------------------------------------------
 
@@ -54,17 +118,23 @@ enum AudioCommand {
 /// dedicated thread and is never touched from here.
 pub struct AudioState {
     cmd_tx: Mutex<Sender<AudioCommand>>,
+    live: Arc<LiveCounter>,
 }
 
 impl AudioState {
     pub fn spawn() -> Result<Self, String> {
         let (cmd_tx, cmd_rx) = mpsc::channel();
+        let live = Arc::new(LiveCounter::new(48_000));
+        let live_for_thread = Arc::clone(&live);
+
         thread::Builder::new()
             .name("audio-engine".into())
-            .spawn(move || audio_thread_main(cmd_rx))
+            .spawn(move || audio_thread_main(cmd_rx, live_for_thread))
             .map_err(|e| format!("failed to spawn audio thread: {e}"))?;
+
         Ok(Self {
             cmd_tx: Mutex::new(cmd_tx),
+            live,
         })
     }
 
@@ -85,9 +155,39 @@ impl AudioState {
             .map_err(|_| "audio thread is not running".to_string())?;
         Ok(reply_rx)
     }
+
+    // --- live counter accessors ---
+
+    pub fn live(&self) -> Arc<LiveCounter> {
+        Arc::clone(&self.live)
+    }
+
+    pub fn live_reset(&self, sample_rate: u32) {
+        self.live.reset(sample_rate);
+    }
+
+    pub fn live_count(&self) -> usize {
+        self.live.count()
+    }
+
+    pub fn live_state(&self) -> StreamingState {
+        self.live.state()
+    }
+
+    pub fn live_period_secs(&self) -> Option<f32> {
+        self.live.period_secs()
+    }
+
+    pub fn live_sample_rate(&self) -> u32 {
+        self.live.sample_rate()
+    }
+
+    pub fn live_finish(&self) -> Option<DaimokuCountResult> {
+        self.live.finish()
+    }
 }
 
-fn audio_thread_main(cmd_rx: mpsc::Receiver<AudioCommand>) {
+fn audio_thread_main(cmd_rx: mpsc::Receiver<AudioCommand>, live: Arc<LiveCounter>) {
     let mut current: Option<ActiveRecording> = None;
 
     for cmd in cmd_rx {
@@ -97,7 +197,7 @@ fn audio_thread_main(cmd_rx: mpsc::Receiver<AudioCommand>) {
                     eprintln!("[audio] start ignored: already recording");
                     continue;
                 }
-                match ActiveRecording::start() {
+                match ActiveRecording::start(Arc::clone(&live)) {
                     Ok(rec) => current = Some(rec),
                     Err(e) => eprintln!("[audio] failed to start: {e}"),
                 }
@@ -140,7 +240,7 @@ fn downmix_to_mono(data: &[f32], channels: u16) -> Vec<f32> {
 }
 
 impl ActiveRecording {
-    fn start() -> Result<Self, String> {
+    fn start(live: Arc<LiveCounter>) -> Result<Self, String> {
         let host = cpal::default_host();
         let device = host
             .default_input_device()
@@ -154,16 +254,21 @@ impl ActiveRecording {
         let sample_format = supported.sample_format();
         let config: StreamConfig = supported.into();
 
+        // Reset the live counter now that we know the real sample rate.
+        live.reset(sample_rate);
+
         let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
 
         let stream = match sample_format {
             SampleFormat::F32 => {
                 let buf = Arc::clone(&buffer);
+                let live = Arc::clone(&live);
                 device.build_input_stream(
                     &config,
                     move |data: &[f32], _| {
                         let mono = downmix_to_mono(data, channels);
                         buf.lock().unwrap().extend_from_slice(&mono);
+                        live.push(&mono);
                     },
                     on_stream_error,
                     None,
@@ -171,6 +276,7 @@ impl ActiveRecording {
             }
             SampleFormat::I16 => {
                 let buf = Arc::clone(&buffer);
+                let live = Arc::clone(&live);
                 device.build_input_stream(
                     &config,
                     move |data: &[i16], _| {
@@ -178,6 +284,7 @@ impl ActiveRecording {
                             data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
                         let mono = downmix_to_mono(&as_f32, channels);
                         buf.lock().unwrap().extend_from_slice(&mono);
+                        live.push(&mono);
                     },
                     on_stream_error,
                     None,
@@ -185,6 +292,7 @@ impl ActiveRecording {
             }
             SampleFormat::U16 => {
                 let buf = Arc::clone(&buffer);
+                let live = Arc::clone(&live);
                 device.build_input_stream(
                     &config,
                     move |data: &[u16], _| {
@@ -194,6 +302,7 @@ impl ActiveRecording {
                             .collect();
                         let mono = downmix_to_mono(&as_f32, channels);
                         buf.lock().unwrap().extend_from_slice(&mono);
+                        live.push(&mono);
                     },
                     on_stream_error,
                     None,
@@ -247,14 +356,38 @@ mod tests {
 
     #[test]
     fn downmix_averages_channels() {
-        // Two interleaved stereo frames: (L=1.0, R=3.0), (L=-1.0, R=1.0)
         let stereo = [1.0_f32, 3.0, -1.0, 1.0];
         let mono = downmix_to_mono(&stereo, 2);
         assert_eq!(mono, vec![2.0, 0.0]);
 
-        // Mono input must pass through unchanged.
         let mono_in = [0.5_f32, -0.25];
         assert_eq!(downmix_to_mono(&mono_in, 1), vec![0.5, -0.25]);
+    }
+
+    #[test]
+    fn live_counter_starts_empty() {
+        let lc = LiveCounter::new(48_000);
+        assert_eq!(lc.count(), 0);
+        assert_eq!(lc.state(), StreamingState::Warming);
+        assert!(lc.period_secs().is_none());
+    }
+
+    #[test]
+    fn live_counter_accepts_silence_without_counting() {
+        let lc = LiveCounter::new(48_000);
+        let silence = vec![0.0f32; 48_000];
+        lc.push(&silence);
+        assert_eq!(lc.count(), 0);
+    }
+
+    #[test]
+    fn live_counter_reset_clears_state() {
+        let lc = LiveCounter::new(48_000);
+        let tone = vec![0.5f32; 480];
+        lc.push(&tone);
+        lc.reset(44_100);
+        assert_eq!(lc.count(), 0);
+        assert_eq!(lc.sample_rate(), 44_100);
     }
 
     /// Ignored by default because it requires a working microphone.
@@ -268,6 +401,10 @@ mod tests {
         let elapsed_secs = 2.0_f32;
         std::thread::sleep(Duration::from_millis((elapsed_secs * 1000.0) as u64));
 
+        let live_count = state.live_count();
+        let live_state = state.live_state();
+        println!("live: count={live_count} state={live_state:?}");
+
         let rx = state.stop().expect("failed to stop");
         let audio = block_on(rx);
 
@@ -278,9 +415,6 @@ mod tests {
         );
 
         let audio_secs = audio.samples.len() as f32 / audio.sample_rate as f32;
-        // WASAPI shared mode can spend 300+ ms warming up the stream. Assert
-        // that we captured a plausible amount of audio, and reject any value
-        // that would indicate a channel or sample-rate mismatch.
         assert!(
             (1.0..=elapsed_secs + 0.2).contains(&audio_secs),
             "captured {audio_secs:.2}s in {elapsed_secs:.2}s of wall time — \
@@ -295,8 +429,6 @@ mod tests {
         );
     }
 
-    /// Minimal blocking wait for a oneshot receiver without pulling in
-    /// a full tokio runtime at the call site.
     fn block_on(rx: oneshot::Receiver<RecordedAudio>) -> RecordedAudio {
         use std::sync::mpsc;
         let (tx, done_rx) = mpsc::channel();
