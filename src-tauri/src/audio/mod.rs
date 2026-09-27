@@ -37,11 +37,14 @@ pub fn list_input_devices() -> Result<Vec<DeviceInfo>, String> {
 }
 
 // -----------------------------------------------------------------------------
-// Live counter
+// Live counter (streaming, monotonic)
 // -----------------------------------------------------------------------------
 
 /// Thread-safe wrapper around `StreamingCounter`. The audio callback pushes
 /// mono samples into it; the Tauri commands poll it to display a live count.
+///
+/// Monotonic: the count only ever increases. The batch `count_daimoku`
+/// (used by `validate_training_take`) is the authoritative count.
 pub struct LiveCounter {
     inner: Mutex<LiveInner>,
 }
@@ -68,7 +71,6 @@ impl LiveCounter {
     }
 
     pub fn push(&self, samples: &[f32]) {
-        // Short critical section: StreamingCounter::push is O(chunk).
         if let Ok(mut g) = self.inner.lock() {
             g.counter.push(samples);
         }
@@ -113,9 +115,6 @@ enum AudioCommand {
     Stop(oneshot::Sender<RecordedAudio>),
 }
 
-/// Handle to the audio engine. Holds only `Send + Sync` types, so it can be
-/// stored inside Tauri's shared state. The actual `cpal::Stream` lives on a
-/// dedicated thread and is never touched from here.
 pub struct AudioState {
     cmd_tx: Mutex<Sender<AudioCommand>>,
     live: Arc<LiveCounter>,
@@ -155,8 +154,6 @@ impl AudioState {
             .map_err(|_| "audio thread is not running".to_string())?;
         Ok(reply_rx)
     }
-
-    // --- live counter accessors ---
 
     pub fn live(&self) -> Arc<LiveCounter> {
         Arc::clone(&self.live)
@@ -216,7 +213,6 @@ fn audio_thread_main(cmd_rx: mpsc::Receiver<AudioCommand>, live: Arc<LiveCounter
     }
 }
 
-/// A running recording. Owns the stream; dropping it stops the capture.
 struct ActiveRecording {
     buffer: Arc<Mutex<Vec<f32>>>,
     sample_rate: u32,
@@ -227,8 +223,6 @@ fn on_stream_error(err: cpal::StreamError) {
     eprintln!("[audio] stream error: {err}");
 }
 
-/// Downmix an interleaved multi-channel frame buffer to mono by averaging
-/// channels. Allocates a fresh Vec; the caller is responsible for ownership.
 fn downmix_to_mono(data: &[f32], channels: u16) -> Vec<f32> {
     let ch = channels as usize;
     if ch <= 1 {
@@ -324,8 +318,6 @@ impl ActiveRecording {
     }
 
     fn stop(self) -> RecordedAudio {
-        // Dropping the stream stops the capture; the audio callback is
-        // guaranteed not to run anymore after this point.
         drop(self._stream);
         let samples = std::mem::take(&mut *self.buffer.lock().unwrap());
         RecordedAudio {
@@ -390,8 +382,6 @@ mod tests {
         assert_eq!(lc.sample_rate(), 44_100);
     }
 
-    /// Ignored by default because it requires a working microphone.
-    /// Run with: cargo test -- --ignored --nocapture
     #[test]
     #[ignore]
     fn records_real_audio() {

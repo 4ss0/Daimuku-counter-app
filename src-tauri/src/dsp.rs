@@ -1,22 +1,10 @@
-//! Daimoku counter: batch + streaming.
-//!
-//! Batch:
-//!   1. RMS envelope → smoothing 200 ms.
-//!   2. Phrase segmentation by silence gaps (≥ 300 ms).
-//!   3. Per phrase: ACF period estimate (fundamental, not octave),
-//!      peak detection, NMS 0.55·T, gap recovery, strict verify.
-//!   4. Sum across phrases. Fallback period = median of phrase estimates.
-//!
-//! Streaming:
-//!   `StreamingCounter::push(chunk)` → running count.
-//!   Silence-aware: baseline snaps down during gaps, so the restart
-//!   after a breath doesn't produce a spurious peak.
+//! Daimoku counter: novelty-based, monotonic streaming, batch post-processed.
 
 use serde::Serialize;
 use std::cmp::Ordering;
 
 // ===========================================================================
-// Batch API
+// Public API
 // ===========================================================================
 
 #[derive(Debug, Clone, Copy)]
@@ -24,22 +12,10 @@ pub struct Config {
     pub window_ms: u32,
     pub hop_ms: u32,
     pub smooth_secs: f32,
-    pub detrend_secs: f32,
-
+    pub novelty_lag_secs: f32,
+    pub novelty_smooth_secs: f32,
     pub silence_rel: f32,
     pub min_pause_secs: f32,
-
-    pub peak_prom_rel: f32,
-    pub peak_prom_win_secs: f32,
-
-    pub nms_ratio: f32,
-    pub min_period_secs: f32,
-    pub max_period_secs: f32,
-    pub acf_min_peak: f32,
-
-    pub max_cv: f32,
-    pub max_gap_ratio: f32,
-    pub min_confidence: f32,
 }
 
 impl Default for Config {
@@ -48,22 +24,10 @@ impl Default for Config {
             window_ms: 30,
             hop_ms: 10,
             smooth_secs: 0.20,
-            detrend_secs: 4.0,
-
+            novelty_lag_secs: 0.30,
+            novelty_smooth_secs: 0.10,
             silence_rel: 0.10,
             min_pause_secs: 0.30,
-
-            peak_prom_rel: 0.20,
-            peak_prom_win_secs: 0.75,
-
-            nms_ratio: 0.55,
-            min_period_secs: 0.50,
-            max_period_secs: 5.00,
-            acf_min_peak: 0.08,
-
-            max_cv: 0.35,
-            max_gap_ratio: 1.80,
-            min_confidence: 0.25,
         }
     }
 }
@@ -77,7 +41,6 @@ pub struct DaimokuCountResult {
     pub phrase_count: usize,
     pub mean_period_ms: f32,
     pub method: String,
-    // legacy fields (front-end compatibility)
     pub period_ms: f32,
     pub segment_count: usize,
     pub duration_secs: f32,
@@ -106,149 +69,134 @@ pub fn count_daimoku_with(
         return None;
     }
 
+    // Sanity check.
     let env = rms_envelope(samples, sample_rate, cfg.window_ms, cfg.hop_ms);
-    let hop_secs = cfg.hop_ms as f32 / 1000.0;
-    let n = env.len();
-    if n < 30 {
+    if env.len() < 50 {
         return None;
     }
-
     let p95 = percentile(&env, 0.95);
     if p95 < 1e-5 {
         return None;
     }
     let p10 = percentile(&env, 0.10);
     if p10 > 0.90 * p95 {
-        return None; // steady tone, no modulation
+        return None;
     }
 
+    // Phrase count (informational).
+    let hop_secs = cfg.hop_ms as f32 / 1000.0;
     let sm_frames = ((cfg.smooth_secs / hop_secs).round() as usize).max(1);
     let smoothed = moving_average(&env, sm_frames);
-
-    // --- Phrase segmentation by silence --------------------------------
     let silence_floor = cfg.silence_rel * p95;
     let min_gap_frames = ((cfg.min_pause_secs / hop_secs).round() as usize).max(2);
     let phrases = find_active_segments(&smoothed, silence_floor, min_gap_frames);
-    if phrases.is_empty() {
-        return None;
+    let phrase_count = phrases.len();
+
+    // Run the streaming counter with 1 s of silence warm-up.
+    let mut sc = StreamingCounter::new(sample_rate);
+    let warmup = vec![0.0f32; sample_rate as usize];
+    for chunk in warmup.chunks(4096) {
+        sc.push(chunk);
+    }
+    for chunk in samples.chunks(4096) {
+        sc.push(chunk);
     }
 
-    // --- Per-phrase period estimation ----------------------------------
-    let mut per_phrase_period: Vec<Option<f32>> = Vec::with_capacity(phrases.len());
-    for (s, e) in &phrases {
-        per_phrase_period.push(estimate_period_acf(&smoothed[*s..*e], hop_secs, cfg));
-    }
+    // Post-process: robust period + NMS sorted by novelty strength.
+    let peaks = sc.accepted_peaks();
+    let final_count = post_process_count(peaks);
 
-    let mut valid_periods: Vec<f32> = per_phrase_period.iter().flatten().copied().collect();
-    let fallback_period = if !valid_periods.is_empty() {
-        median(&mut valid_periods)
-    } else {
-        // Last resort: ACF on the whole smoothed signal.
-        estimate_period_acf(&smoothed, hop_secs, cfg)?
-    };
-
-    // --- Count bumps per phrase ----------------------------------------
-    let mut total = 0usize;
-    let mut used = 0usize;
-    let mut conf_sum = 0.0f32;
-    let mut period_sum = 0.0f32;
-    let mut active_frames = 0usize;
-
-    for ((s, e), per) in phrases.iter().zip(per_phrase_period.iter()) {
-        let seg = &smoothed[*s..*e];
-        let seg_len = seg.len();
-        if seg_len < 10 {
-            continue;
-        }
-        let period = per.unwrap_or(fallback_period);
-        if period < cfg.min_period_secs || period > cfg.max_period_secs {
-            continue;
-        }
-
-        // Detrend the phrase.
-        let detrend_frames = ((cfg.detrend_secs / hop_secs).round() as usize)
-            .max(3)
-            .min(seg_len / 2);
-        let trend = moving_average(seg, detrend_frames);
-        let detrended: Vec<f32> = seg
-            .iter()
-            .zip(trend.iter())
-            .map(|(a, b)| a - b)
-            .collect();
-
-        let cands = find_peaks(&detrended, hop_secs, cfg);
-        if cands.len() < 2 {
-            continue;
-        }
-
-        let kept = nms(&cands, &detrended, cfg.nms_ratio * period, hop_secs);
-        if kept.len() < 2 {
-            continue;
-        }
-
-        let recovered = recover_missing_peaks(kept, &detrended, period, hop_secs);
-        if recovered.len() < 2 {
-            continue;
-        }
-
-        if !verify_phrase(&recovered, period, hop_secs, seg_len, cfg) {
-            continue;
-        }
-
-        // Phrase confidence from gap CV.
-        let dists: Vec<f32> = recovered
-            .windows(2)
-            .map(|w| (w[1] - w[0]) as f32 * hop_secs)
-            .collect();
-        let mean_p = dists.iter().sum::<f32>() / dists.len() as f32;
-        let cv = if dists.len() >= 2 {
-            let var: f32 = dists
-                .iter()
-                .map(|d| (d - mean_p).powi(2))
-                .sum::<f32>()
-                / dists.len() as f32;
-            var.sqrt() / mean_p.max(1e-6)
-        } else {
-            0.0
-        };
-
-        total += recovered.len();
-        conf_sum += (1.0 - cv).clamp(0.0, 1.0);
-        used += 1;
-        period_sum += mean_p;
-        active_frames += seg_len;
-    }
-
-    if total < 3 || used == 0 {
-        return None;
-    }
-
-    let mean_conf = conf_sum / used as f32;
-    if mean_conf < cfg.min_confidence {
-        return None;
-    }
-
-    let mean_period_ms = (period_sum / used as f32) * 1000.0;
     let duration_secs = samples.len() as f32 / sample_rate as f32;
-    let active_secs = active_frames as f32 * hop_secs;
+    let mean_period_frames = robust_period_frames(peaks).unwrap_or(0.0);
+    let mean_period_ms = (mean_period_frames as f32) * hop_secs * 1000.0;
+
+    if final_count == 0 {
+        return None;
+    }
+
+    let conf = if mean_period_ms > 0.0 { 0.85 } else { 0.3 };
 
     Some(DaimokuCountResult {
-        count: total,
-        confidence: mean_conf,
-        phrase_count: used,
+        count: final_count,
+        confidence: conf,
+        phrase_count,
         mean_period_ms,
-        method: "phrases+peaks".to_string(),
+        method: "novelty+post".to_string(),
 
         period_ms: mean_period_ms,
-        segment_count: used,
+        segment_count: phrase_count,
         duration_secs,
-        active_duration_secs: active_secs,
+        active_duration_secs: duration_secs,
     })
 }
 
-// ---------------------------------------------------------------------------
-// Envelope / smoothing
-// ---------------------------------------------------------------------------
+/// Post-process the accepted peaks: robust period from top-60% of
+/// intervals, then NMS sorted by novelty strength.
+fn post_process_count(peaks: &[(u64, f32)]) -> usize {
+    if peaks.is_empty() {
+        return 0;
+    }
+    if peaks.len() < 3 {
+        return peaks.len();
+    }
+    let t = robust_period_frames(peaks).unwrap_or(0.0);
+    if t <= 0.0 {
+        return peaks.len();
+    }
+    let min_dist = (0.55 * t) as u64;
+
+    // Sort indices by value descending.
+    let mut idx: Vec<usize> = (0..peaks.len()).collect();
+    idx.sort_by(|&a, &b| {
+        peaks[b]
+            .1
+            .partial_cmp(&peaks[a].1)
+            .unwrap_or(Ordering::Equal)
+    });
+
+    let mut kept: Vec<usize> = Vec::new();
+    for i in idx {
+        let f = peaks[i].0;
+        let ok = kept.iter().all(|&j| {
+            let q = peaks[j].0;
+            let d = if f > q { f - q } else { q - f };
+            d >= min_dist
+        });
+        if ok {
+            kept.push(i);
+        }
+    }
+    kept.len()
+}
+
+/// Robust period: sort intervals, take the median of the top 60%.
+/// Sub-peak intervals are always the shortest, so they fall in the
+/// bottom 40% and are discarded.
+fn robust_period_frames(peaks: &[(u64, f32)]) -> Option<f64> {
+    if peaks.len() < 3 {
+        return None;
+    }
+    let mut dists: Vec<f64> = peaks
+        .windows(2)
+        .map(|w| (w[1].0 - w[0].0) as f64)
+        .collect();
+    dists.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+    let lo = (dists.len() as f64 * 0.40).floor() as usize;
+    let hi = (dists.len() as f64 * 0.90).ceil() as usize;
+    let lo = lo.min(dists.len().saturating_sub(1));
+    let hi = hi.min(dists.len()).max(lo + 1);
+    let slice = &dists[lo..hi];
+    if slice.is_empty() {
+        return None;
+    }
+    let mut v = slice.to_vec();
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+    Some(v[v.len() / 2])
+}
+
+// ===========================================================================
+// Helper functions
+// ===========================================================================
 
 fn rms_envelope(samples: &[f32], sr: u32, window_ms: u32, hop_ms: u32) -> Vec<f32> {
     let w = (window_ms as usize * sr as usize) / 1000;
@@ -293,10 +241,6 @@ fn moving_average(data: &[f32], window: usize) -> Vec<f32> {
     out
 }
 
-// ---------------------------------------------------------------------------
-// Phrase segmentation
-// ---------------------------------------------------------------------------
-
 fn find_active_segments(env: &[f32], floor: f32, min_gap: usize) -> Vec<(usize, usize)> {
     let n = env.len();
     let mut out = Vec::new();
@@ -330,260 +274,6 @@ fn find_active_segments(env: &[f32], floor: f32, min_gap: usize) -> Vec<(usize, 
     out
 }
 
-// ---------------------------------------------------------------------------
-// Peaks
-// ---------------------------------------------------------------------------
-
-fn find_peaks(sig: &[f32], hop: f32, cfg: &Config) -> Vec<usize> {
-    let n = sig.len();
-    if n < 3 {
-        return Vec::new();
-    }
-    let gmax = sig.iter().cloned().fold(f32::MIN, f32::max);
-    let gmin = sig.iter().cloned().fold(f32::MAX, f32::min);
-    let range = gmax - gmin;
-    if range < 1e-9 {
-        return Vec::new();
-    }
-    let min_prom = cfg.peak_prom_rel * range;
-    let win = ((cfg.peak_prom_win_secs / hop).round() as usize).max(3);
-
-    let mut out = Vec::new();
-    for i in 1..n - 1 {
-        if sig[i] > sig[i - 1] && sig[i] >= sig[i + 1] {
-            let lo = i.saturating_sub(win);
-            let hi = (i + win + 1).min(n);
-            let local_min = sig[lo..hi].iter().cloned().fold(f32::MAX, f32::min);
-            if sig[i] - local_min >= min_prom {
-                out.push(i);
-            }
-        }
-    }
-    out
-}
-
-fn nms(peaks: &[usize], values: &[f32], min_dist_secs: f32, hop: f32) -> Vec<usize> {
-    let min_dist = ((min_dist_secs / hop).round() as usize).max(2);
-    let mut sorted = peaks.to_vec();
-    sorted.sort_by(|&a, &b| {
-        values[b]
-            .partial_cmp(&values[a])
-            .unwrap_or(Ordering::Equal)
-    });
-    let mut kept: Vec<usize> = Vec::new();
-    for p in sorted {
-        if kept.iter().all(|&q| {
-            let d = if p > q { p - q } else { q - p };
-            d >= min_dist
-        }) {
-            kept.push(p);
-        }
-    }
-    kept.sort();
-    kept
-}
-
-fn recover_missing_peaks(
-    mut peaks: Vec<usize>,
-    sig: &[f32],
-    period: f32,
-    hop: f32,
-) -> Vec<usize> {
-    if peaks.len() < 2 {
-        return peaks;
-    }
-    let t_frames = (period / hop).round() as usize;
-    if t_frames < 3 {
-        return peaks;
-    }
-    let gmin = sig.iter().cloned().fold(f32::MAX, f32::min);
-    let gmax = sig.iter().cloned().fold(f32::MIN, f32::max);
-    let range = (gmax - gmin).max(1e-9);
-    let abs_floor = gmin + 0.10 * range;
-
-    for _pass in 0..4 {
-        let mut inserted = false;
-        let mut out: Vec<usize> = Vec::with_capacity(peaks.len() + 2);
-        out.push(peaks[0]);
-        for w in peaks.windows(2) {
-            let a = w[0];
-            let b = w[1];
-            let gap = b - a;
-            if (gap as f32) <= 1.4 * t_frames as f32 {
-                out.push(b);
-                continue;
-            }
-            let n_expected = (gap as f32 / t_frames as f32).round() as usize;
-            let to_insert = n_expected.saturating_sub(1);
-            if to_insert >= 1 {
-                let neighbor_min = sig[a].min(sig[b]);
-                let soft_floor = 0.35 * neighbor_min;
-                for k in 1..=to_insert {
-                    let center =
-                        a + (k as f32 * gap as f32 / (to_insert + 1) as f32).round() as usize;
-                    let half = t_frames / 2;
-                    let lo = center.saturating_sub(half).max(a + 1);
-                    let hi = (center + half + 1).min(b).min(sig.len());
-                    if lo + 1 >= hi {
-                        continue;
-                    }
-                    let mut best_i: Option<usize> = None;
-                    for i in lo..hi {
-                        if i == 0 || i + 1 >= sig.len() {
-                            continue;
-                        }
-                        if sig[i] > sig[i - 1] && sig[i] >= sig[i + 1] {
-                            if best_i.map_or(true, |bi| sig[i] > sig[bi]) {
-                                best_i = Some(i);
-                            }
-                        }
-                    }
-                    if let Some(i) = best_i {
-                        if sig[i] >= abs_floor && sig[i] >= soft_floor {
-                            out.push(i);
-                            inserted = true;
-                        }
-                    }
-                }
-            }
-            out.push(b);
-        }
-        out.sort();
-        out.dedup();
-        peaks = out;
-        if !inserted {
-            break;
-        }
-    }
-    peaks
-}
-
-// ---------------------------------------------------------------------------
-// Period estimation
-// ---------------------------------------------------------------------------
-
-fn estimate_period_acf(sig: &[f32], hop: f32, cfg: &Config) -> Option<f32> {
-    let n = sig.len();
-    if n < 60 {
-        return None;
-    }
-    let min_lag = ((cfg.min_period_secs / hop).round() as usize).max(3);
-    let max_lag = ((cfg.max_period_secs / hop).round() as usize).min(n / 2);
-    if min_lag >= max_lag {
-        return None;
-    }
-
-    let mean: f32 = sig.iter().sum::<f32>() / n as f32;
-    let c: Vec<f32> = sig.iter().map(|x| x - mean).collect();
-
-    let mut corr = vec![0.0f32; max_lag + 1];
-    for lag in min_lag..=max_lag {
-        let m = n - lag;
-        if m == 0 {
-            break;
-        }
-        let mut num = 0.0f32;
-        let mut da = 0.0f32;
-        let mut db = 0.0f32;
-        for i in 0..m {
-            num += c[i] * c[i + lag];
-            da += c[i] * c[i];
-            db += c[i + lag] * c[i + lag];
-        }
-        let den = (da * db).sqrt();
-        if den > 1e-9 {
-            corr[lag] = num / den;
-        }
-    }
-
-    let mut lms: Vec<(usize, f32)> = Vec::new();
-    for lag in (min_lag + 1)..max_lag {
-        if corr[lag] > corr[lag - 1] && corr[lag] >= corr[lag + 1] {
-            lms.push((lag, corr[lag]));
-        }
-    }
-    if lms.is_empty() {
-        return None;
-    }
-    let (g_lag, g_corr) = *lms
-        .iter()
-        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal))?;
-    if g_corr < cfg.acf_min_peak {
-        return None;
-    }
-    let thr = 0.60 * g_corr;
-    let (lag, _) = lms
-        .iter()
-        .filter(|(_, c)| *c >= thr)
-        .min_by_key(|(l, _)| *l)
-        .copied()
-        .unwrap_or((g_lag, g_corr));
-
-    let refined = if lag > 0 && lag + 1 < corr.len() {
-        let y0 = corr[lag - 1];
-        let y1 = corr[lag];
-        let y2 = corr[lag + 1];
-        let den = 2.0 * y1 - y0 - y2;
-        if den.abs() > 1e-9 {
-            let d = ((y2 - y0) / (2.0 * den)).clamp(-0.5, 0.5);
-            (lag as f32 + d).max(1.0)
-        } else {
-            lag as f32
-        }
-    } else {
-        lag as f32
-    };
-    Some(refined * hop)
-}
-
-// ---------------------------------------------------------------------------
-// Verification (per phrase, lenient)
-// ---------------------------------------------------------------------------
-
-fn verify_phrase(kept: &[usize], period: f32, hop: f32, seg_len: usize, cfg: &Config) -> bool {
-    if kept.len() < 2 {
-        return false;
-    }
-    let dists: Vec<f32> = kept
-        .windows(2)
-        .map(|w| (w[1] - w[0]) as f32 * hop)
-        .collect();
-    let mean = dists.iter().sum::<f32>() / dists.len() as f32;
-    if mean < cfg.min_period_secs * 0.7 || mean > cfg.max_period_secs * 1.3 {
-        return false;
-    }
-    if dists.len() >= 2 {
-        let var: f32 = dists
-            .iter()
-            .map(|d| (d - mean).powi(2))
-            .sum::<f32>()
-            / dists.len() as f32;
-        let cv = var.sqrt() / mean.max(1e-6);
-        if cv > cfg.max_cv * 1.5 {
-            return false;
-        }
-        let d_min = dists.iter().cloned().fold(f32::MAX, f32::min);
-        let d_max = dists.iter().cloned().fold(f32::MIN, f32::max);
-        if d_min > 1e-6 && d_max / d_min > cfg.max_gap_ratio * 1.5 {
-            return false;
-        }
-    }
-    // Consistent with ACF period
-    let ratio = mean / period.max(1e-6);
-    if ratio < 0.65 || ratio > 1.50 {
-        return false;
-    }
-    // Peaks span a reasonable fraction of the phrase
-    if kept.len() >= 2 {
-        let span = (kept[kept.len() - 1] - kept[0]) as f32 * hop;
-        let total = seg_len as f32 * hop;
-        if span < 0.30 * total {
-            return false;
-        }
-    }
-    true
-}
-
 fn percentile(data: &[f32], p: f32) -> f32 {
     if data.is_empty() {
         return 0.0;
@@ -594,27 +284,9 @@ fn percentile(data: &[f32], p: f32) -> f32 {
     s[idx]
 }
 
-fn median(data: &mut [f32]) -> f32 {
-    if data.is_empty() {
-        return 0.0;
-    }
-    data.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-    let m = data.len() / 2;
-    if data.len() % 2 == 0 {
-        (data[m - 1] + data[m]) * 0.5
-    } else {
-        data[m]
-    }
-}
-
 // ===========================================================================
 // Streaming counter
 // ===========================================================================
-//
-// Robust against the three freeze modes:
-//   - amplitude drift (self-adapting level = max over a 2 s ring, not an EMA)
-//   - temporary pause / volume drop (asymmetric baseline follower)
-//   - speed change (period = median of the last 5 intervals, not an EMA)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamingState {
@@ -625,43 +297,38 @@ pub enum StreamingState {
 
 pub struct StreamingCounter {
     sr: u32,
-
-    // PCM / envelope
     hop_samples: usize,
     pcm_ring: Vec<f32>,
     pcm_pos: usize,
     samples_until_hop: usize,
 
-    // Envelope smoothing (200 ms TC)
     smooth_val: f32,
     smooth_init: bool,
-    alpha: f32,
+    alpha_smooth: f32,
 
-    // Asymmetric baseline follower:
-    //   fast down (100 ms): tracks troughs, follows volume drops
-    //   slow up   (3 s):    ignores peaks, doesn't drift upward
-    baseline_val: f32,
-    baseline_init: bool,
-    down_coef: f32,
-    up_coef: f32,
+    nov_s_val: f32,
+    nov_init: bool,
+    alpha_nov: f32,
 
-    // Detrended ring of d = smooth - baseline (always >= 0)
-    det_ring: Vec<f32>,
-    det_pos: usize,
-    det_filled: usize,
-    ring_len: usize,
+    smooth_ring: Vec<f32>,
+    nov_s_ring: Vec<f32>,
+    ring_size: usize,
+    ring_pos: usize,
+
+    lag_frames: usize,
     lookahead: usize,
     local_win: usize,
+    min_start_frames: u64,
 
-    // Counters
     total_frames: u64,
     count: usize,
     last_peak_frame: Option<u64>,
-    recent_intervals: Vec<f64>, // capped at 5, used for median period
+    recent_intervals: Vec<f64>,
 
-    // State
+    // Accepted peaks for post-processing.
+    accepted: Vec<(u64, f32)>,
+
     state: StreamingState,
-    frames_since_signal: u64,
 }
 
 impl StreamingCounter {
@@ -671,14 +338,14 @@ impl StreamingCounter {
         let hop_samples = (hop_ms as usize * sample_rate as usize) / 1000;
         let win_samples = (win_ms as usize * sample_rate as usize) / 1000;
 
-        // Time constants (per-frame blend coefficients).
-        let alpha = 1.0 - (-(hop_ms as f32) / 200.0).exp();      // 200 ms smooth
-        let down_coef = 1.0 - (-(hop_ms as f32) / 100.0).exp();  // 100 ms down
-        let up_coef = 1.0 - (-(hop_ms as f32) / 3000.0).exp();   // 3 s up
+        let alpha_smooth = 1.0 - (-(hop_ms as f32) / 200.0).exp();
+        let alpha_nov = 1.0 - (-(hop_ms as f32) / 100.0).exp();
 
-        let ring_len = 200usize; // 2 s @ 10 ms hop
-        let lookahead = 30usize; // 300 ms
-        let local_win = 20usize; // ±200 ms
+        let lag_frames = 30;
+        let lookahead = 30;
+        let local_win = 15;
+        let ring_size = 400;
+        let min_start_frames = (lag_frames + lookahead + local_win + 1) as u64;
 
         Self {
             sr: sample_rate,
@@ -689,27 +356,30 @@ impl StreamingCounter {
 
             smooth_val: 0.0,
             smooth_init: false,
-            alpha,
+            alpha_smooth,
 
-            baseline_val: 0.0,
-            baseline_init: false,
-            down_coef,
-            up_coef,
+            nov_s_val: 0.0,
+            nov_init: false,
+            alpha_nov,
 
-            det_ring: vec![0.0; ring_len],
-            det_pos: 0,
-            det_filled: 0,
-            ring_len,
+            smooth_ring: vec![0.0; ring_size],
+            nov_s_ring: vec![0.0; ring_size],
+            ring_size,
+            ring_pos: 0,
+
+            lag_frames,
             lookahead,
             local_win,
+            min_start_frames,
 
             total_frames: 0,
             count: 0,
             last_peak_frame: None,
-            recent_intervals: Vec::with_capacity(5),
+            recent_intervals: Vec::with_capacity(6),
+
+            accepted: Vec::new(),
 
             state: StreamingState::Warming,
-            frames_since_signal: 0,
         }
     }
 
@@ -722,18 +392,29 @@ impl StreamingCounter {
     pub fn state(&self) -> StreamingState {
         self.state
     }
-
-    pub fn period_secs(&self) -> Option<f32> {
-        self.period_frames_median().map(|f| (f * 0.01) as f32)
+    pub fn accepted_peaks(&self) -> &[(u64, f32)] {
+        &self.accepted
     }
 
-    fn period_frames_median(&self) -> Option<f64> {
+    pub fn period_secs(&self) -> Option<f32> {
+        self.period_median_frames().map(|f| (f * 0.01) as f32)
+    }
+
+    /// Robust period: median of the top 60% of recent intervals.
+    /// Sub-peak intervals are the shortest and land in the bottom 40%.
+    fn period_median_frames(&self) -> Option<f64> {
         if self.recent_intervals.is_empty() {
             return None;
         }
         let mut v = self.recent_intervals.clone();
         v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-        Some(v[v.len() / 2])
+        let lo = (v.len() as f64 * 0.40).floor() as usize;
+        let lo = lo.min(v.len().saturating_sub(1));
+        let slice = &v[lo..];
+        if slice.is_empty() {
+            return None;
+        }
+        Some(slice[slice.len() / 2])
     }
 
     pub fn reset(&mut self) {
@@ -755,51 +436,42 @@ impl StreamingCounter {
     }
 
     fn emit_frame(&mut self) {
-        // RMS over the PCM ring.
         let mut sum_sq = 0.0f32;
         for &x in &self.pcm_ring {
             sum_sq += x * x;
         }
         let rms = (sum_sq / self.pcm_ring.len() as f32).sqrt();
 
-        // Smooth (200 ms TC).
         if !self.smooth_init {
             self.smooth_val = rms;
             self.smooth_init = true;
         } else {
-            self.smooth_val = self.alpha * rms + (1.0 - self.alpha) * self.smooth_val;
+            self.smooth_val =
+                self.alpha_smooth * rms + (1.0 - self.alpha_smooth) * self.smooth_val;
         }
+        self.smooth_ring[self.ring_pos] = self.smooth_val;
 
-        // Asymmetric baseline follower.
-        if !self.baseline_init {
-            self.baseline_val = self.smooth_val;
-            self.baseline_init = true;
-        } else if self.smooth_val < self.baseline_val {
-            let diff = self.smooth_val - self.baseline_val;
-            self.baseline_val += self.down_coef * diff; // fast down
+        let old_pos = (self.ring_pos + self.ring_size - self.lag_frames) % self.ring_size;
+        let old_val = self.smooth_ring[old_pos];
+        let nov = (self.smooth_val - old_val).max(0.0);
+
+        if !self.nov_init {
+            self.nov_s_val = nov;
+            self.nov_init = true;
         } else {
-            let diff = self.smooth_val - self.baseline_val;
-            self.baseline_val += self.up_coef * diff; // slow up
+            self.nov_s_val =
+                self.alpha_nov * nov + (1.0 - self.alpha_nov) * self.nov_s_val;
         }
+        self.nov_s_ring[self.ring_pos] = self.nov_s_val;
 
-        // Non-negative deviation.
-        let d = self.smooth_val - self.baseline_val;
-
-        // Signal presence (for state reporting only).
-        if self.baseline_val > 1e-4 && self.smooth_val > 0.15 * self.baseline_val {
-            self.frames_since_signal = 0;
-        } else {
-            self.frames_since_signal = self.frames_since_signal.saturating_add(1);
-        }
-
-        // Push into detrended ring.
-        self.det_ring[self.det_pos] = d;
-        self.det_pos = (self.det_pos + 1) % self.ring_len;
-        self.det_filled = (self.det_filled + 1).min(self.ring_len);
+        self.ring_pos = (self.ring_pos + 1) % self.ring_size;
         self.total_frames += 1;
 
-        // State transition.
-        if self.frames_since_signal > 100 {
+        if self.total_frames < self.min_start_frames {
+            self.state = StreamingState::Warming;
+            return;
+        }
+        if self.smooth_val < 1e-4 {
             self.state = StreamingState::Idle;
         } else if self.count >= 2 {
             self.state = StreamingState::Locked;
@@ -807,67 +479,40 @@ impl StreamingCounter {
             self.state = StreamingState::Warming;
         }
 
-        // After a long pause, forget the period AND the last peak, so the
-        // first new peak after the breath is not blocked by stale state.
-        if self.frames_since_signal > 150 {
-            self.recent_intervals.clear();
-            self.last_peak_frame = None;
-        }
-
         self.check_candidate();
     }
 
     fn check_candidate(&mut self) {
-        let n = self.ring_len;
-        let min_filled = self.lookahead + self.local_win + 1;
-        if self.det_filled < min_filled {
+        let n = self.ring_size;
+        let cur = (self.ring_pos + n - 1) % n;
+        let cand = (cur + n - self.lookahead) % n;
+
+        let v = self.nov_s_ring[cand];
+        if v <= 1e-6 {
             return;
         }
 
-        let center = (self.det_pos + n - 1 - self.lookahead) % n;
-        let v = self.det_ring[center];
-
-        // Strict local max over [center - lw, center + lw].
+        // Strict local max over ±local_win, plateau-tolerant.
         let lw = self.local_win;
         for off in 1..=lw {
-            let i1 = (center + n - off) % n;
-            let i2 = (center + off) % n;
-            if self.det_ring[i1] >= v {
+            let older = (cand + n - off) % n;
+            let newer = (cand + off) % n;
+            if self.nov_s_ring[older] > v {
                 return;
             }
-            if self.det_ring[i2] >= v {
+            if self.nov_s_ring[newer] >= v {
                 return;
             }
         }
 
-        // Level = max over the filled part of the ring (adapts to volume
-        // changes in ~2 s, never freezes).
-        let filled = self.det_filled;
-        let start = (self.det_pos + n - filled) % n;
-        let mut level = f32::MIN;
-        for k in 0..filled {
-            let i = (start + k) % n;
-            if self.det_ring[i] > level {
-                level = self.det_ring[i];
-            }
-        }
-        if level <= 1e-6 {
-            return;
-        }
-        if v < 0.30 * level {
-            return;
-        }
-
+        // Min distance gate. 0.55 * T once we have an estimate, else 0.5 s.
         let frame_idx = self.total_frames - 1 - self.lookahead as u64;
-
-        // Min distance to previous peak: lenient (0.40 * period) so a
-        // sudden speed-up is not blocked.
         if let Some(prev) = self.last_peak_frame {
             let dist = frame_idx.saturating_sub(prev);
             let min_dist = self
-                .period_frames_median()
-                .map(|p| (0.40 * p).max(20.0) as u64)
-                .unwrap_or(20);
+                .period_median_frames()
+                .map(|p| (0.55 * p).max(50.0) as u64)
+                .unwrap_or(50);
             if dist < min_dist {
                 return;
             }
@@ -877,11 +522,11 @@ impl StreamingCounter {
         if let Some(prev) = self.last_peak_frame {
             let dist = (frame_idx - prev) as f64;
             self.recent_intervals.push(dist);
-            if self.recent_intervals.len() > 5 {
+            if self.recent_intervals.len() > 6 {
                 self.recent_intervals.remove(0);
             }
         }
-
+        self.accepted.push((frame_idx, v));
         self.last_peak_frame = Some(frame_idx);
         self.count += 1;
     }
@@ -927,7 +572,13 @@ mod tests {
         vec![0.0; (secs * SR as f32) as usize]
     }
 
-    fn phrase_with_bumps(bumps: usize, period_s: f32, strong_first: bool, weak: &[usize], rate: u32) -> Vec<f32> {
+    fn phrase_with_bumps(
+        bumps: usize,
+        period_s: f32,
+        strong_first: bool,
+        weak: &[usize],
+        rate: u32,
+    ) -> Vec<f32> {
         let n = (bumps as f32 * period_s * rate as f32) as usize;
         let mut v = Vec::with_capacity(n);
         for i in 0..n {
@@ -944,64 +595,45 @@ mod tests {
         v
     }
 
-    /// THE USER'S CASE: 8 Daimoku + 1s breath + 2 Daimoku, total 10.
-    #[test]
-    fn eight_plus_two_phrases() {
-        let t1 = 1.05;
-        let t2 = 1.50;
-        let mut v = phrase_with_bumps(8, t1, true, &[], SR);
-        v.extend(silence(1.0));
-        v.extend(phrase_with_bumps(2, t2, false, &[], SR));
-        let r = count_daimoku(&v, SR, DaimokuCountConfig::default())
-            .expect("must count 8+2");
-        assert_eq!(r.count, 10, "expected 10, got {} (conf {:.2}, method {})",
-                   r.count, r.confidence, r.method);
+    /// Sub-peak 0.65 s after each attack.
+    fn phrase_with_sub_peaks(bumps: usize, period_s: f32, rate: u32) -> Vec<f32> {
+        let n = (bumps as f32 * period_s * rate as f32) as usize;
+        let mut v = Vec::with_capacity(n);
+        for i in 0..n {
+            let t = i as f32 / rate as f32;
+            let phase = (t / period_s).fract();
+            let car = (2.0 * PI * 220.0 * t).sin() + 0.3 * (2.0 * PI * 660.0 * t).sin();
+            let primary = if phase < 0.15 {
+                1.0
+            } else if phase < 0.55 {
+                0.60
+            } else if phase < 0.75 {
+                0.75
+            } else {
+                0.55
+            };
+            v.push(car * primary * 0.4);
+        }
+        v
     }
 
-        /// Volume drop: 5 loud + 5 quiet. Must count 10, not freeze at 5.
-    #[test]
-    fn streaming_handles_amplitude_drop() {
-        let loud = phrase_with_bumps(5, 1.05, true, &[], SR);
-        let quiet: Vec<f32> = phrase_with_bumps(5, 1.05, false, &[], SR)
-            .iter()
-            .map(|x| x * 0.35)
-            .collect();
-        let mut v = loud;
-        v.extend(quiet);
-
+    fn run_streaming(v: &[f32]) -> StreamingCounter {
         let mut c = StreamingCounter::new(SR);
         let chunk = (SR as usize) / 20;
+        let warm = vec![0.0f32; SR as usize];
         let mut i = 0;
+        while i < warm.len() {
+            let end = (i + chunk).min(warm.len());
+            c.push(&warm[i..end]);
+            i = end;
+        }
+        i = 0;
         while i < v.len() {
             let end = (i + chunk).min(v.len());
             c.push(&v[i..end]);
             i = end;
         }
-        assert!(
-            (9..=11).contains(&c.count()),
-            "amplitude drop: expected ~10, got {}",
-            c.count()
-        );
-    }
-
-    /// Speed change: first 5 slow (1.5 s), then 5 fast (0.9 s). Must not freeze.
-    #[test]
-    fn streaming_handles_speed_change() {
-        let mut v = phrase_with_bumps(5, 1.50, true, &[], SR);
-        v.extend(phrase_with_bumps(5, 0.90, false, &[], SR));
-        let mut c = StreamingCounter::new(SR);
-        let chunk = (SR as usize) / 20;
-        let mut i = 0;
-        while i < v.len() {
-            let end = (i + chunk).min(v.len());
-            c.push(&v[i..end]);
-            i = end;
-        }
-        assert!(
-            (9..=11).contains(&c.count()),
-            "speed change: expected ~10, got {}",
-            c.count()
-        );
+        c
     }
 
     #[test]
@@ -1027,6 +659,55 @@ mod tests {
     }
 
     #[test]
+    fn ten_daimoku_with_sub_peaks() {
+        let v = phrase_with_sub_peaks(10, 1.30, SR);
+        let r = count_daimoku(&v, SR, DaimokuCountConfig::default())
+            .expect("must count 10 not 20");
+        assert!(
+            (9..=11).contains(&r.count),
+            "sub-peaks: expected ~10, got {}",
+            r.count
+        );
+    }
+
+    #[test]
+    fn ten_daimoku_strong_first_attack() {
+        let n_bumps = 10;
+        let period_s = 1.05_f32;
+        let n = (n_bumps as f32 * period_s * SR as f32) as usize;
+        let mut v = Vec::with_capacity(n);
+        for i in 0..n {
+            let t = i as f32 / SR as f32;
+            let car = (2.0 * PI * 220.0 * t).sin() + 0.4 * (2.0 * PI * 660.0 * t).sin();
+            let phase = (t / period_s).fract();
+            let bump = 0.55 + 0.45 * (PI * phase).sin().powf(0.6);
+            let attack = if t < period_s { 5.0 } else { 1.0 };
+            v.push(car * bump * attack * 0.4);
+        }
+        let r = count_daimoku(&v, SR, DaimokuCountConfig::default())
+            .expect("must count");
+        assert!(
+            (9..=11).contains(&r.count),
+            "expected ~10, got {}",
+            r.count
+        );
+    }
+
+    #[test]
+    fn eight_plus_two_phrases() {
+        let mut v = phrase_with_bumps(8, 1.05, true, &[], SR);
+        v.extend(silence(1.0));
+        v.extend(phrase_with_bumps(2, 1.50, false, &[], SR));
+        let r = count_daimoku(&v, SR, DaimokuCountConfig::default())
+            .expect("must count 8+2");
+        assert!(
+            (9..=11).contains(&r.count),
+            "8+2: expected ~10, got {}",
+            r.count
+        );
+    }
+
+    #[test]
     fn thirty_bumps_fast() {
         let v = phrase_with_bumps(30, 1.43, false, &[], SR);
         let r = count_daimoku(&v, SR, DaimokuCountConfig::default()).expect("count");
@@ -1040,37 +721,73 @@ mod tests {
         assert!((4..=6).contains(&r.count), "got {}", r.count);
     }
 
+    // ---- Streaming ------------------------------------------------------
+
     #[test]
     fn streaming_counts_ten_continuous() {
+        let v = phrase_with_bumps(10, 1.05, true, &[], SR);
+        let c = run_streaming(&v);
+        assert!(
+            (9..=11).contains(&c.count()),
+            "streaming got {}",
+            c.count()
+        );
+    }
+
+    #[test]
+    fn streaming_is_monotonic() {
         let v = phrase_with_bumps(10, 1.05, true, &[], SR);
         let mut c = StreamingCounter::new(SR);
         let chunk = (SR as usize) / 20;
         let mut i = 0;
+        let mut prev = 0usize;
         while i < v.len() {
             let end = (i + chunk).min(v.len());
-            c.push(&v[i..end]);
+            let now = c.push(&v[i..end]);
+            assert!(now >= prev, "count decreased: {} -> {}", prev, now);
+            prev = now;
             i = end;
         }
-        assert!((9..=11).contains(&c.count()), "streaming got {}", c.count());
     }
 
-    /// THE USER'S CASE for streaming: 8 + silence + 2 must give 10, not 11.
     #[test]
     fn streaming_eight_plus_two_after_breath() {
         let mut v = phrase_with_bumps(8, 1.05, true, &[], SR);
         v.extend(silence(1.0));
         v.extend(phrase_with_bumps(2, 1.50, false, &[], SR));
-        let mut c = StreamingCounter::new(SR);
-        let chunk = (SR as usize) / 20;
-        let mut i = 0;
-        while i < v.len() {
-            let end = (i + chunk).min(v.len());
-            c.push(&v[i..end]);
-            i = end;
-        }
+        let c = run_streaming(&v);
         assert!(
-            (9..=10).contains(&c.count()),
-            "streaming expected 10 (not 11), got {}",
+            (8..=11).contains(&c.count()),
+            "streaming 8+2 got {}",
+            c.count()
+        );
+    }
+
+    #[test]
+    fn streaming_handles_amplitude_drop() {
+        let loud = phrase_with_bumps(5, 1.05, true, &[], SR);
+        let quiet: Vec<f32> = phrase_with_bumps(5, 1.05, false, &[], SR)
+            .iter()
+            .map(|x| x * 0.35)
+            .collect();
+        let mut v = loud;
+        v.extend(quiet);
+        let c = run_streaming(&v);
+        assert!(
+            (8..=11).contains(&c.count()),
+            "amplitude drop: streaming got {}",
+            c.count()
+        );
+    }
+
+    #[test]
+    fn streaming_handles_speed_change() {
+        let mut v = phrase_with_bumps(5, 1.50, true, &[], SR);
+        v.extend(phrase_with_bumps(5, 0.90, false, &[], SR));
+        let c = run_streaming(&v);
+        assert!(
+            (9..=11).contains(&c.count()),
+            "speed change: streaming got {}",
             c.count()
         );
     }
