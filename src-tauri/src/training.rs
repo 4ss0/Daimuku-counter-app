@@ -68,7 +68,7 @@ impl TrainingStore {
     }
 
     /// Returns the audio plus the expected Daimoku count declared during
-    /// recording. Needed by the learning step.
+    /// recording. Needed by the validation step.
     pub fn get_with_expected(&self, index: usize) -> Result<(RecordedAudio, u32), String> {
         let takes = self.takes.lock().unwrap();
         takes

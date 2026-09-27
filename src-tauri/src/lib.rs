@@ -1,7 +1,6 @@
 pub mod audio;
 pub mod commands;
 pub mod dsp;
-pub mod learning;
 pub mod session;
 pub mod training;
 
@@ -21,8 +20,7 @@ pub fn run() {
             commands::list_training_takes,
             commands::clear_training_takes,
             commands::export_training_wav,
-            commands::debug_detect_onsets,
-            commands::learn_template_from_take,
+            commands::validate_training_take,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

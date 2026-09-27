@@ -1,6 +1,5 @@
 use crate::audio::{self, AudioState, RecordedAudio};
-use crate::dsp::{detect_onsets, OnsetConfig, OnsetInfo};
-use crate::learning::{learn_template, DaimokuTemplate};
+use crate::dsp::{count_daimoku, DaimokuCountConfig, DaimokuCountResult};
 use crate::training::{TrainingStore, TrainingTakeMeta};
 use serde::Serialize;
 use std::path::Path;
@@ -53,30 +52,36 @@ pub fn export_training_wav(
     Ok(path.to_string_lossy().into_owned())
 }
 
-#[tauri::command]
-pub fn debug_detect_onsets(
-    store: State<'_, TrainingStore>,
-    index: usize,
-) -> Result<OnsetInfo, String> {
-    let audio = store.get(index)?;
-    Ok(detect_onsets(&audio.samples, audio.sample_rate, OnsetConfig::default()))
-}
-
 #[derive(Debug, Serialize)]
-pub struct LearnResult {
-    pub onsets: OnsetInfo,
-    pub template: DaimokuTemplate,
+pub struct ValidationResult {
+    pub expected: u32,
+    pub detected: usize,
+    pub ok: bool,
+    pub analysis: DaimokuCountResult,
 }
 
+/// Runs Daimoku counting on a stored training take and checks whether the
+/// detected count matches the expected count declared by the user. This is
+/// the single training-validation entry point used by the UI.
 #[tauri::command]
-pub fn learn_template_from_take(
+pub fn validate_training_take(
     store: State<'_, TrainingStore>,
     index: usize,
-) -> Result<LearnResult, String> {
+) -> Result<ValidationResult, String> {
     let (audio, expected) = store.get_with_expected(index)?;
-    let onsets = detect_onsets(&audio.samples, audio.sample_rate, OnsetConfig::default());
-    let template = learn_template(&onsets.ioi_ms, expected)?;
-    Ok(LearnResult { onsets, template })
+    let analysis = count_daimoku(&audio.samples, audio.sample_rate, DaimokuCountConfig::default())
+        .ok_or_else(|| {
+        "No periodicity detected in the recording. Recite with clear syllables and steady rhythm."
+            .to_string()
+    })?;
+
+    let ok = analysis.count == expected as usize;
+    Ok(ValidationResult {
+        expected,
+        detected: analysis.count,
+        ok,
+        analysis,
+    })
 }
 
 fn write_wav(path: &Path, audio: &RecordedAudio) -> Result<(), String> {

@@ -9,24 +9,20 @@
     created_at: string;
   }
 
-  interface OnsetInfo {
+  interface DaimokuCountResult {
     count: number;
-    times_secs: number[];
-    ioi_ms: number[];
-    mean_ioi_ms: number | null;
+    period_ms: number;
+    confidence: number;
+    duration_secs: number;
+    segment_count: number;
+    active_duration_secs: number;
   }
 
-  interface DaimokuTemplate {
-    period: number;
-    normalized_ioi: number[];
-    mean_ioi_ms: number;
-    training_error: number;
-    training_daimoku_count: number;
-  }
-
-  interface LearnResult {
-    onsets: OnsetInfo;
-    template: DaimokuTemplate;
+  interface ValidationResult {
+    expected: number;
+    detected: number;
+    ok: boolean;
+    analysis: DaimokuCountResult;
   }
 
   let takes = $state<TrainingTakeMeta[]>([]);
@@ -34,8 +30,7 @@
   let recording = $state(false);
   let error = $state<string | null>(null);
   let exportedPath = $state<string | null>(null);
-  let onsetResult = $state<{ index: number; info: OnsetInfo } | null>(null);
-  let learnResult = $state<{ index: number; result: LearnResult } | null>(null);
+  let validation = $state<{ index: number; result: ValidationResult } | null>(null);
 
   let hasTake = $derived(takes.length > 0);
 
@@ -50,8 +45,7 @@
   async function start() {
     error = null;
     exportedPath = null;
-    onsetResult = null;
-    learnResult = null;
+    validation = null;
     try {
       await invoke('start_recording');
       recording = true;
@@ -78,8 +72,7 @@
     if (!confirm('Delete all training recordings?')) return;
     error = null;
     exportedPath = null;
-    onsetResult = null;
-    learnResult = null;
+    validation = null;
     try {
       await invoke<number>('clear_training_takes');
       await refresh();
@@ -98,25 +91,12 @@
     }
   }
 
-  async function detectOnsets(index: number) {
+  async function validate(index: number) {
     error = null;
-    onsetResult = null;
-    learnResult = null;
+    validation = null;
     try {
-      const info = await invoke<OnsetInfo>('debug_detect_onsets', { index });
-      onsetResult = { index, info };
-    } catch (e) {
-      error = String(e);
-    }
-  }
-
-  async function learn(index: number) {
-    error = null;
-    learnResult = null;
-    onsetResult = null;
-    try {
-      const result = await invoke<LearnResult>('learn_template_from_take', { index });
-      learnResult = { index, result };
+      const result = await invoke<ValidationResult>('validate_training_take', { index });
+      validation = { index, result };
     } catch (e) {
       error = String(e);
     }
@@ -131,8 +111,7 @@
   <p class="instructions">
     Recite <strong>{expectedCount}</strong> Daimoku in one continuous take — no need to
     stop between them. Press <em>Start</em>, recite, then press <em>Stop</em>.
-    Syllables must be clearly articulated: if they get fused, the training will be
-    rejected and you will be asked to re-record.
+    The system will learn the rhythm from your recording.
   </p>
 
   <label class="count-input">
@@ -140,7 +119,7 @@
     <input
       type="number"
       min="3"
-      max="30"
+      max="60"
       bind:value={expectedCount}
       disabled={recording}
     />
@@ -176,8 +155,7 @@
           <li>
             <span class="count">{t.expected_daimoku_count} Daimoku</span>
             <span class="dur">{(t.duration_ms / 1000).toFixed(1)} s</span>
-            <button class="btn-mini" on:click={() => detectOnsets(t.id)}>Detect</button>
-            <button class="btn-mini primary" on:click={() => learn(t.id)}>Learn</button>
+            <button class="btn-mini primary" on:click={() => validate(t.id)}>Validate</button>
             <button class="btn-mini" on:click={() => exportWav(t.id)}>WAV</button>
           </li>
         {/each}
@@ -185,29 +163,27 @@
     </section>
   {/if}
 
-  {#if onsetResult}
-    <section class="onsets">
-      <h2>Onsets — take #{onsetResult.index}</h2>
+  {#if validation}
+    <section class="validation" class:ok={validation.result.ok} class:fail={!validation.result.ok}>
+      <h2>
+        {validation.result.ok ? '✓ Training validated' : '✗ Validation failed'}
+        — take #{validation.index}
+      </h2>
       <p>
-        Detected <strong>{onsetResult.info.count}</strong> onsets
-        {#if onsetResult.info.mean_ioi_ms !== null}
-          · mean IOI {onsetResult.info.mean_ioi_ms.toFixed(1)} ms
-        {/if}
+        Recited: <strong>{validation.result.expected}</strong>
+        · Detected: <strong>{validation.result.detected}</strong>
       </p>
-    </section>
-  {/if}
-
-  {#if learnResult}
-    <section class="learned">
-      <h2>Template — take #{learnResult.index}</h2>
-      <p>
-        Period: <strong>{learnResult.result.template.period}</strong> syllables
-        · Mean IOI: <strong>{learnResult.result.template.mean_ioi_ms.toFixed(1)} ms</strong>
-        · Training error: <strong>{(learnResult.result.template.training_error * 100).toFixed(1)}%</strong>
+      <p class="details">
+        Period: {validation.result.analysis.period_ms.toFixed(0)} ms
+        · Confidence: {(validation.result.analysis.confidence * 100).toFixed(0)}%
+        · Segments: {validation.result.analysis.segment_count}
+        · Active: {validation.result.analysis.active_duration_secs.toFixed(1)} s
       </p>
-      <p class="signature">
-        Signature: {learnResult.result.template.normalized_ioi.map((v) => v.toFixed(2)).join(', ')}
-      </p>
+      {#if !validation.result.ok}
+        <p class="hint">
+          Recite again with clearer syllable separation and a steadier rhythm.
+        </p>
+      {/if}
     </section>
   {/if}
 </div>
@@ -326,31 +302,32 @@
   .count { flex: 1; color: #cfcfcf; }
   .dur { flex: 1; color: #888; text-align: right; }
 
-  .onsets, .learned {
+  .validation {
     width: 100%;
     max-width: 34rem;
     text-align: left;
     padding: 0.75rem 1rem;
     border-radius: 8px;
   }
-  .onsets {
-    background-color: #1e2a1e;
+  .validation.ok {
+    background-color: #152a15;
     border: 1px solid #2f4a2f;
+    color: #8fe38f;
   }
-  .learned {
-    background-color: #1e2430;
-    border: 1px solid #2f3a4a;
+  .validation.fail {
+    background-color: #2a1515;
+    border: 1px solid #4a2f2f;
+    color: #ff9b9b;
   }
-  .onsets h2, .learned h2 {
-    font-size: 0.95rem;
-    opacity: 0.7;
+  .validation h2 {
+    font-size: 1rem;
     margin: 0 0 0.5rem;
     font-weight: normal;
   }
-  .onsets p, .learned p { margin: 0.25rem 0; font-size: 0.9rem; }
-  .learned .signature {
-    font-family: ui-monospace, monospace;
+  .validation p { margin: 0.25rem 0; font-size: 0.9rem; }
+  .validation .details,
+  .validation .hint {
     font-size: 0.85rem;
-    color: #b8c8e0;
+    opacity: 0.8;
   }
 </style>
