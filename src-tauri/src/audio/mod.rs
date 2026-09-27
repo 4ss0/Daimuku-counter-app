@@ -77,7 +77,10 @@ impl LiveCounter {
     }
 
     pub fn count(&self) -> usize {
-        self.inner.lock().map(|g| g.counter.count()).unwrap_or(0)
+        self.inner
+            .lock()
+            .map(|g| g.counter.robust_count())
+            .unwrap_or(0)
     }
 
     pub fn state(&self) -> StreamingState {
