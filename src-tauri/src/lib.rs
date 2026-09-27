@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod commands;
 pub mod dsp;
+pub mod dsp_common;
 pub mod profile;
 pub mod session;
 pub mod training;

@@ -7,6 +7,7 @@ use std::thread;
 use tokio::sync::oneshot;
 
 use crate::dsp::{count_daimoku_with_profile, DaimokuCountResult, StreamingState};
+use crate::dsp_common::{find_active_segments, moving_average, rms_envelope};
 use crate::profile::PersonalProfile;
 
 // -----------------------------------------------------------------------------
@@ -37,7 +38,7 @@ pub fn list_input_devices() -> Result<Vec<DeviceInfo>, String> {
 }
 
 // -----------------------------------------------------------------------------
-// Live counter (incremental batch)
+// Live counter (incremental batch, with a bounded sliding window)
 // -----------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy)]
@@ -53,6 +54,10 @@ pub struct LiveCounter {
 }
 
 struct LiveInner {
+    /// Only the recent "tail" of the recording — bounded by
+    /// `MAX_WINDOW_SECS` — is kept here for recompute. Older audio is
+    /// trimmed away once its count has been folded into
+    /// `committed_count` (see `maybe_trim`).
     samples: Vec<f32>,
     sample_rate: u32,
     profile: Option<PersonalProfile>,
@@ -60,9 +65,38 @@ struct LiveInner {
     cached: Option<DaimokuCountResult>,
     last_compute_len: usize,
     computed_once: bool,
+
+    /// Daimoku already counted in audio that has since been trimmed
+    /// out of `samples`. Added to the freshly-computed tail count to
+    /// get the total shown to the user.
+    committed_count: usize,
+    /// Total samples ever pushed since the last reset, independent of
+    /// trimming — used only for the Warming/Locked/Idle state and
+    /// elapsed-time logic, never for counting.
+    total_samples_seen: u64,
+    /// Most recent valid period estimate. Kept around so the UI
+    /// doesn't flash back to "—" right after a trim, before the
+    /// shrunk tail has re-accumulated enough audio to estimate it
+    /// again.
+    last_known_period_ms: Option<f32>,
+    /// Bumped on every reset; lets `maybe_trim` detect and safely
+    /// abandon a trim if a reset happened while it was computing.
+    generation: u64,
 }
 
 const MIN_NEW_SECS_F32: f32 = 0.5;
+
+/// Once the retained audio buffer grows past this, we look for a safe
+/// place to "freeze" the older part of it into `committed_count` and
+/// drop the raw samples — this is what keeps the matched-filter
+/// recompute bounded instead of growing (and getting quadratically
+/// expensive) with the whole session's length.
+const MAX_WINDOW_SECS: f32 = 35.0;
+
+/// Always keep at least this much of the most recent audio in the
+/// live buffer, even right after a trim, so there's enough context
+/// left for period/phase estimation.
+const MIN_KEEP_SECS: f32 = 8.0;
 
 impl LiveCounter {
     pub fn new(initial_sample_rate: u32) -> Self {
@@ -75,6 +109,10 @@ impl LiveCounter {
                 cached: None,
                 last_compute_len: 0,
                 computed_once: false,
+                committed_count: 0,
+                total_samples_seen: 0,
+                last_known_period_ms: None,
+                generation: 0,
             }),
         }
     }
@@ -86,6 +124,10 @@ impl LiveCounter {
         g.cached = None;
         g.last_compute_len = 0;
         g.computed_once = false;
+        g.committed_count = 0;
+        g.total_samples_seen = 0;
+        g.last_known_period_ms = None;
+        g.generation = g.generation.wrapping_add(1);
     }
 
     pub fn set_profile(&self, profile: Option<PersonalProfile>) {
@@ -102,6 +144,7 @@ impl LiveCounter {
     pub fn push(&self, samples: &[f32]) {
         if let Ok(mut g) = self.inner.lock() {
             g.samples.extend_from_slice(samples);
+            g.total_samples_seen = g.total_samples_seen.saturating_add(samples.len() as u64);
         }
     }
 
@@ -110,7 +153,9 @@ impl LiveCounter {
     }
 
     pub fn snapshot(&self) -> LiveSnapshot {
-        let (to_compute, sr, cached, profile) = {
+        self.maybe_trim();
+
+        let (to_compute, sr, cached, profile, committed, last_period) = {
             let g = match self.inner.lock() {
                 Ok(g) => g,
                 Err(_) => return empty_snapshot(),
@@ -125,9 +170,18 @@ impl LiveCounter {
                     g.sample_rate,
                     None,
                     g.profile.clone(),
+                    g.committed_count,
+                    g.last_known_period_ms,
                 )
             } else {
-                (None, g.sample_rate, g.cached.clone(), g.profile.clone())
+                (
+                    None,
+                    g.sample_rate,
+                    g.cached.clone(),
+                    g.profile.clone(),
+                    g.committed_count,
+                    g.last_known_period_ms,
+                )
             }
         };
 
@@ -146,28 +200,95 @@ impl LiveCounter {
                     g.cached = result.clone();
                     g.last_compute_len = len;
                     g.computed_once = true;
+                    if let Some(r) = &result {
+                        if r.period_ms > 0.0 {
+                            g.last_known_period_ms = Some(r.period_ms);
+                        }
+                    }
                 }
             }
         }
 
-        let count = result.as_ref().map(|r| r.count).unwrap_or(0);
-        let period_ms = result.as_ref().map(|r| r.period_ms).filter(|p| *p > 0.0);
-        let samples_len = self.inner.lock().map(|g| g.samples.len()).unwrap_or(0);
-        let state = if samples_len < (sr as usize / 2) {
+        let tail_count = result.as_ref().map(|r| r.count).unwrap_or(0);
+        let total_count = committed + tail_count;
+        let period_ms = result
+            .as_ref()
+            .map(|r| r.period_ms)
+            .filter(|p| *p > 0.0)
+            .or(last_period);
+
+        let total_seen = self
+            .inner
+            .lock()
+            .map(|g| g.total_samples_seen)
+            .unwrap_or(0);
+
+        let state = if total_seen < (sr as u64 / 2) {
             StreamingState::Warming
-        } else if count == 0 {
+        } else if total_count == 0 {
             StreamingState::Idle
-        } else if count >= 2 {
+        } else if total_count >= 2 {
             StreamingState::Locked
         } else {
             StreamingState::Warming
         };
 
         LiveSnapshot {
-            count,
+            count: total_count,
             state,
             period_ms,
             sample_rate: sr,
+        }
+    }
+
+    /// Bounds the recompute cost of `snapshot()`: if the retained
+    /// buffer has grown past `MAX_WINDOW_SECS`, look for a silence gap
+    /// safely inside it, run one batch count on everything before that
+    /// gap, fold it into `committed_count`, and drop those samples.
+    /// If no safe gap exists yet (e.g. one long unbroken recitation),
+    /// this is a no-op and the buffer is simply allowed to grow a bit
+    /// past the target until a pause happens — favoring correctness
+    /// (never risk splitting a Daimoku) over a hard memory bound.
+    fn maybe_trim(&self) {
+        let (sr, generation) = match self.inner.lock() {
+            Ok(g) => (g.sample_rate, g.generation),
+            Err(_) => return,
+        };
+        if sr == 0 {
+            return;
+        }
+        let max_window_samples = (MAX_WINDOW_SECS * sr as f32) as usize;
+
+        let (samples_snapshot, profile_snapshot) = {
+            let g = match self.inner.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            if g.generation != generation || g.samples.len() <= max_window_samples {
+                return;
+            }
+            (g.samples.clone(), g.profile.clone())
+        };
+
+        let Some(cut_sample) = find_safe_cut_point(&samples_snapshot, sr, MIN_KEEP_SECS) else {
+            return;
+        };
+        if cut_sample == 0 {
+            return;
+        }
+
+        let dropped = &samples_snapshot[..cut_sample];
+        let dropped_result = count_daimoku_with_profile(dropped, sr, profile_snapshot.as_ref());
+        let dropped_count = dropped_result.as_ref().map(|r| r.count).unwrap_or(0);
+
+        if let Ok(mut g) = self.inner.lock() {
+            if g.generation == generation && g.samples.len() >= samples_snapshot.len() {
+                g.samples.drain(0..cut_sample);
+                g.committed_count += dropped_count;
+                g.last_compute_len = g.last_compute_len.saturating_sub(cut_sample);
+                g.cached = None;
+                g.computed_once = false;
+            }
         }
     }
 
@@ -182,17 +303,36 @@ impl LiveCounter {
     }
 
     pub fn finish(&self) -> Option<DaimokuCountResult> {
-        let (samples, sr, profile) = {
+        self.maybe_trim();
+        let (samples, sr, profile, committed) = {
             let g = match self.inner.lock() {
                 Ok(g) => g,
                 Err(_) => return None,
             };
-            if g.samples.is_empty() {
+            if g.samples.is_empty() && g.committed_count == 0 {
                 return None;
             }
-            (g.samples.clone(), g.sample_rate, g.profile.clone())
+            (
+                g.samples.clone(),
+                g.sample_rate,
+                g.profile.clone(),
+                g.committed_count,
+            )
         };
-        count_daimoku_with_profile(&samples, sr, profile.as_ref())
+        let tail = count_daimoku_with_profile(&samples, sr, profile.as_ref());
+        merge_committed(committed, tail)
+    }
+}
+
+#[cfg(test)]
+impl LiveCounter {
+    fn debug_buffered_secs(&self) -> f32 {
+        let g = self.inner.lock().unwrap();
+        if g.sample_rate == 0 {
+            0.0
+        } else {
+            g.samples.len() as f32 / g.sample_rate as f32
+        }
     }
 }
 
@@ -213,6 +353,77 @@ fn profile_fingerprint(p: Option<&PersonalProfile>) -> u64 {
             let per = (p.natural_period_ms.max(0.0) * 10.0) as u64;
             n.wrapping_mul(1_000_003).wrapping_add(per)
         }
+    }
+}
+
+/// Looks for a point inside a sustained silence that still leaves at
+/// least `min_keep_secs` of audio after it, so trimming everything
+/// before that point can never cut a Daimoku in half. Returns `None`
+/// if no such pause exists yet.
+fn find_safe_cut_point(samples: &[f32], sr: u32, min_keep_secs: f32) -> Option<usize> {
+    if sr == 0 || samples.is_empty() {
+        return None;
+    }
+    let hop_ms = 10u32;
+    let env = rms_envelope(samples, sr, 30, hop_ms);
+    if env.is_empty() {
+        return None;
+    }
+    let smoothed = moving_average(&env, 20);
+    let peak = smoothed.iter().cloned().fold(f32::MIN, f32::max);
+    if peak <= 1e-6 {
+        return None;
+    }
+    let floor = 0.12 * peak;
+    // ~200ms of continuous silence counts as a real pause worth
+    // cutting on.
+    let min_gap_frames = ((200.0 / hop_ms as f32).ceil() as usize).max(2);
+    let segments = find_active_segments(&smoothed, floor, min_gap_frames);
+    if segments.len() < 2 {
+        return None;
+    }
+
+    let hop_samples = (hop_ms as usize * sr as usize) / 1000;
+    let keep_from_sample = samples
+        .len()
+        .saturating_sub((min_keep_secs * sr as f32) as usize);
+
+    for w in segments.windows(2).rev() {
+        let gap_start = w[0].1;
+        let gap_end = w[1].0;
+        if gap_end <= gap_start {
+            continue;
+        }
+        let mid_frame = gap_start + (gap_end - gap_start) / 2;
+        let mid_sample = mid_frame * hop_samples;
+        if mid_sample > 0 && mid_sample <= keep_from_sample {
+            return Some(mid_sample);
+        }
+    }
+    None
+}
+
+fn merge_committed(
+    committed: usize,
+    tail: Option<DaimokuCountResult>,
+) -> Option<DaimokuCountResult> {
+    match tail {
+        Some(mut r) => {
+            r.count += committed;
+            Some(r)
+        }
+        None if committed > 0 => Some(DaimokuCountResult {
+            count: committed,
+            confidence: 0.5,
+            phrase_count: 0,
+            mean_period_ms: 0.0,
+            method: "committed-only".to_string(),
+            period_ms: 0.0,
+            segment_count: 0,
+            duration_secs: 0.0,
+            active_duration_secs: 0.0,
+        }),
+        None => None,
     }
 }
 
@@ -491,6 +702,80 @@ mod tests {
         lc.reset(44_100);
         assert_eq!(lc.count(), 0);
         assert_eq!(lc.sample_rate(), 44_100);
+    }
+
+    fn synth_bumps(bumps: usize, period_s: f32, sr: u32) -> Vec<f32> {
+        use std::f32::consts::PI;
+        let n = (bumps as f32 * period_s * sr as f32) as usize;
+        let mut v = Vec::with_capacity(n);
+        for i in 0..n {
+            let t = i as f32 / sr as f32;
+            let car = (2.0 * PI * 220.0 * t).sin() + 0.4 * (2.0 * PI * 660.0 * t).sin();
+            let phase = (t / period_s).fract();
+            let bump = 0.55 + 0.45 * (PI * phase).sin().powf(0.6);
+            v.push(car * bump * 0.4);
+        }
+        v
+    }
+
+    fn synth_silence(secs: f32, sr: u32) -> Vec<f32> {
+        vec![0.0; (secs * sr as f32) as usize]
+    }
+
+    #[test]
+    fn live_counter_bounds_buffer_growth_across_pauses() {
+        let sr = 48_000u32;
+        let lc = LiveCounter::new(sr);
+        lc.reset(sr);
+
+        // Several minutes' worth of pushes, but with regular pauses so
+        // the window has plenty of safe cut points.
+        for _ in 0..30 {
+            let chunk = synth_silence(2.0, sr);
+            lc.push(&chunk);
+            let _ = lc.snapshot();
+        }
+
+        assert!(
+            lc.debug_buffered_secs() < (MAX_WINDOW_SECS * 2.0),
+            "buffer grew to {:.1}s — trimming does not seem to be bounding it",
+            lc.debug_buffered_secs()
+        );
+    }
+
+    #[test]
+    fn live_counter_preserves_count_across_a_trim() {
+        let sr = 48_000u32;
+        let lc = LiveCounter::new(sr);
+        lc.reset(sr);
+
+        let rounds = 5usize;
+        let per_round = 10usize;
+        for _ in 0..rounds {
+            // Push in chunks and poll snapshot() in between, like the
+            // real audio callback + UI poll do, so trimming has a
+            // chance to kick in mid-session exactly like in
+            // production.
+            let active = synth_bumps(per_round, 1.0, sr);
+            for chunk in active.chunks(96_000) {
+                lc.push(chunk);
+                let _ = lc.snapshot();
+            }
+            let pause = synth_silence(3.0, sr);
+            for chunk in pause.chunks(96_000) {
+                lc.push(chunk);
+                let _ = lc.snapshot();
+            }
+        }
+
+        let result = lc.finish().expect("expected a count");
+        let expected = (rounds * per_round) as i64;
+        let got = result.count as i64;
+        assert!(
+            (got - expected).abs() <= 10,
+            "expected roughly {expected} Daimoku across {rounds} rounds with \
+             pauses, got {got}"
+        );
     }
 
     #[test]

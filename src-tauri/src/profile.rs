@@ -5,9 +5,15 @@
 //!   - a normalized 128-sample template of one Daimoku
 //!   - the min/max period ratio observed, used by the multi-scale
 //!     matched filter in `dsp.rs` to follow speed changes
+//!   - a rough zero-crossing-rate band, used by `dsp.rs` as a cheap
+//!     "does this sound like the trained voice at all" content gate
 //!
 //! Persistence: JSON file in `dirs::data_dir()/daimuku-counter/profile.json`.
 
+use crate::dsp_common::{
+    compute_novelty, find_active_segments, median_f32, moving_average, rms_envelope,
+    zero_crossing_rate,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -29,6 +35,11 @@ pub struct TakeRecord {
     pub duration_secs: f32,
     pub period_ms: f32,
     pub template: Option<Vec<f32>>,
+    /// Median zero-crossing-rate of this take's Daimoku segments.
+    /// `#[serde(default)]` so profile.json files saved before this
+    /// field existed still load correctly.
+    #[serde(default)]
+    pub zcr: Option<f32>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -40,6 +51,10 @@ pub struct PersonalProfile {
     pub period_sigma_ms: f32,
     pub template: Option<Vec<f32>>,
     pub period_ratio_range: (f32, f32),
+    #[serde(default)]
+    pub zcr_median: f32,
+    #[serde(default)]
+    pub zcr_sigma: f32,
 }
 
 impl Default for PersonalProfile {
@@ -51,6 +66,8 @@ impl Default for PersonalProfile {
             period_sigma_ms: 0.0,
             template: None,
             period_ratio_range: (1.0, 1.0),
+            zcr_median: 0.0,
+            zcr_sigma: 0.0,
         }
     }
 }
@@ -83,17 +100,17 @@ impl PersonalProfile {
             ));
         }
 
-        let (period_ms, template) =
-            extract_period_and_template(samples, sample_rate, n_daimoku as usize)
-                .ok_or_else(|| "could not extract period/template from this take".to_string())?;
+        let extracted = extract_period_and_template(samples, sample_rate, n_daimoku as usize)
+            .ok_or_else(|| "could not extract period/template from this take".to_string())?;
 
         let id = self.takes.len();
         let record = TakeRecord {
             id,
             n_daimoku,
             duration_secs,
-            period_ms,
-            template,
+            period_ms: extracted.period_ms,
+            template: extracted.template,
+            zcr: extracted.zcr,
             created_at: Utc::now(),
         };
         self.takes.push(record);
@@ -107,6 +124,8 @@ impl PersonalProfile {
             self.period_sigma_ms = 0.0;
             self.template = None;
             self.period_ratio_range = (1.0, 1.0);
+            self.zcr_median = 0.0;
+            self.zcr_sigma = 0.0;
             return;
         }
 
@@ -116,11 +135,7 @@ impl PersonalProfile {
         self.natural_period_ms = median;
 
         let mean = periods.iter().sum::<f32>() / periods.len() as f32;
-        let var = periods
-            .iter()
-            .map(|p| (p - mean).powi(2))
-            .sum::<f32>()
-            / periods.len() as f32;
+        let var = periods.iter().map(|p| (p - mean).powi(2)).sum::<f32>() / periods.len() as f32;
         self.period_sigma_ms = var.sqrt();
 
         if median > 0.0 {
@@ -154,6 +169,19 @@ impl PersonalProfile {
             }
             self.template = Some(out);
         }
+
+        let zcr_vals: Vec<f32> = self.takes.iter().filter_map(|t| t.zcr).collect();
+        if zcr_vals.is_empty() {
+            self.zcr_median = 0.0;
+            self.zcr_sigma = 0.0;
+        } else {
+            let zmed = median_f32(&zcr_vals);
+            let zmean = zcr_vals.iter().sum::<f32>() / zcr_vals.len() as f32;
+            let zvar =
+                zcr_vals.iter().map(|v| (v - zmean).powi(2)).sum::<f32>() / zcr_vals.len() as f32;
+            self.zcr_median = zmed;
+            self.zcr_sigma = zvar.sqrt();
+        }
     }
 
     pub fn clear(&mut self) {
@@ -179,8 +207,24 @@ impl PersonalProfile {
             return Self::default();
         }
         match fs::read_to_string(&path) {
-            Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
-            Err(_) => Self::default(),
+            Ok(s) => match serde_json::from_str(&s) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!(
+                        "[profile] could not parse {}: {e} — starting from an empty \
+                         profile. The unreadable file was kept as a .bak instead of \
+                         being silently discarded.",
+                        path.display()
+                    );
+                    let backup = path.with_extension("json.bak");
+                    let _ = fs::rename(&path, &backup);
+                    Self::default()
+                }
+            },
+            Err(e) => {
+                eprintln!("[profile] could not read {}: {e}", path.display());
+                Self::default()
+            }
         }
     }
 
@@ -193,8 +237,15 @@ impl PersonalProfile {
         }
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("failed to serialize profile: {e}"))?;
-        fs::write(&path, json)
-            .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+
+        // Write-then-rename so a crash mid-write can never leave a
+        // half-written, corrupt profile.json behind (rename is atomic
+        // on the same filesystem).
+        let tmp_path = path.with_extension("json.tmp");
+        fs::write(&tmp_path, &json)
+            .map_err(|e| format!("failed to write {}: {e}", tmp_path.display()))?;
+        fs::rename(&tmp_path, &path)
+            .map_err(|e| format!("failed to finalize {}: {e}", path.display()))?;
         Ok(())
     }
 }
@@ -237,17 +288,27 @@ impl Default for ProfileState {
 // Template extraction
 // ===========================================================================
 
+/// Result of analyzing one training take.
+pub struct ExtractResult {
+    pub period_ms: f32,
+    pub template: Option<Vec<f32>>,
+    /// Median zero-crossing-rate of the individual Daimoku segments
+    /// found in this take, if any could be extracted.
+    pub zcr: Option<f32>,
+}
+
 pub fn extract_period_and_template(
     samples: &[f32],
     sample_rate: u32,
     n_daimoku: usize,
-) -> Option<(f32, Option<Vec<f32>>)> {
+) -> Option<ExtractResult> {
     if n_daimoku == 0 || sample_rate == 0 {
         return None;
     }
 
     let hop_ms: u32 = 10;
     let hop_secs = hop_ms as f32 / 1000.0;
+    let hop_samples = (hop_ms as usize * sample_rate as usize) / 1000;
     let smooth_frames = 20;
     let nov_lag_frames = 30;
     let nov_smooth_frames = 10;
@@ -265,130 +326,163 @@ pub fn extract_period_and_template(
         return None;
     }
     let thresh = 0.15 * max_smooth;
-    let first = smoothed.iter().position(|&x| x > thresh)?;
-    let last = smoothed.iter().rposition(|&x| x > thresh)?;
-    if last <= first {
+
+    // Split into active runs, bridging brief dips (e.g. between
+    // syllables of the same Daimoku) but splitting on real pauses — a
+    // breath, a hesitation — so they don't get folded into the
+    // per-Daimoku period as if they were part of it. This is the fix
+    // for the breath-between-8th-and-9th-Daimoku case.
+    let min_gap_frames = 15; // ~150ms of sustained silence = a real pause
+    let segments = find_active_segments(&smoothed, thresh, min_gap_frames);
+    if segments.is_empty() {
         return None;
     }
-    let active_frames = last - first + 1;
-    let active_secs = active_frames as f32 * hop_secs;
+
+    let total_active_frames: usize = segments.iter().map(|&(s, e)| e - s).sum();
+    let active_secs = total_active_frames as f32 * hop_secs;
     if active_secs < MIN_ACTIVE_SECS {
         return None;
     }
 
-    let t_frames = active_frames as f32 / n_daimoku as f32;
+    // Period from *active* time only: any breaths between segments
+    // are excluded, so they no longer inflate the estimated
+    // per-Daimoku duration.
+    let t_frames = total_active_frames as f32 / n_daimoku as f32;
     if t_frames < 15.0 {
         return None;
     }
     let period_secs = t_frames * hop_secs;
     let period_ms = period_secs * 1000.0;
 
-    let phase_span = t_frames.max(1.0);
-    let steps = 200usize;
-    let mut best_phi = first as f32;
-    let mut best_score = f32::MIN;
-    for k in 0..steps {
-        let phi = first as f32 + (k as f32 / steps as f32) * phase_span;
-        let mut score = 0.0f32;
-        for d in 0..n_daimoku {
-            let pos = phi + d as f32 * t_frames;
-            let idx = pos.round() as usize;
-            if idx < nov.len() {
-                score += nov[idx];
-            }
-        }
-        if score > best_score {
-            best_score = score;
-            best_phi = phi;
-        }
-    }
+    // Spread the n_daimoku across segments proportionally to how long
+    // each one is; the longest segment absorbs any rounding remainder
+    // so the total always matches exactly.
+    let mut counts: Vec<usize> = segments
+        .iter()
+        .map(|&(s, e)| (((e - s) as f32) / t_frames).round() as usize)
+        .collect();
+    fixup_segment_counts(&mut counts, n_daimoku, &segments);
 
-    let half = t_frames / 2.0;
-    let mut segments: Vec<Vec<f32>> = Vec::with_capacity(n_daimoku);
-    for d in 0..n_daimoku {
-        let center = best_phi + d as f32 * t_frames;
-        let lo = (center - half).round() as i64;
-        let hi = (center + half).round() as i64;
-        let lo = lo.max(0) as usize;
-        let hi = (hi.min(nov.len() as i64) as usize).max(lo + 2);
-        if hi - lo < 4 {
+    let mut nov_segments: Vec<Vec<f32>> = Vec::with_capacity(n_daimoku);
+    let mut raw_zcrs: Vec<f32> = Vec::with_capacity(n_daimoku);
+
+    for (&(seg_start, seg_end), &seg_count) in segments.iter().zip(counts.iter()) {
+        if seg_count == 0 {
             continue;
         }
-        let seg = &nov[lo..hi];
-        if let Some(norm) = z_score_resample(seg, TEMPLATE_LEN) {
-            segments.push(norm);
+        let seg_len = (seg_end - seg_start) as f32;
+        let local_t = seg_len / seg_count as f32;
+        if local_t < 4.0 {
+            continue;
+        }
+
+        // Phase search restricted to this segment only, so a pause
+        // elsewhere in the take can't shift where we think a Daimoku
+        // in *this* segment starts.
+        let steps = 200usize;
+        let mut best_phi = seg_start as f32;
+        let mut best_score = f32::MIN;
+        for k in 0..steps {
+            let phi = seg_start as f32 + (k as f32 / steps as f32) * local_t;
+            let mut score = 0.0f32;
+            for d in 0..seg_count {
+                let pos = phi + d as f32 * local_t;
+                let idx = pos.round() as usize;
+                if idx < nov.len() {
+                    score += nov[idx];
+                }
+            }
+            if score > best_score {
+                best_score = score;
+                best_phi = phi;
+            }
+        }
+
+        let half = local_t / 2.0;
+        for d in 0..seg_count {
+            let center = best_phi + d as f32 * local_t;
+            let lo = (center - half).round() as i64;
+            let hi = (center + half).round() as i64;
+            let lo = lo.max(seg_start as i64) as usize;
+            let hi = (hi.min(seg_end as i64) as usize).max(lo + 2);
+            if hi - lo < 4 {
+                continue;
+            }
+            let seg = &nov[lo..hi];
+            if let Some(norm) = z_score_resample(seg, TEMPLATE_LEN) {
+                nov_segments.push(norm);
+            }
+
+            let raw_lo = (lo * hop_samples).min(samples.len());
+            let raw_hi = (hi * hop_samples).min(samples.len());
+            if raw_hi > raw_lo + 1 {
+                raw_zcrs.push(zero_crossing_rate(&samples[raw_lo..raw_hi]));
+            }
         }
     }
 
-    if segments.len() < n_daimoku / 2 + 1 {
-        return Some((period_ms, None));
+    let zcr = if raw_zcrs.is_empty() {
+        None
+    } else {
+        Some(median_f32(&raw_zcrs))
+    };
+
+    if nov_segments.len() < n_daimoku / 2 + 1 {
+        return Some(ExtractResult {
+            period_ms,
+            template: None,
+            zcr,
+        });
     }
 
-    let template = samplewise_median(&segments, TEMPLATE_LEN);
-    Some((period_ms, Some(template)))
+    let template = samplewise_median(&nov_segments, TEMPLATE_LEN);
+    Some(ExtractResult {
+        period_ms,
+        template: Some(template),
+        zcr,
+    })
+}
+
+/// Nudges rounded per-segment Daimoku counts so they sum to exactly
+/// `n_daimoku`, adjusting the longest segment(s) first since a
+/// rounding error is least noticeable there.
+fn fixup_segment_counts(counts: &mut [usize], n_daimoku: usize, segments: &[(usize, usize)]) {
+    if segments.is_empty() {
+        return;
+    }
+    let sum: usize = counts.iter().sum();
+    if sum == n_daimoku {
+        return;
+    }
+
+    let mut order: Vec<usize> = (0..segments.len()).collect();
+    order.sort_by_key(|&i| std::cmp::Reverse(segments[i].1 - segments[i].0));
+
+    if sum < n_daimoku {
+        let mut remaining = n_daimoku - sum;
+        for &i in &order {
+            if remaining == 0 {
+                break;
+            }
+            counts[i] += 1;
+            remaining -= 1;
+        }
+    } else {
+        let mut remaining = sum - n_daimoku;
+        for &i in &order {
+            if remaining == 0 {
+                break;
+            }
+            let take = counts[i].min(remaining);
+            counts[i] -= take;
+            remaining -= take;
+        }
+    }
 }
 
 // ===========================================================================
-// Low-level helpers
+// Low-level helpers (local to template extraction)
 // ===========================================================================
-
-fn rms_envelope(samples: &[f32], sr: u32, window_ms: u32, hop_ms: u32) -> Vec<f32> {
-    let w = (window_ms as usize * sr as usize) / 1000;
-    let h = (hop_ms as usize * sr as usize) / 1000;
-    if w == 0 || h == 0 || samples.len() < w {
-        return Vec::new();
-    }
-    let mut out = Vec::with_capacity((samples.len() - w) / h + 1);
-    let mut i = 0;
-    while i + w <= samples.len() {
-        let s: f32 = samples[i..i + w].iter().map(|x| x * x).sum();
-        out.push((s / w as f32).sqrt());
-        i += h;
-    }
-    out
-}
-
-fn moving_average(data: &[f32], window: usize) -> Vec<f32> {
-    let n = data.len();
-    if n == 0 {
-        return Vec::new();
-    }
-    let w = window.max(1).min(n);
-    let half = w / 2;
-    let mut out = vec![0.0f32; n];
-    let mut sum = 0.0f32;
-    let mut lo = 0usize;
-    let mut hi = 0usize;
-    for i in 0..n {
-        let want_lo = i.saturating_sub(half);
-        let want_hi = (i + half + 1).min(n);
-        while lo < want_lo {
-            sum -= data[lo];
-            lo += 1;
-        }
-        while hi < want_hi {
-            sum += data[hi];
-            hi += 1;
-        }
-        out[i] = sum / (hi - lo).max(1) as f32;
-    }
-    out
-}
-
-fn compute_novelty(sig: &[f32], lag: usize) -> Vec<f32> {
-    let n = sig.len();
-    let mut out = vec![0.0f32; n];
-    if lag == 0 || lag >= n {
-        return out;
-    }
-    for i in lag..n {
-        let d = sig[i] - sig[i - lag];
-        if d > 0.0 {
-            out[i] = d;
-        }
-    }
-    out
-}
 
 fn z_score_resample(seg: &[f32], target_len: usize) -> Option<Vec<f32>> {
     if seg.len() < 2 || target_len == 0 {
@@ -432,20 +526,6 @@ fn samplewise_median(segments: &[Vec<f32>], len: usize) -> Vec<f32> {
     out
 }
 
-fn median_f32(data: &[f32]) -> f32 {
-    if data.is_empty() {
-        return 0.0;
-    }
-    let mut v = data.to_vec();
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let m = v.len() / 2;
-    if v.len() % 2 == 0 {
-        (v[m - 1] + v[m]) * 0.5
-    } else {
-        v[m]
-    }
-}
-
 // ===========================================================================
 // Tests
 // ===========================================================================
@@ -474,12 +554,28 @@ mod tests {
         vec![0.0; (secs * SR as f32) as usize]
     }
 
+    fn phrase_with_pause(
+        bumps: usize,
+        period_s: f32,
+        pause_after: usize,
+        pause_s: f32,
+    ) -> Vec<f32> {
+        let mut v = Vec::new();
+        for b in 0..bumps {
+            v.extend(phrase(1, period_s));
+            if b + 1 == pause_after {
+                v.extend(silence(pause_s));
+            }
+        }
+        v
+    }
+
     #[test]
     fn extract_returns_period_and_template() {
         let v = phrase(10, 1.20);
-        let (period_ms, tmpl) = extract_period_and_template(&v, SR, 10).expect("extraction");
-        assert!((1150.0..=1250.0).contains(&period_ms), "period {period_ms}");
-        let t = tmpl.expect("template");
+        let r = extract_period_and_template(&v, SR, 10).expect("extraction");
+        assert!((1150.0..=1250.0).contains(&r.period_ms), "period {}", r.period_ms);
+        let t = r.template.expect("template");
         assert_eq!(t.len(), TEMPLATE_LEN);
         let var: f32 = t.iter().map(|x| x * x).sum::<f32>() / t.len() as f32;
         assert!(var > 0.1);
@@ -488,15 +584,15 @@ mod tests {
     #[test]
     fn extract_handles_slow_daimoku() {
         let v = phrase(2, 4.0);
-        let (period_ms, _) = extract_period_and_template(&v, SR, 2).expect("slow");
-        assert!((3500.0..=4500.0).contains(&period_ms), "period {period_ms}");
+        let r = extract_period_and_template(&v, SR, 2).expect("slow");
+        assert!((3500.0..=4500.0).contains(&r.period_ms), "period {}", r.period_ms);
     }
 
     #[test]
     fn extract_handles_fast_daimoku() {
         let v = phrase(10, 0.80);
-        let (period_ms, _) = extract_period_and_template(&v, SR, 10).expect("fast");
-        assert!((750.0..=850.0).contains(&period_ms), "period {period_ms}");
+        let r = extract_period_and_template(&v, SR, 10).expect("fast");
+        assert!((750.0..=850.0).contains(&r.period_ms), "period {}", r.period_ms);
     }
 
     #[test]
@@ -515,10 +611,10 @@ mod tests {
     fn template_is_amplitude_invariant() {
         let loud = phrase(5, 1.0);
         let quiet: Vec<f32> = loud.iter().map(|x| x * 0.5).collect();
-        let (_, tl) = extract_period_and_template(&loud, SR, 5).unwrap();
-        let (_, tq) = extract_period_and_template(&quiet, SR, 5).unwrap();
-        let tl = tl.expect("t");
-        let tq = tq.expect("t");
+        let rl = extract_period_and_template(&loud, SR, 5).unwrap();
+        let rq = extract_period_and_template(&quiet, SR, 5).unwrap();
+        let tl = rl.template.expect("t");
+        let tq = rq.template.expect("t");
         let diff: f32 = tl
             .iter()
             .zip(tq.iter())
@@ -526,6 +622,30 @@ mod tests {
             .sum::<f32>()
             / tl.len() as f32;
         assert!(diff < 0.5, "diff {diff}");
+    }
+
+    #[test]
+    fn breath_pause_does_not_bias_period_estimate() {
+        // Mirrors the real-world case: 10 Daimoku with a breath after
+        // the 8th, like in the training screenshots.
+        let true_period = 1.20_f32;
+        let v = phrase_with_pause(10, true_period, 8, 1.0);
+        let r = extract_period_and_template(&v, SR, 10).expect("extraction");
+        let expected_ms = true_period * 1000.0;
+        assert!(
+            (r.period_ms - expected_ms).abs() < 80.0,
+            "expected ~{expected_ms}ms, got {}ms — a breath pause should not bias \
+             the period estimate",
+            r.period_ms
+        );
+    }
+
+    #[test]
+    fn extract_reports_a_zcr_estimate() {
+        let v = phrase(10, 1.0);
+        let r = extract_period_and_template(&v, SR, 10).expect("extraction");
+        let z = r.zcr.expect("zcr");
+        assert!(z > 0.0 && z < 1.0, "zcr {z} out of plausible range");
     }
 
     #[test]
@@ -564,6 +684,7 @@ mod tests {
         assert!(p.period_ratio_range.0 <= 0.75);
         assert!(p.period_ratio_range.1 >= 2.0);
         assert!(p.template.is_some());
+        assert!(p.zcr_median > 0.0);
     }
 
     #[test]
@@ -596,5 +717,23 @@ mod tests {
         assert_eq!(q.n_takes(), p.n_takes());
         assert!((q.natural_period_ms - p.natural_period_ms).abs() < 1.0);
         assert_eq!(q.template.is_some(), p.template.is_some());
+    }
+
+    #[test]
+    fn profile_deserializes_pre_zcr_json_without_the_new_fields() {
+        // Simulates a profile.json saved by a version of the app from
+        // before the zcr fields existed, so an update doesn't strand
+        // the user's already-trained profile.
+        let old_json = r#"{
+            "version": 1,
+            "takes": [],
+            "natural_period_ms": 0.0,
+            "period_sigma_ms": 0.0,
+            "template": null,
+            "period_ratio_range": [1.0, 1.0]
+        }"#;
+        let p: PersonalProfile = serde_json::from_str(old_json).expect("should deserialize");
+        assert_eq!(p.zcr_median, 0.0);
+        assert_eq!(p.zcr_sigma, 0.0);
     }
 }

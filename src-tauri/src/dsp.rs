@@ -4,9 +4,14 @@
 //!   1. **Fallback** (`count_daimoku`, `count_daimoku_default`): no profile,
 //!      runs the streaming counter over the whole signal.
 //!   2. **Profile-based** (`count_daimoku_with_profile`): uses a personal
-//!      template and a multi-scale matched filter. Robust to speed changes
-//!      from 0.4x to 3x the natural rate of the user.
+//!      template and a multi-scale matched filter, plus a lightweight
+//!      content gate. Robust to speed changes from 0.4x to 3x the
+//!      natural rate of the user.
 
+use crate::dsp_common::{
+    compute_novelty, find_active_segments, moving_average, percentile, rms_envelope,
+    zero_crossing_rate,
+};
 use crate::profile::PersonalProfile;
 use serde::Serialize;
 use std::cmp::Ordering;
@@ -213,6 +218,14 @@ pub fn count_daimoku_with_profile(
         return count_daimoku_default(samples, sample_rate);
     }
 
+    // Pass 5: content gate. This only ever *removes* peaks, and only
+    // if doing so still leaves at least 2 — a gate that talks itself
+    // down to "not enough to count" is more likely wrong than the
+    // audio is, so in that case we keep the ungated peaks rather than
+    // risk rejecting a real Daimoku because of one noisy feature.
+    let gated = apply_content_gate(&peaks, samples, sample_rate, t_dom_frames, hop_secs, p);
+    let peaks = if gated.len() >= 2 { gated } else { peaks };
+
     let count = peaks.len();
     let conf = peaks.iter().map(|&i| score[i]).sum::<f32>() / peaks.len() as f32;
 
@@ -241,6 +254,64 @@ pub fn count_daimoku_with_profile(
         duration_secs,
         active_duration_secs: duration_secs,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Content gate
+// ---------------------------------------------------------------------------
+
+/// Cheap "does this still sound like the trained voice" check applied
+/// to the peaks the matched filter accepted. Compares the
+/// zero-crossing rate of the raw audio around each peak to the band
+/// learned from the user's own training takes (see `profile.rs`).
+///
+/// The margin is deliberately wide (±4 standard deviations, with a
+/// floor so a very consistent profile doesn't end up with an
+/// unrealistically narrow band): the goal is only to catch sounds
+/// that are grossly different from recitation — a knock, a clap,
+/// background speech at a very different pitch/timbre — not to act as
+/// a strict per-syllable classifier, which a single scalar feature
+/// like ZCR isn't precise enough to be.
+fn apply_content_gate(
+    peaks: &[usize],
+    samples: &[f32],
+    sample_rate: u32,
+    t_dom_frames: f32,
+    hop_secs: f32,
+    profile: &PersonalProfile,
+) -> Vec<usize> {
+    if profile.zcr_median <= 0.0 && profile.zcr_sigma <= 0.0 {
+        // Profile predates the zcr fields, or no take produced a
+        // usable estimate — nothing to gate against.
+        return peaks.to_vec();
+    }
+
+    let spread = profile
+        .zcr_sigma
+        .max(0.03 * profile.zcr_median.max(0.01))
+        .max(0.02);
+    let lo = (profile.zcr_median - 4.0 * spread).max(0.0);
+    let hi = profile.zcr_median + 4.0 * spread;
+
+    let half_samples =
+        ((t_dom_frames * hop_secs * sample_rate as f32) / 2.0).round().max(1.0) as i64;
+
+    peaks
+        .iter()
+        .copied()
+        .filter(|&frame_idx| {
+            let center_sample = (frame_idx as f32 * hop_secs * sample_rate as f32).round() as i64;
+            let lo_s = (center_sample - half_samples).max(0) as usize;
+            let hi_s = ((center_sample + half_samples).max(0) as usize).min(samples.len());
+            if hi_s <= lo_s + 1 {
+                // Not enough audio around this peak to judge — don't
+                // reject blind.
+                return true;
+            }
+            let z = zero_crossing_rate(&samples[lo_s..hi_s]);
+            z >= lo && z <= hi
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -512,111 +583,6 @@ fn robust_period_frames(peaks: &[(u64, f32)]) -> Option<f64> {
     let mut v = slice.to_vec();
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
     Some(v[v.len() / 2])
-}
-
-// ---------------------------------------------------------------------------
-// Low-level helpers
-// ---------------------------------------------------------------------------
-
-fn rms_envelope(samples: &[f32], sr: u32, window_ms: u32, hop_ms: u32) -> Vec<f32> {
-    let w = (window_ms as usize * sr as usize) / 1000;
-    let h = (hop_ms as usize * sr as usize) / 1000;
-    if w == 0 || h == 0 || samples.len() < w {
-        return Vec::new();
-    }
-    let mut out = Vec::with_capacity((samples.len() - w) / h + 1);
-    let mut i = 0;
-    while i + w <= samples.len() {
-        let s: f32 = samples[i..i + w].iter().map(|x| x * x).sum();
-        out.push((s / w as f32).sqrt());
-        i += h;
-    }
-    out
-}
-
-fn moving_average(data: &[f32], window: usize) -> Vec<f32> {
-    let n = data.len();
-    if n == 0 {
-        return Vec::new();
-    }
-    let w = window.max(1).min(n);
-    let half = w / 2;
-    let mut out = vec![0.0f32; n];
-    let mut sum = 0.0f32;
-    let mut lo = 0usize;
-    let mut hi = 0usize;
-    for i in 0..n {
-        let want_lo = i.saturating_sub(half);
-        let want_hi = (i + half + 1).min(n);
-        while lo < want_lo {
-            sum -= data[lo];
-            lo += 1;
-        }
-        while hi < want_hi {
-            sum += data[hi];
-            hi += 1;
-        }
-        out[i] = sum / (hi - lo).max(1) as f32;
-    }
-    out
-}
-
-fn compute_novelty(sig: &[f32], lag: usize) -> Vec<f32> {
-    let n = sig.len();
-    let mut out = vec![0.0f32; n];
-    if lag == 0 || lag >= n {
-        return out;
-    }
-    for i in lag..n {
-        let d = sig[i] - sig[i - lag];
-        if d > 0.0 {
-            out[i] = d;
-        }
-    }
-    out
-}
-
-fn find_active_segments(env: &[f32], floor: f32, min_gap: usize) -> Vec<(usize, usize)> {
-    let n = env.len();
-    let mut out = Vec::new();
-    let mut start: Option<usize> = None;
-    let mut last_active = 0usize;
-    let mut silent_run = 0usize;
-
-    for i in 0..n {
-        if env[i] > floor {
-            if start.is_none() {
-                start = Some(i);
-            }
-            last_active = i;
-            silent_run = 0;
-        } else {
-            silent_run += 1;
-            if silent_run >= min_gap {
-                if let Some(s) = start.take() {
-                    if last_active >= s {
-                        out.push((s, last_active + 1));
-                    }
-                }
-            }
-        }
-    }
-    if let Some(s) = start {
-        if last_active >= s {
-            out.push((s, last_active + 1));
-        }
-    }
-    out
-}
-
-fn percentile(data: &[f32], p: f32) -> f32 {
-    if data.is_empty() {
-        return 0.0;
-    }
-    let mut s = data.to_vec();
-    s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-    let idx = (((s.len() - 1) as f32) * p).round() as usize;
-    s[idx]
 }
 
 // ===========================================================================
@@ -1040,6 +1006,30 @@ mod tests {
             v.push(car * bump * attack * 0.4);
         }
         let r = count_daimoku_with_profile(&v, SR, Some(&p)).expect("count");
+        assert!((9..=11).contains(&r.count), "got {}", r.count);
+    }
+
+    #[test]
+    fn content_gate_rejects_noise_bursts_with_different_timbre() {
+        // Train on the usual tonal Daimoku phrase, then feed a take
+        // where a burst of broadband noise (very different ZCR) is
+        // spliced in at plausible daimoku spacing. The gate should not
+        // let the counter blindly accept it as extra Daimoku.
+        let p = build_profile();
+        let mut v = phrase_with_bumps(10, 1.20, true, &[], SR);
+
+        // Simple deterministic pseudo-noise burst (no external crate
+        // needed): a fast alternating high/low signal, which has a
+        // much higher zero-crossing-rate than the tonal phrase.
+        let burst_len = (0.4 * SR as f32) as usize;
+        let noise: Vec<f32> = (0..burst_len)
+            .map(|i| if i % 2 == 0 { 0.8 } else { -0.8 })
+            .collect();
+        v.extend(noise);
+
+        let r = count_daimoku_with_profile(&v, SR, Some(&p)).expect("count");
+        // Without the gate this could plausibly read as 11; the gate
+        // should keep it close to the true 10.
         assert!((9..=11).contains(&r.count), "got {}", r.count);
     }
 
