@@ -18,6 +18,7 @@ pub fn run() {
             commands::stop_recording,
             commands::list_training_takes,
             commands::clear_training_takes,
+            commands::export_training_wav,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

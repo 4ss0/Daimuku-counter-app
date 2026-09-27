@@ -127,6 +127,18 @@ fn on_stream_error(err: cpal::StreamError) {
     eprintln!("[audio] stream error: {err}");
 }
 
+/// Downmix an interleaved multi-channel frame buffer to mono by averaging
+/// channels. Allocates a fresh Vec; the caller is responsible for ownership.
+fn downmix_to_mono(data: &[f32], channels: u16) -> Vec<f32> {
+    let ch = channels as usize;
+    if ch <= 1 {
+        return data.to_vec();
+    }
+    data.chunks_exact(ch)
+        .map(|frame| frame.iter().sum::<f32>() / ch as f32)
+        .collect()
+}
+
 impl ActiveRecording {
     fn start() -> Result<Self, String> {
         let host = cpal::default_host();
@@ -138,6 +150,7 @@ impl ActiveRecording {
             .default_input_config()
             .map_err(|e| format!("failed to get default input config: {e}"))?;
         let sample_rate = supported.sample_rate().0;
+        let channels = supported.channels();
         let sample_format = supported.sample_format();
         let config: StreamConfig = supported.into();
 
@@ -149,7 +162,8 @@ impl ActiveRecording {
                 device.build_input_stream(
                     &config,
                     move |data: &[f32], _| {
-                        buf.lock().unwrap().extend_from_slice(data);
+                        let mono = downmix_to_mono(data, channels);
+                        buf.lock().unwrap().extend_from_slice(&mono);
                     },
                     on_stream_error,
                     None,
@@ -160,8 +174,10 @@ impl ActiveRecording {
                 device.build_input_stream(
                     &config,
                     move |data: &[i16], _| {
-                        let mut b = buf.lock().unwrap();
-                        b.extend(data.iter().map(|&s| s as f32 / i16::MAX as f32));
+                        let as_f32: Vec<f32> =
+                            data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
+                        let mono = downmix_to_mono(&as_f32, channels);
+                        buf.lock().unwrap().extend_from_slice(&mono);
                     },
                     on_stream_error,
                     None,
@@ -172,8 +188,12 @@ impl ActiveRecording {
                 device.build_input_stream(
                     &config,
                     move |data: &[u16], _| {
-                        let mut b = buf.lock().unwrap();
-                        b.extend(data.iter().map(|&s| (s as f32 - 32768.0) / 32768.0));
+                        let as_f32: Vec<f32> = data
+                            .iter()
+                            .map(|&s| (s as f32 - 32768.0) / 32768.0)
+                            .collect();
+                        let mono = downmix_to_mono(&as_f32, channels);
+                        buf.lock().unwrap().extend_from_slice(&mono);
                     },
                     on_stream_error,
                     None,
@@ -225,6 +245,18 @@ mod tests {
         assert!(!devices.is_empty(), "no input devices found");
     }
 
+    #[test]
+    fn downmix_averages_channels() {
+        // Two interleaved stereo frames: (L=1.0, R=3.0), (L=-1.0, R=1.0)
+        let stereo = [1.0_f32, 3.0, -1.0, 1.0];
+        let mono = downmix_to_mono(&stereo, 2);
+        assert_eq!(mono, vec![2.0, 0.0]);
+
+        // Mono input must pass through unchanged.
+        let mono_in = [0.5_f32, -0.25];
+        assert_eq!(downmix_to_mono(&mono_in, 1), vec![0.5, -0.25]);
+    }
+
     /// Ignored by default because it requires a working microphone.
     /// Run with: cargo test -- --ignored --nocapture
     #[test]
@@ -233,27 +265,39 @@ mod tests {
         let state = AudioState::spawn().expect("failed to spawn audio engine");
         state.start().expect("failed to start");
 
-        // Let the callback fill the buffer for a moment.
-        std::thread::sleep(Duration::from_millis(500));
+        let elapsed_secs = 2.0_f32;
+        std::thread::sleep(Duration::from_millis((elapsed_secs * 1000.0) as u64));
 
         let rx = state.stop().expect("failed to stop");
-        let audio = futures_lite_block_on(rx);
+        let audio = block_on(rx);
 
         assert!(audio.sample_rate > 0, "sample rate is zero");
         assert!(
             !audio.samples.is_empty(),
             "no samples captured from the microphone"
         );
+
+        let audio_secs = audio.samples.len() as f32 / audio.sample_rate as f32;
+        // WASAPI shared mode can spend 300+ ms warming up the stream. Assert
+        // that we captured a plausible amount of audio, and reject any value
+        // that would indicate a channel or sample-rate mismatch.
+        assert!(
+            (1.0..=elapsed_secs + 0.2).contains(&audio_secs),
+            "captured {audio_secs:.2}s in {elapsed_secs:.2}s of wall time — \
+             stream may have stalled or the config is wrong"
+        );
         println!(
-            "captured {} samples at {} Hz",
+            "captured {} samples at {} Hz = {:.2}s (wall time {:.2}s)",
             audio.samples.len(),
-            audio.sample_rate
+            audio.sample_rate,
+            audio_secs,
+            elapsed_secs
         );
     }
 
     /// Minimal blocking wait for a oneshot receiver without pulling in
-    /// the whole tokio runtime.
-    fn futures_lite_block_on(rx: oneshot::Receiver<RecordedAudio>) -> RecordedAudio {
+    /// a full tokio runtime at the call site.
+    fn block_on(rx: oneshot::Receiver<RecordedAudio>) -> RecordedAudio {
         use std::sync::mpsc;
         let (tx, done_rx) = mpsc::channel();
         std::thread::spawn(move || {

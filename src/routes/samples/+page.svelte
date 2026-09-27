@@ -1,9 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
 
-  const MIN_SECONDS_PER_DAIMOKU = 1.5;
-  const MAX_SECONDS_PER_DAIMOKU = 10;
-
   interface TrainingTakeMeta {
     id: number;
     expected_daimoku_count: number;
@@ -16,12 +13,10 @@
   let expectedCount = $state(10);
   let recording = $state(false);
   let error = $state<string | null>(null);
+  let exportedPath = $state<string | null>(null);
 
   let hasTake = $derived(takes.length > 0);
   let lastTake = $derived(takes.length > 0 ? takes[takes.length - 1] : null);
-  let lastTakeSecondsPerDaimoku = $derived(
-    lastTake ? lastTake.duration_ms / 1000 / lastTake.expected_daimoku_count : 0
-  );
 
   async function refresh() {
     try {
@@ -33,6 +28,7 @@
 
   async function start() {
     error = null;
+    exportedPath = null;
     try {
       await invoke('start_recording');
       recording = true;
@@ -44,28 +40,34 @@
   async function stop() {
     error = null;
     try {
-      const meta = await invoke<TrainingTakeMeta>('stop_recording', {
+      await invoke<TrainingTakeMeta>('stop_recording', {
         expectedDaimokuCount: expectedCount,
       });
       recording = false;
       await refresh();
-      const secondsPer = meta.duration_ms / 1000 / meta.expected_daimoku_count;
-      if (secondsPer < MIN_SECONDS_PER_DAIMOKU) {
-        error = `Too short: ${secondsPer.toFixed(1)}s per Daimoku. Recite more slowly or reduce the count.`;
-      } else if (secondsPer > MAX_SECONDS_PER_DAIMOKU) {
-        error = `Too long: ${secondsPer.toFixed(1)}s per Daimoku. Check the count or the recording.`;
-      }
     } catch (e) {
       error = String(e);
+      recording = false;
     }
   }
 
   async function clearAll() {
     if (!confirm('Delete all training recordings?')) return;
     error = null;
+    exportedPath = null;
     try {
       await invoke<number>('clear_training_takes');
       await refresh();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function exportWav(index: number) {
+    error = null;
+    exportedPath = null;
+    try {
+      exportedPath = await invoke<string>('export_training_wav', { index });
     } catch (e) {
       error = String(e);
     }
@@ -110,6 +112,12 @@
     <div class="error">{error}</div>
   {/if}
 
+  {#if exportedPath}
+    <div class="info">
+      Exported to <code>{exportedPath}</code>
+    </div>
+  {/if}
+
   {#if lastTake}
     <section class="list">
       <h2>Recordings</h2>
@@ -118,6 +126,7 @@
           <li>
             <span class="count">{t.expected_daimoku_count} Daimoku</span>
             <span class="dur">{(t.duration_ms / 1000).toFixed(1)} s</span>
+            <button class="export" on:click={() => exportWav(t.id)}>Export WAV</button>
           </li>
         {/each}
       </ul>
@@ -198,6 +207,19 @@
     max-width: 32rem;
   }
 
+  .info {
+    color: #9bd4ff;
+    background-color: #152433;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    max-width: 32rem;
+    word-break: break-all;
+  }
+  .info code {
+    font-family: ui-monospace, monospace;
+    font-size: 0.85rem;
+  }
+
   .ready {
     color: #8fe38f;
     background-color: #152a15;
@@ -207,7 +229,7 @@
 
   .list {
     width: 100%;
-    max-width: 22rem;
+    max-width: 24rem;
     text-align: left;
   }
   .list h2 {
@@ -219,7 +241,9 @@
   .list ul { list-style: none; padding: 0; margin: 0; }
   .list li {
     display: flex;
+    align-items: center;
     justify-content: space-between;
+    gap: 0.75rem;
     padding: 0.4rem 0.75rem;
     background-color: #242424;
     border-radius: 6px;
@@ -227,6 +251,11 @@
     font-family: ui-monospace, monospace;
     font-size: 0.85rem;
   }
-  .count { color: #cfcfcf; }
-  .dur { color: #888; }
+  .count { flex: 1; color: #cfcfcf; }
+  .dur { flex: 1; color: #888; text-align: right; }
+  .export {
+    padding: 0.25rem 0.6rem;
+    font-size: 0.75rem;
+    background-color: #4a4a4a;
+  }
 </style>

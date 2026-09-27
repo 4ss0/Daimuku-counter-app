@@ -29,6 +29,14 @@ impl TrainingStore {
         }
     }
 
+    pub fn get(&self, index: usize) -> Result<RecordedAudio, String> {
+        let takes = self.takes.lock().unwrap();
+        takes
+            .get(index)
+            .map(|t| t.audio.clone())
+            .ok_or_else(|| format!("training take {index} not found"))
+    }
+
     pub fn add(&self, audio: RecordedAudio, expected_daimoku_count: u32) -> TrainingTakeMeta {
         let mut takes = self.takes.lock().unwrap();
         let id = takes.len();
@@ -114,5 +122,20 @@ mod tests {
         store.add(fake_audio(10.0, 48000), 5);
         assert_eq!(store.clear(), 1);
         assert!(store.list().is_empty());
+    }
+
+        #[test]
+    fn get_returns_stored_audio() {
+        let store = TrainingStore::new();
+        store.add(fake_audio(2.0, 48000), 5);
+        let audio = store.get(0).expect("get failed");
+        assert_eq!(audio.samples.len(), 96_000);
+        assert_eq!(audio.sample_rate, 48000);
+    }
+
+    #[test]
+    fn get_errors_on_missing_index() {
+        let store = TrainingStore::new();
+        assert!(store.get(0).is_err());
     }
 }
