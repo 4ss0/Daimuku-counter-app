@@ -7,26 +7,15 @@
 //!     matched filter in `dsp.rs` to follow speed changes
 //!
 //! Persistence: JSON file in `dirs::data_dir()/daimuku-counter/profile.json`.
-//!
-//! The template is extracted without any ML: it is the sample-by-sample
-//! median of the normalized novelty of each Daimoku in a take. Median
-//! (not mean) makes it robust to a single mis-segmented Daimoku.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
-/// Length of the stored template, in samples. 128 is a good compromise
-/// between resolution and storage size: at 10 ms per sample (the hop
-/// used by the counter) it represents 1.28 s of audio, which is enough
-/// to cover one Daimoku at any speed from 0.4x to 3x the natural rate.
 pub const TEMPLATE_LEN: usize = 128;
-
-/// Minimum audio duration for a take to be usable.
 const MIN_TAKE_SECS: f32 = 0.5;
-
-/// Minimum active duration for a take to be usable.
 const MIN_ACTIVE_SECS: f32 = 0.3;
 
 // ===========================================================================
@@ -39,8 +28,6 @@ pub struct TakeRecord {
     pub n_daimoku: u32,
     pub duration_secs: f32,
     pub period_ms: f32,
-    /// Normalized template of one Daimoku from this take.
-    /// `None` if extraction failed (e.g. too few samples).
     pub template: Option<Vec<f32>>,
     pub created_at: DateTime<Utc>,
 }
@@ -48,17 +35,10 @@ pub struct TakeRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonalProfile {
     pub version: u32,
-
-    /// All validated takes, in chronological order.
     pub takes: Vec<TakeRecord>,
-
-    /// Derived parameters (recomputed after each take).
     pub natural_period_ms: f32,
     pub period_sigma_ms: f32,
-    /// Sample-by-sample median of the per-take templates.
     pub template: Option<Vec<f32>>,
-    /// (min, max) ratio of `period_ms / natural_period_ms` observed.
-    /// Used by the multi-scale matched filter to pick scale candidates.
     pub period_ratio_range: (f32, f32),
 }
 
@@ -76,21 +56,14 @@ impl Default for PersonalProfile {
 }
 
 impl PersonalProfile {
-    /// Number of validated takes contributing to the profile.
     pub fn n_takes(&self) -> usize {
         self.takes.len()
     }
 
-    /// Whether the profile has enough data to be useful.
-    /// A single validated take already provides a period and a template.
     pub fn is_usable(&self) -> bool {
         !self.takes.is_empty() && self.natural_period_ms > 0.0
     }
 
-    /// Add a validated take. Returns the new take id, or an error string.
-    ///
-    /// This mutates the profile and recomputes the derived parameters.
-    /// It does **not** persist to disk — call `save()` separately.
     pub fn add_take(
         &mut self,
         samples: &[f32],
@@ -110,12 +83,9 @@ impl PersonalProfile {
             ));
         }
 
-        let (period_ms, template) = extract_period_and_template(
-            samples,
-            sample_rate,
-            n_daimoku as usize,
-        )
-        .ok_or_else(|| "could not extract period/template from this take".to_string())?;
+        let (period_ms, template) =
+            extract_period_and_template(samples, sample_rate, n_daimoku as usize)
+                .ok_or_else(|| "could not extract period/template from this take".to_string())?;
 
         let id = self.takes.len();
         let record = TakeRecord {
@@ -131,7 +101,6 @@ impl PersonalProfile {
         Ok(id)
     }
 
-    /// Recompute derived parameters from the accumulated takes.
     fn recompute(&mut self) {
         if self.takes.is_empty() {
             self.natural_period_ms = 0.0;
@@ -141,7 +110,6 @@ impl PersonalProfile {
             return;
         }
 
-        // Period statistics.
         let mut periods: Vec<f32> = self.takes.iter().map(|t| t.period_ms).collect();
         periods.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let median = median_f32(&periods);
@@ -155,13 +123,9 @@ impl PersonalProfile {
             / periods.len() as f32;
         self.period_sigma_ms = var.sqrt();
 
-        // Ratio range (relative to natural period).
         if median > 0.0 {
             let min_r = periods.first().copied().unwrap_or(median) / median;
             let max_r = periods.last().copied().unwrap_or(median) / median;
-            // Expand to at least [0.6, 1.6] so the multi-scale matched
-            // filter always has a reasonable candidate set, even with
-            // only two takes that are close in speed.
             let min_r = min_r.min(0.60);
             let max_r = max_r.max(1.60);
             self.period_ratio_range = (min_r, max_r);
@@ -169,7 +133,6 @@ impl PersonalProfile {
             self.period_ratio_range = (1.0, 1.0);
         }
 
-        // Sample-by-sample median of the templates.
         let templates: Vec<&Vec<f32>> = self
             .takes
             .iter()
@@ -193,7 +156,6 @@ impl PersonalProfile {
         }
     }
 
-    /// Clear all data.
     pub fn clear(&mut self) {
         *self = PersonalProfile::default();
     }
@@ -223,16 +185,51 @@ impl PersonalProfile {
     }
 
     pub fn save(&self) -> Result<(), String> {
-        let path = profile_path()
-            .ok_or_else(|| "cannot determine data directory".to_string())?;
+        let path =
+            profile_path().ok_or_else(|| "cannot determine data directory".to_string())?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
         }
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("failed to serialize profile: {e}"))?;
-        fs::write(&path, json).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+        fs::write(&path, json)
+            .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
         Ok(())
+    }
+}
+
+// ===========================================================================
+// Thread-safe state holder
+// ===========================================================================
+
+pub struct ProfileState {
+    inner: Mutex<PersonalProfile>,
+}
+
+impl ProfileState {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(PersonalProfile::load()),
+        }
+    }
+
+    pub fn snapshot(&self) -> PersonalProfile {
+        match self.inner.lock() {
+            Ok(g) => g.clone(),
+            Err(_) => PersonalProfile::default(),
+        }
+    }
+
+    pub fn with_mut<R>(&self, f: impl FnOnce(&mut PersonalProfile) -> R) -> R {
+        let mut g = self.inner.lock().unwrap();
+        f(&mut g)
+    }
+}
+
+impl Default for ProfileState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -240,20 +237,6 @@ impl PersonalProfile {
 // Template extraction
 // ===========================================================================
 
-/// Extract (period_ms, template) from a take with a known Daimoku count.
-///
-/// Pipeline:
-///   1. RMS envelope (30 ms window, 10 ms hop).
-///   2. Smooth 200 ms.
-///   3. Novelty = max(0, smooth[i] - smooth[i - 300 ms]).
-///   4. Smooth novelty 100 ms.
-///   5. Find the active span (where smooth > 0.15 * max).
-///   6. T = active_span / n_daimoku.
-///   7. Find the phase φ in [0, T) that maximizes the sum of novelty
-///      at positions φ + k·T for k in 0..n.
-///   8. For each k, extract the segment [φ + k·T - T/2, φ + k·T + T/2).
-///   9. Z-score each segment, resample to TEMPLATE_LEN samples.
-///  10. Template = sample-by-sample median of the segments.
 pub fn extract_period_and_template(
     samples: &[f32],
     sample_rate: u32,
@@ -265,9 +248,9 @@ pub fn extract_period_and_template(
 
     let hop_ms: u32 = 10;
     let hop_secs = hop_ms as f32 / 1000.0;
-    let smooth_frames = 20; // 200 ms
-    let nov_lag_frames = 30; // 300 ms
-    let nov_smooth_frames = 10; // 100 ms
+    let smooth_frames = 20;
+    let nov_lag_frames = 30;
+    let nov_smooth_frames = 10;
 
     let env = rms_envelope(samples, sample_rate, 30, hop_ms);
     if env.len() < 50 {
@@ -277,7 +260,6 @@ pub fn extract_period_and_template(
     let nov = compute_novelty(&smoothed, nov_lag_frames);
     let nov = moving_average(&nov, nov_smooth_frames);
 
-    // Find the active span.
     let max_smooth = smoothed.iter().cloned().fold(f32::MIN, f32::max);
     if max_smooth <= 1e-6 {
         return None;
@@ -296,13 +278,11 @@ pub fn extract_period_and_template(
 
     let t_frames = active_frames as f32 / n_daimoku as f32;
     if t_frames < 15.0 {
-        // Less than 150 ms per Daimoku — implausible.
         return None;
     }
     let period_secs = t_frames * hop_secs;
     let period_ms = period_secs * 1000.0;
 
-    // Phase search: 200 candidates in [0, T).
     let phase_span = t_frames.max(1.0);
     let steps = 200usize;
     let mut best_phi = first as f32;
@@ -323,7 +303,6 @@ pub fn extract_period_and_template(
         }
     }
 
-    // Extract one segment per Daimoku.
     let half = t_frames / 2.0;
     let mut segments: Vec<Vec<f32>> = Vec::with_capacity(n_daimoku);
     for d in 0..n_daimoku {
@@ -342,7 +321,6 @@ pub fn extract_period_and_template(
     }
 
     if segments.len() < n_daimoku / 2 + 1 {
-        // Too many failed segments; return period but no template.
         return Some((period_ms, None));
     }
 
@@ -351,7 +329,7 @@ pub fn extract_period_and_template(
 }
 
 // ===========================================================================
-// Low-level helpers (private)
+// Low-level helpers
 // ===========================================================================
 
 fn rms_envelope(samples: &[f32], sr: u32, window_ms: u32, hop_ms: u32) -> Vec<f32> {
@@ -412,8 +390,6 @@ fn compute_novelty(sig: &[f32], lag: usize) -> Vec<f32> {
     out
 }
 
-/// Z-score the segment, then linearly resample it to `target_len`.
-/// Returns `None` if the segment is flat (std ≈ 0).
 fn z_score_resample(seg: &[f32], target_len: usize) -> Option<Vec<f32>> {
     if seg.len() < 2 || target_len == 0 {
         return None;
@@ -425,9 +401,8 @@ fn z_score_resample(seg: &[f32], target_len: usize) -> Option<Vec<f32>> {
     if std <= 1e-6 {
         return None;
     }
-    let mut normalized: Vec<f32> = seg.iter().map(|x| (x - mean) / std).collect();
+    let normalized: Vec<f32> = seg.iter().map(|x| (x - mean) / std).collect();
 
-    // Linear resample to target_len.
     let src_len = normalized.len();
     let mut out = Vec::with_capacity(target_len);
     let step = src_len as f32 / target_len as f32;
@@ -439,7 +414,6 @@ fn z_score_resample(seg: &[f32], target_len: usize) -> Option<Vec<f32>> {
         let b = normalized[(i + 1).min(src_len - 1)];
         out.push(a + (b - a) * frac);
     }
-    normalized.clear();
     Some(out)
 }
 
@@ -483,7 +457,6 @@ mod tests {
 
     const SR: u32 = 48_000;
 
-    /// Build a phrase of `bumps` Daimoku, no gap between them.
     fn phrase(bumps: usize, period_s: f32) -> Vec<f32> {
         let n = (bumps as f32 * period_s * SR as f32) as usize;
         let mut v = Vec::with_capacity(n);
@@ -501,44 +474,29 @@ mod tests {
         vec![0.0; (secs * SR as f32) as usize]
     }
 
-    // ---- Template extraction --------------------------------------------
-
     #[test]
     fn extract_returns_period_and_template() {
         let v = phrase(10, 1.20);
-        let (period_ms, tmpl) = extract_period_and_template(&v, SR, 10)
-            .expect("extraction should succeed");
-        assert!(
-            (1150.0..=1250.0).contains(&period_ms),
-            "period_ms out of range: {period_ms}"
-        );
-        let t = tmpl.expect("template must be present");
+        let (period_ms, tmpl) = extract_period_and_template(&v, SR, 10).expect("extraction");
+        assert!((1150.0..=1250.0).contains(&period_ms), "period {period_ms}");
+        let t = tmpl.expect("template");
         assert_eq!(t.len(), TEMPLATE_LEN);
-        // The template must be non-degenerate.
         let var: f32 = t.iter().map(|x| x * x).sum::<f32>() / t.len() as f32;
-        assert!(var > 0.1, "template variance too low: {var}");
+        assert!(var > 0.1);
     }
 
     #[test]
     fn extract_handles_slow_daimoku() {
         let v = phrase(2, 4.0);
-        let (period_ms, _tmpl) = extract_period_and_template(&v, SR, 2)
-            .expect("should handle 2 slow Daimoku");
-        assert!(
-            (3500.0..=4500.0).contains(&period_ms),
-            "period_ms out of range: {period_ms}"
-        );
+        let (period_ms, _) = extract_period_and_template(&v, SR, 2).expect("slow");
+        assert!((3500.0..=4500.0).contains(&period_ms), "period {period_ms}");
     }
 
     #[test]
     fn extract_handles_fast_daimoku() {
         let v = phrase(10, 0.80);
-        let (period_ms, _) = extract_period_and_template(&v, SR, 10)
-            .expect("should handle fast Daimoku");
-        assert!(
-            (750.0..=850.0).contains(&period_ms),
-            "period_ms out of range: {period_ms}"
-        );
+        let (period_ms, _) = extract_period_and_template(&v, SR, 10).expect("fast");
+        assert!((750.0..=850.0).contains(&period_ms), "period {period_ms}");
     }
 
     #[test]
@@ -555,29 +513,20 @@ mod tests {
 
     #[test]
     fn template_is_amplitude_invariant() {
-        // Two takes of the same Daimoku shape, one at half amplitude.
-        // Their templates must match closely after z-scoring.
         let loud = phrase(5, 1.0);
         let quiet: Vec<f32> = loud.iter().map(|x| x * 0.5).collect();
-
-        let (_, t_loud) = extract_period_and_template(&loud, SR, 5).unwrap();
-        let (_, t_quiet) = extract_period_and_template(&quiet, SR, 5).unwrap();
-        let tl = t_loud.expect("template");
-        let tq = t_quiet.expect("template");
-
+        let (_, tl) = extract_period_and_template(&loud, SR, 5).unwrap();
+        let (_, tq) = extract_period_and_template(&quiet, SR, 5).unwrap();
+        let tl = tl.expect("t");
+        let tq = tq.expect("t");
         let diff: f32 = tl
             .iter()
             .zip(tq.iter())
             .map(|(a, b)| (a - b).abs())
             .sum::<f32>()
             / tl.len() as f32;
-        assert!(
-            diff < 0.5,
-            "templates should be similar regardless of amplitude, mean abs diff = {diff}"
-        );
+        assert!(diff < 0.5, "diff {diff}");
     }
-
-    // ---- Profile assembly ------------------------------------------------
 
     #[test]
     fn profile_starts_empty_and_unusable() {
@@ -590,7 +539,7 @@ mod tests {
     #[test]
     fn profile_rejects_too_short_take() {
         let mut p = PersonalProfile::default();
-        let v = phrase(1, 0.20); // 0.2 s total
+        let v = phrase(1, 0.20);
         assert!(p.add_take(&v, SR, 1).is_err());
         assert_eq!(p.n_takes(), 0);
     }
@@ -605,36 +554,20 @@ mod tests {
     #[test]
     fn profile_adds_takes_and_computes_median() {
         let mut p = PersonalProfile::default();
-        // Natural take: 10 Daimoku at ~1.2 s each.
         p.add_take(&phrase(10, 1.20), SR, 10).expect("natural");
-        // Slow take: 3 Daimoku at ~3.0 s each.
         p.add_take(&phrase(3, 3.00), SR, 3).expect("slow");
-        // Fast take: 10 Daimoku at ~0.85 s each.
         p.add_take(&phrase(10, 0.85), SR, 10).expect("fast");
-
         assert_eq!(p.n_takes(), 3);
         assert!(p.is_usable());
-        // Median of {~1200, ~3000, ~850} = ~1200.
-        assert!(
-            (1100.0..=1300.0).contains(&p.natural_period_ms),
-            "natural_period_ms = {}",
-            p.natural_period_ms
-        );
-        // Sigma must reflect the spread.
+        assert!((1100.0..=1300.0).contains(&p.natural_period_ms));
         assert!(p.period_sigma_ms > 200.0);
-        // Ratio range must cover both extremes.
         assert!(p.period_ratio_range.0 <= 0.75);
         assert!(p.period_ratio_range.1 >= 2.0);
-        // Template must be present.
         assert!(p.template.is_some());
-        assert_eq!(p.template.as_ref().unwrap().len(), TEMPLATE_LEN);
     }
 
     #[test]
     fn profile_expands_ratio_range_floor() {
-        // Two takes with very similar speeds: the range should still
-        // expand to at least [0.6, 1.6] so the multi-scale matched
-        // filter has enough candidates.
         let mut p = PersonalProfile::default();
         p.add_take(&phrase(10, 1.00), SR, 10).unwrap();
         p.add_take(&phrase(10, 1.02), SR, 10).unwrap();
@@ -652,18 +585,14 @@ mod tests {
         assert_eq!(p.n_takes(), 0);
     }
 
-    // ---- Persistence (in-memory roundtrip) -------------------------------
-
     #[test]
     fn profile_json_roundtrip() {
         let mut p = PersonalProfile::default();
         p.add_take(&phrase(10, 1.0), SR, 10).unwrap();
         p.add_take(&phrase(3, 2.5), SR, 3).unwrap();
-
-        let json = serde_json::to_string(&p).expect("serialize");
-        let mut q: PersonalProfile = serde_json::from_str(&json).expect("deserialize");
+        let json = serde_json::to_string(&p).expect("ser");
+        let mut q: PersonalProfile = serde_json::from_str(&json).expect("de");
         q.recompute();
-
         assert_eq!(q.n_takes(), p.n_takes());
         assert!((q.natural_period_ms - p.natural_period_ms).abs() < 1.0);
         assert_eq!(q.template.is_some(), p.template.is_some());

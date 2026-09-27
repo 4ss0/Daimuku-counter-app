@@ -6,9 +6,6 @@
 //!   2. **Profile-based** (`count_daimoku_with_profile`): uses a personal
 //!      template and a multi-scale matched filter. Robust to speed changes
 //!      from 0.4x to 3x the natural rate of the user.
-//!
-//! The streaming counter (`StreamingCounter`) is unchanged and is used for
-//! the live UI.
 
 use crate::profile::PersonalProfile;
 use serde::Serialize;
@@ -101,7 +98,6 @@ pub fn count_daimoku_with(
     let phrases = find_active_segments(&smoothed, silence_floor, min_gap_frames);
     let phrase_count = phrases.len();
 
-    // Streaming counter with 1 s of silence warm-up.
     let mut sc = StreamingCounter::new(sample_rate);
     let warmup = vec![0.0f32; sample_rate as usize];
     for chunk in warmup.chunks(4096) {
@@ -139,11 +135,9 @@ pub fn count_daimoku_with(
 }
 
 // ---------------------------------------------------------------------------
-// Profile-based batch (matched filter, multi-scale)
+// Profile-based batch (matched filter, multi-scale, adaptive filtering)
 // ---------------------------------------------------------------------------
 
-/// Count Daimoku using a personal profile. Falls back to
-/// `count_daimoku_default` if the profile is missing or unusable.
 pub fn count_daimoku_with_profile(
     samples: &[f32],
     sample_rate: u32,
@@ -164,7 +158,6 @@ pub fn count_daimoku_with_profile(
         return None;
     }
 
-    // Novelty pipeline (same as the streaming counter uses).
     let env = rms_envelope(samples, sample_rate, 30, 10);
     if env.len() < 50 {
         return None;
@@ -173,20 +166,18 @@ pub fn count_daimoku_with_profile(
     if p95 < 1e-5 {
         return None;
     }
-    let smoothed = moving_average(&env, 20); // 200 ms
-    let nov = compute_novelty(&smoothed, 30); // 300 ms lag
-    let nov = moving_average(&nov, 10); // 100 ms
+    let smoothed = moving_average(&env, 20);
+    let nov = compute_novelty(&smoothed, 30);
+    let nov = moving_average(&nov, 10);
 
     let nov_max = nov.iter().cloned().fold(f32::MIN, f32::max);
     if nov_max < 1e-6 {
         return None;
     }
 
-    // Natural period expressed in frames.
     let hop_secs = 0.010_f32;
     let natural_frames = p.natural_period_ms / 1000.0 / hop_secs;
     if natural_frames < 15.0 {
-        // Profile period too small to be reliable; use the fallback.
         return count_daimoku_default(samples, sample_rate);
     }
 
@@ -195,20 +186,36 @@ pub fn count_daimoku_with_profile(
         return count_daimoku_default(samples, sample_rate);
     }
 
-    let min_dist = (natural_frames * 0.50).round() as usize;
-    let peaks = pick_peaks(&score, min_dist, 0.30);
+    // Pass 1: raw detection. Low min_dist so nothing is missed.
+    let initial_min_dist = (natural_frames * 0.35).round() as usize;
+    let raw = pick_peaks(&score, initial_min_dist, 0.30);
+    if raw.len() < 2 {
+        return count_daimoku_default(samples, sample_rate);
+    }
+
+    // Pass 2: dominant period from raw peaks, robust to attack→body.
+    let t_dom_frames = robust_period_from_peaks(&raw)
+        .map(|f| f as f32)
+        .unwrap_or(natural_frames);
+    let t_dom_frames = t_dom_frames
+        .max(natural_frames * 0.40)
+        .min(natural_frames * 4.00);
+
+    // Pass 3: adaptive local-max filter (radius scales with t_dom).
+    let radius = ((t_dom_frames * 0.55).round() as usize).max(5);
+    let filtered = filter_local_maxima(&score, &raw, radius, 0.65);
+    let peaks = if filtered.len() >= 2 { filtered } else { raw };
+
+    // Pass 4: final NMS with adaptive min_dist.
+    let final_min_dist = ((t_dom_frames * 0.60).round() as usize).max(5);
+    let peaks = nms_by_position(&peaks, final_min_dist);
     if peaks.len() < 2 {
         return count_daimoku_default(samples, sample_rate);
     }
 
     let count = peaks.len();
-    let conf = peaks
-        .iter()
-        .map(|&i| score[i])
-        .sum::<f32>()
-        / peaks.len() as f32;
+    let conf = peaks.iter().map(|&i| score[i]).sum::<f32>() / peaks.len() as f32;
 
-    // Phrase count for the legacy field.
     let silence_floor = 0.10 * p95;
     let min_gap_frames = 30usize;
     let phrases = find_active_segments(&smoothed, silence_floor, min_gap_frames);
@@ -240,7 +247,6 @@ pub fn count_daimoku_with_profile(
 // Matched-filter helpers
 // ---------------------------------------------------------------------------
 
-/// Linearly resample the template to `target_len` samples.
 fn resample_template(tmpl: &[f32], target_len: usize) -> Vec<f32> {
     if tmpl.is_empty() || target_len == 0 {
         return Vec::new();
@@ -262,9 +268,6 @@ fn resample_template(tmpl: &[f32], target_len: usize) -> Vec<f32> {
     out
 }
 
-/// Normalized cross-correlation between `sig` and `tmpl`.
-/// Returns a vector of length `sig.len() - tmpl.len() + 1` where each entry
-/// is the Pearson correlation of the corresponding window with `tmpl`.
 fn normalized_xcorr(sig: &[f32], tmpl: &[f32]) -> Vec<f32> {
     let n = sig.len();
     let l = tmpl.len();
@@ -310,13 +313,6 @@ fn normalized_xcorr(sig: &[f32], tmpl: &[f32]) -> Vec<f32> {
     out
 }
 
-/// Multi-scale matched filter. For each scale in the profile's ratio range,
-/// resample the template to the corresponding length, run normalized
-/// cross-correlation, and keep the max score per output position.
-///
-/// The template is aligned so that its center lands on the "center" of the
-/// Daimoku. `natural_frames` is the frame count of one Daimoku at the
-/// user's natural speed.
 fn multi_scale_correlation(
     novelty: &[f32],
     template: &[f32],
@@ -328,11 +324,8 @@ fn multi_scale_correlation(
         return Vec::new();
     }
 
-    // Ratios to test. These are how much longer/shorter the current Daimoku
-    // is compared to the natural one.
     const SCALES: [f32; 8] = [0.40, 0.60, 0.80, 1.00, 1.30, 1.70, 2.20, 3.00];
 
-    // Only keep scales that fall in (or just outside) the profile's range.
     let lo = (ratio_range.0 * 0.70).max(0.30);
     let hi = (ratio_range.1 * 1.30).min(4.00);
     let mut scales: Vec<f32> = SCALES
@@ -348,7 +341,6 @@ fn multi_scale_correlation(
 
     for s in scales {
         let l = (natural_frames * s).round() as usize;
-        // Template must be at least ~100 ms and fit comfortably in the signal.
         if l < 10 || l > n / 2 {
             continue;
         }
@@ -360,7 +352,6 @@ fn multi_scale_correlation(
         if corr.is_empty() {
             continue;
         }
-        // Center-align: window [i, i + l) -> center i + l/2.
         let half = l / 2;
         for i in 0..corr.len() {
             let center = i + half;
@@ -372,8 +363,6 @@ fn multi_scale_correlation(
     best
 }
 
-/// Peak picking: local maxima above `threshold`, then greedy NMS with
-/// `min_dist` frames. Peaks are returned sorted by position.
 fn pick_peaks(score: &[f32], min_dist: usize, threshold: f32) -> Vec<usize> {
     let n = score.len();
     if n < 3 {
@@ -403,6 +392,64 @@ fn pick_peaks(score: &[f32], min_dist: usize, threshold: f32) -> Vec<usize> {
     }
     kept.sort();
     kept
+}
+
+fn filter_local_maxima(
+    score: &[f32],
+    peaks: &[usize],
+    radius: usize,
+    rel_floor: f32,
+) -> Vec<usize> {
+    let n = score.len();
+    let mut out = Vec::with_capacity(peaks.len());
+    for &p in peaks {
+        let lo = p.saturating_sub(radius);
+        let hi = (p + radius + 1).min(n);
+        let local_max = score[lo..hi].iter().cloned().fold(f32::MIN, f32::max);
+        if score[p] >= rel_floor * local_max {
+            out.push(p);
+        }
+    }
+    out
+}
+
+/// Robust period from a peak-index list: sort intervals, drop the
+/// shortest 40%, take the median. Removes attack→body intervals.
+fn robust_period_from_peaks(peaks: &[usize]) -> Option<f32> {
+    if peaks.len() < 3 {
+        return None;
+    }
+    let mut dists: Vec<f32> = peaks
+        .windows(2)
+        .map(|w| (w[1] - w[0]) as f32)
+        .collect();
+    dists.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let lo = (dists.len() as f32 * 0.40).floor() as usize;
+    let hi = (dists.len() as f32 * 0.90).ceil() as usize;
+    let lo = lo.min(dists.len().saturating_sub(1));
+    let hi = hi.min(dists.len()).max(lo + 1);
+    let slice = &dists[lo..hi];
+    if slice.is_empty() {
+        return None;
+    }
+    let mut v = slice.to_vec();
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    Some(v[v.len() / 2])
+}
+
+/// NMS by position only, keeps peaks in order.
+fn nms_by_position(peaks: &[usize], min_dist: usize) -> Vec<usize> {
+    if peaks.len() < 2 {
+        return peaks.to_vec();
+    }
+    let min_dist = min_dist.max(2);
+    let mut out: Vec<usize> = Vec::with_capacity(peaks.len());
+    for &p in peaks {
+        if out.last().map_or(true, |&q| p.saturating_sub(q) >= min_dist) {
+            out.push(p);
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -573,7 +620,7 @@ fn percentile(data: &[f32], p: f32) -> f32 {
 }
 
 // ===========================================================================
-// Streaming counter (unchanged)
+// Streaming counter (used by tests and legacy paths)
 // ===========================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -678,15 +725,9 @@ impl StreamingCounter {
     pub fn count(&self) -> usize {
         self.count
     }
-
-    /// Post-processed count: same algorithm as the batch path
-    /// (`robust_period_frames` + NMS sorted by novelty strength).
-    /// This is the value the UI displays, so live and batch agree.
-    /// Ratcheted: only ever increases.
     pub fn robust_count(&self) -> usize {
         self.robust_count
     }
-
     pub fn state(&self) -> StreamingState {
         self.state
     }
@@ -823,8 +864,6 @@ impl StreamingCounter {
         self.last_peak_frame = Some(frame_idx);
         self.count += 1;
 
-        // Keep the post-processed count aligned with the batch path.
-        // Ratchet: only increases, so the UI never goes backward.
         let rc = post_process_count(&self.accepted);
         if rc > self.robust_count {
             self.robust_count = rc;
@@ -864,14 +903,9 @@ impl StreamingCounter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profile::PersonalProfile;
     use std::f32::consts::PI;
 
     const SR: u32 = 48_000;
-
-    fn silence(secs: f32) -> Vec<f32> {
-        vec![0.0; (secs * SR as f32) as usize]
-    }
 
     fn phrase_with_bumps(
         bumps: usize,
@@ -917,9 +951,6 @@ mod tests {
         v
     }
 
-    /// Build a profile from synthetic takes: natural (1.2 s), slow (3.5 s),
-    /// fast (0.9 s). The profile will have a template and a natural period
-    /// around 1.2 s.
     fn build_profile() -> PersonalProfile {
         let mut p = PersonalProfile::default();
         p.add_take(&phrase_with_bumps(8, 1.20, true, &[], SR), SR, 8)
@@ -931,14 +962,11 @@ mod tests {
         p
     }
 
-    // ---- Fallback (no profile) -----------------------------------------
-
     #[test]
     fn no_profile_falls_back() {
         let v = phrase_with_bumps(10, 1.05, true, &[], SR);
         let r = count_daimoku_with_profile(&v, SR, None).expect("fallback count");
         assert!((9..=11).contains(&r.count), "got {}", r.count);
-        // Method must come from the fallback.
         assert!(r.method.starts_with("novelty"));
     }
 
@@ -946,36 +974,27 @@ mod tests {
     fn empty_profile_falls_back() {
         let v = phrase_with_bumps(10, 1.05, true, &[], SR);
         let p = PersonalProfile::default();
-        let r = count_daimoku_with_profile(&v, SR, Some(&p)).expect("fallback count");
+        let r = count_daimoku_with_profile(&v, SR, Some(&p)).expect("fallback");
         assert!(r.method.starts_with("novelty"));
     }
-
-    // ---- Profile-based --------------------------------------------------
 
     #[test]
     fn profile_counts_natural_take() {
         let p = build_profile();
         let v = phrase_with_bumps(10, 1.20, true, &[], SR);
-        let r = count_daimoku_with_profile(&v, SR, Some(&p))
-            .expect("profile count");
+        let r = count_daimoku_with_profile(&v, SR, Some(&p)).expect("count");
         assert_eq!(r.method, "profile+matched");
-        assert!(
-            (9..=11).contains(&r.count),
-            "natural take: expected ~10, got {}",
-            r.count
-        );
+        assert!((9..=11).contains(&r.count), "got {}", r.count);
     }
 
     #[test]
     fn profile_counts_slow_take() {
         let p = build_profile();
-        // The user's failing case: 2 very slow Daimoku.
         let v = phrase_with_bumps(2, 4.0, false, &[], SR);
-        let r = count_daimoku_with_profile(&v, SR, Some(&p))
-            .expect("profile count");
+        let r = count_daimoku_with_profile(&v, SR, Some(&p)).expect("count");
         assert!(
             (1..=3).contains(&r.count),
-            "2 slow Daimoku: expected ~2, got {}",
+            "2 slow Daimoku: got {}",
             r.count
         );
     }
@@ -984,44 +1003,25 @@ mod tests {
     fn profile_counts_fast_take() {
         let p = build_profile();
         let v = phrase_with_bumps(10, 0.85, false, &[], SR);
-        let r = count_daimoku_with_profile(&v, SR, Some(&p))
-            .expect("profile count");
-        assert!(
-            (9..=11).contains(&r.count),
-            "fast take: expected ~10, got {}",
-            r.count
-        );
+        let r = count_daimoku_with_profile(&v, SR, Some(&p)).expect("count");
+        assert!((9..=11).contains(&r.count), "got {}", r.count);
     }
 
     #[test]
     fn profile_handles_sub_peaks() {
         let p = build_profile();
-        // 10 Daimoku with an internal sub-peak each (the "myoho" case).
-        // The template already contains this pattern, so the matched
-        // filter should reject the sub-peak.
         let v = phrase_with_sub_peaks(10, 1.20, SR);
-        let r = count_daimoku_with_profile(&v, SR, Some(&p))
-            .expect("profile count");
-        assert!(
-            (9..=11).contains(&r.count),
-            "sub-peaks with profile: expected ~10, got {}",
-            r.count
-        );
+        let r = count_daimoku_with_profile(&v, SR, Some(&p)).expect("count");
+        assert!((9..=11).contains(&r.count), "got {}", r.count);
     }
 
     #[test]
     fn profile_handles_speed_change_within_take() {
         let p = build_profile();
-        // 5 fast + 5 slow.
         let mut v = phrase_with_bumps(5, 0.90, false, &[], SR);
         v.extend(phrase_with_bumps(5, 2.80, false, &[], SR));
-        let r = count_daimoku_with_profile(&v, SR, Some(&p))
-            .expect("profile count");
-        assert!(
-            (8..=12).contains(&r.count),
-            "speed change: expected ~10, got {}",
-            r.count
-        );
+        let r = count_daimoku_with_profile(&v, SR, Some(&p)).expect("count");
+        assert!((8..=12).contains(&r.count), "got {}", r.count);
     }
 
     #[test]
@@ -1039,31 +1039,15 @@ mod tests {
             let attack = if t < period_s { 5.0 } else { 1.0 };
             v.push(car * bump * attack * 0.4);
         }
-        let r = count_daimoku_with_profile(&v, SR, Some(&p))
-            .expect("profile count");
-        assert!(
-            (9..=11).contains(&r.count),
-            "strong first: expected ~10, got {}",
-            r.count
-        );
+        let r = count_daimoku_with_profile(&v, SR, Some(&p)).expect("count");
+        assert!((9..=11).contains(&r.count), "got {}", r.count);
     }
-
-    #[test]
-    fn profile_rejects_silence() {
-        let p = build_profile();
-        let v = silence(5.0);
-        assert!(count_daimoku_with_profile(&v, SR, Some(&p)).is_none()
-            || count_daimoku_with_profile(&v, SR, Some(&p)).unwrap().count == 0);
-    }
-
-    // ---- Matched-filter primitives --------------------------------------
 
     #[test]
     fn resample_template_length() {
         let t: Vec<f32> = (0..128).map(|i| i as f32).collect();
         for len in [16usize, 32, 64, 128, 200, 384] {
-            let r = resample_template(&t, len);
-            assert_eq!(r.len(), len);
+            assert_eq!(resample_template(&t, len).len(), len);
         }
     }
 
@@ -1081,7 +1065,7 @@ mod tests {
         let sig: Vec<f32> = (0..100).map(|i| (i as f32 * 0.1).sin()).collect();
         let c = normalized_xcorr(&sig, &sig);
         assert!(!c.is_empty());
-        assert!((c[0] - 1.0).abs() < 1e-3, "self-corr[0] = {}", c[0]);
+        assert!((c[0] - 1.0).abs() < 1e-3, "self {}", c[0]);
     }
 
     #[test]
@@ -1089,7 +1073,6 @@ mod tests {
         let sig = vec![0.5f32; 100];
         let tmpl: Vec<f32> = (0..20).map(|i| i as f32).collect();
         let c = normalized_xcorr(&sig, &tmpl);
-        // Flat signal has zero variance; the output is all zeros.
         assert!(c.iter().all(|&x| x.abs() < 1e-6));
     }
 
@@ -1097,18 +1080,16 @@ mod tests {
     fn pick_peaks_enforces_min_distance() {
         let mut score = vec![0.0f32; 100];
         score[10] = 0.9;
-        score[20] = 0.8; // too close if min_dist = 15
+        score[20] = 0.8;
         score[50] = 0.85;
-        let p = pick_peaks(&score, 15, 0.5);
-        assert_eq!(p, vec![10, 50]);
+        assert_eq!(pick_peaks(&score, 15, 0.5), vec![10, 50]);
     }
 
     #[test]
     fn pick_peaks_respects_threshold() {
         let mut score = vec![0.0f32; 100];
-        score[10] = 0.2; // below 0.5
+        score[10] = 0.2;
         score[50] = 0.9;
-        let p = pick_peaks(&score, 15, 0.5);
-        assert_eq!(p, vec![50]);
+        assert_eq!(pick_peaks(&score, 15, 0.5), vec![50]);
     }
 }

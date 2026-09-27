@@ -1,7 +1,6 @@
 use crate::audio::{self, AudioState, RecordedAudio};
-use crate::dsp::{
-    count_daimoku, DaimokuCountConfig, DaimokuCountResult, StreamingState,
-};
+use crate::dsp::{count_daimoku_with_profile, DaimokuCountResult, StreamingState};
+use crate::profile::{PersonalProfile, ProfileState};
 use crate::training::{TrainingStore, TrainingTakeMeta};
 use serde::Serialize;
 use std::path::Path;
@@ -18,8 +17,6 @@ pub fn list_input_devices() -> Result<Vec<audio::DeviceInfo>, String> {
 
 #[tauri::command]
 pub fn start_recording(state: State<'_, AudioState>) -> Result<(), String> {
-    // The live counter is reset inside the audio thread once the real
-    // sample rate is known (see ActiveRecording::start).
     state.start()
 }
 
@@ -37,42 +34,47 @@ pub async fn stop_recording(
 }
 
 // -----------------------------------------------------------------------------
-// Live counter commands (called by the UI while recording)
+// Live counter
 // -----------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LiveStatus {
-    /// Running count of detected Daimoku since the last start/reset.
     pub count: usize,
-    /// One of "warming", "locked", "idle".
     pub state: String,
-    /// Current period estimate in milliseconds, if any.
     pub period_ms: Option<f32>,
-    /// Sample rate the counter is currently using.
     pub sample_rate: u32,
+    pub profile_used: bool,
 }
 
 #[tauri::command]
-pub fn live_status(state: State<'_, AudioState>) -> LiveStatus {
+pub fn live_status(
+    state: State<'_, AudioState>,
+    profile_state: State<'_, ProfileState>,
+) -> LiveStatus {
+    let snap = profile_state.snapshot();
+    let usable = snap.is_usable();
+    state.live_set_profile(if usable { Some(snap) } else { None });
+
     let s = state.live_state();
     LiveStatus {
         count: state.live_count(),
         state: streaming_state_str(s).to_string(),
         period_ms: state.live_period_secs().map(|p| p * 1000.0),
         sample_rate: state.live_sample_rate(),
+        profile_used: usable,
     }
 }
 
-/// Snapshot of the streaming counter's final state. Returns a result shaped
-/// like the batch `count_daimoku` output, so the UI can display it uniformly.
-/// Returns `None` if the counter never locked onto any Daimoku.
 #[tauri::command]
-pub fn live_snapshot(state: State<'_, AudioState>) -> Option<DaimokuCountResult> {
+pub fn live_snapshot(
+    state: State<'_, AudioState>,
+    profile_state: State<'_, ProfileState>,
+) -> Option<DaimokuCountResult> {
+    let snap = profile_state.snapshot();
+    state.live_set_profile(if snap.is_usable() { Some(snap) } else { None });
     state.live_finish()
 }
 
-/// Manually reset the live counter. Useful if the UI wants to start a new
-/// "live session" without re-starting the recording stream.
 #[tauri::command]
 pub fn reset_live_counter(
     state: State<'_, AudioState>,
@@ -91,6 +93,95 @@ fn streaming_state_str(s: StreamingState) -> &'static str {
         StreamingState::Locked => "locked",
         StreamingState::Idle => "idle",
     }
+}
+
+// -----------------------------------------------------------------------------
+// Personal profile
+// -----------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn get_personal_profile(state: State<'_, ProfileState>) -> PersonalProfile {
+    state.snapshot()
+}
+
+#[derive(Debug, Serialize)]
+pub struct ValidationResult {
+    pub expected: u32,
+    pub detected: usize,
+    pub ok: bool,
+    pub profile_used: bool,
+    pub analysis: DaimokuCountResult,
+}
+
+#[tauri::command]
+pub fn validate_training_take(
+    store: State<'_, TrainingStore>,
+    profile_state: State<'_, ProfileState>,
+    index: usize,
+) -> Result<ValidationResult, String> {
+    let (audio, expected) = store.get_with_expected(index)?;
+
+    let snap = profile_state.snapshot();
+    let profile_used = snap.is_usable();
+    let profile_ref = if profile_used { Some(&snap) } else { None };
+
+    let analysis = count_daimoku_with_profile(&audio.samples, audio.sample_rate, profile_ref)
+        .ok_or_else(|| {
+            "No periodicity detected in the recording. Recite with clear syllables and steady rhythm."
+                .to_string()
+        })?;
+
+    let ok = analysis.count == expected as usize;
+    Ok(ValidationResult {
+        expected,
+        detected: analysis.count,
+        ok,
+        profile_used,
+        analysis,
+    })
+}
+
+#[tauri::command]
+pub fn add_take_to_profile(
+    store: State<'_, TrainingStore>,
+    profile_state: State<'_, ProfileState>,
+    audio_state: State<'_, AudioState>,
+    index: usize,
+) -> Result<PersonalProfile, String> {
+    let (audio, expected) = store.get_with_expected(index)?;
+    if expected == 0 {
+        return Err("take has no declared Daimoku count".to_string());
+    }
+
+    let new_profile = profile_state.with_mut(|p| {
+        p.add_take(&audio.samples, audio.sample_rate, expected)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+            .and_then(|_| p.save())
+            .map(|_| p.clone())
+    })?;
+
+    let to_inject = if new_profile.is_usable() {
+        Some(new_profile.clone())
+    } else {
+        None
+    };
+    audio_state.live_set_profile(to_inject);
+
+    Ok(new_profile)
+}
+
+#[tauri::command]
+pub fn clear_personal_profile(
+    profile_state: State<'_, ProfileState>,
+    audio_state: State<'_, AudioState>,
+) -> Result<(), String> {
+    profile_state.with_mut(|p| {
+        p.clear();
+        let _ = p.save();
+    });
+    audio_state.live_set_profile(None);
+    Ok(())
 }
 
 // -----------------------------------------------------------------------------
@@ -119,43 +210,6 @@ pub fn export_training_wav(
     let path = dir.join(format!("daimuku-training-{index}.wav"));
     write_wav(&path, &audio)?;
     Ok(path.to_string_lossy().into_owned())
-}
-
-// -----------------------------------------------------------------------------
-// Batch validation
-// -----------------------------------------------------------------------------
-
-#[derive(Debug, Serialize)]
-pub struct ValidationResult {
-    pub expected: u32,
-    pub detected: usize,
-    pub ok: bool,
-    pub analysis: DaimokuCountResult,
-}
-
-/// Runs Daimoku counting on a stored training take and checks whether the
-/// detected count matches the expected count declared by the user. This is
-/// the single training-validation entry point used by the UI.
-#[tauri::command]
-pub fn validate_training_take(
-    store: State<'_, TrainingStore>,
-    index: usize,
-) -> Result<ValidationResult, String> {
-    let (audio, expected) = store.get_with_expected(index)?;
-    let analysis =
-        count_daimoku(&audio.samples, audio.sample_rate, DaimokuCountConfig::default())
-            .ok_or_else(|| {
-            "No periodicity detected in the recording. Recite with clear syllables and steady rhythm."
-                .to_string()
-        })?;
-
-    let ok = analysis.count == expected as usize;
-    Ok(ValidationResult {
-        expected,
-        detected: analysis.count,
-        ok,
-        analysis,
-    })
 }
 
 // -----------------------------------------------------------------------------

@@ -2,6 +2,10 @@
   import { invoke } from '@tauri-apps/api/core';
   import { onDestroy } from 'svelte';
 
+  // ---------------------------------------------------------------------------
+  // Types (inline, no external api.ts needed)
+  // ---------------------------------------------------------------------------
+
   interface TrainingTakeMeta {
     id: number;
     expected_daimoku_count: number;
@@ -17,7 +21,6 @@
     duration_secs: number;
     segment_count: number;
     active_duration_secs: number;
-    // new fields (kept optional for safety)
     mean_period_ms?: number;
     phrase_count?: number;
     method?: string;
@@ -27,7 +30,26 @@
     expected: number;
     detected: number;
     ok: boolean;
+    profile_used: boolean;
     analysis: DaimokuCountResult;
+  }
+
+  interface TakeRecord {
+    id: number;
+    n_daimoku: number;
+    duration_secs: number;
+    period_ms: number;
+    template: number[] | null;
+    created_at: string;
+  }
+
+  interface PersonalProfile {
+    version: number;
+    takes: TakeRecord[];
+    natural_period_ms: number;
+    period_sigma_ms: number;
+    template: number[] | null;
+    period_ratio_range: [number, number];
   }
 
   type StreamingState = 'warming' | 'locked' | 'idle';
@@ -37,7 +59,12 @@
     state: StreamingState;
     period_ms: number | null;
     sample_rate: number;
+    profile_used: boolean;
   }
+
+  // ---------------------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------------------
 
   let takes = $state<TrainingTakeMeta[]>([]);
   let expectedCount = $state(10);
@@ -46,19 +73,27 @@
   let exportedPath = $state<string | null>(null);
   let validation = $state<{ index: number; result: ValidationResult } | null>(null);
 
-  // ---------------------------------------------------------------------------
+  // Personal profile
+  let profile = $state<PersonalProfile | null>(null);
+  let profileMsg = $state<string | null>(null);
+
   // Live counter
-  // ---------------------------------------------------------------------------
   let live = $state<LiveStatus>({
     count: 0,
     state: 'idle',
     period_ms: null,
     sample_rate: 0,
+    profile_used: false,
   });
   let pollHandle: number | null = null;
 
+  // ---------------------------------------------------------------------------
+  // Derived
+  // ---------------------------------------------------------------------------
+
   let hasTake = $derived(takes.length > 0);
   let targetReached = $derived(recording && live.count >= expectedCount);
+  let profileUsable = $derived(profile !== null && profile.takes.length > 0);
 
   let stateLabel = $derived(
     live.state === 'warming'
@@ -88,6 +123,10 @@
     Math.min(100, (live.count / Math.max(1, expectedCount)) * 100)
   );
 
+  // ---------------------------------------------------------------------------
+  // Data loading
+  // ---------------------------------------------------------------------------
+
   async function refresh() {
     try {
       takes = await invoke<TrainingTakeMeta[]>('list_training_takes');
@@ -96,10 +135,23 @@
     }
   }
 
+  async function refreshProfile() {
+    try {
+      profile = await invoke<PersonalProfile>('get_personal_profile');
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Recording flow
+  // ---------------------------------------------------------------------------
+
   async function start() {
     error = null;
     exportedPath = null;
     validation = null;
+    profileMsg = null;
     try {
       await invoke('start_recording');
       recording = true;
@@ -129,6 +181,7 @@
     error = null;
     exportedPath = null;
     validation = null;
+    profileMsg = null;
     try {
       await invoke<number>('clear_training_takes');
       await refresh();
@@ -150,6 +203,7 @@
   async function validate(index: number) {
     error = null;
     validation = null;
+    profileMsg = null;
     try {
       const result = await invoke<ValidationResult>('validate_training_take', { index });
       validation = { index, result };
@@ -159,8 +213,42 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Personal profile
+  // ---------------------------------------------------------------------------
+
+  async function addToProfile(index: number) {
+    error = null;
+    profileMsg = null;
+    try {
+      const updated = await invoke<PersonalProfile>('add_take_to_profile', { index });
+      profile = updated;
+      profileMsg = `Added take #${index} to profile (${updated.takes.length} take${
+        updated.takes.length === 1 ? '' : 's'
+      }, natural period ${(updated.natural_period_ms / 1000).toFixed(2)} s)`;
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function clearProfile() {
+    if (!confirm('Delete the personal profile? The counter will use default parameters.')) {
+      return;
+    }
+    error = null;
+    profileMsg = null;
+    try {
+      await invoke<void>('clear_personal_profile');
+      await refreshProfile();
+      profileMsg = 'Profile cleared';
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Live counter polling
   // ---------------------------------------------------------------------------
+
   function startPolling() {
     stopPolling();
     void tick();
@@ -172,8 +260,13 @@
       clearInterval(pollHandle);
       pollHandle = null;
     }
-    // Reset displayed live values when we stop.
-    live = { count: 0, state: 'idle', period_ms: null, sample_rate: 0 };
+    live = {
+      count: 0,
+      state: 'idle',
+      period_ms: null,
+      sample_rate: 0,
+      profile_used: false,
+    };
   }
 
   async function tick() {
@@ -186,7 +279,9 @@
 
   onDestroy(stopPolling);
 
+  // Initial load
   refresh();
+  refreshProfile();
 </script>
 
 <div class="page">
@@ -217,9 +312,9 @@
     </button>
   </div>
 
-  <!-- ---------------------------------------------------------------------- -->
-  <!-- Live counter (visible only while recording)                             -->
-  <!-- ---------------------------------------------------------------------- -->
+  <!-- --------------------------------------------------------------------- -->
+  <!-- Live counter                                                          -->
+  <!-- --------------------------------------------------------------------- -->
   {#if recording}
     <section class="live">
       <div class="live-count">
@@ -230,6 +325,9 @@
       <div class="live-meta">
         <span class={stateClass}>{stateLabel}</span>
         <span class="live-period">{periodLabel}</span>
+        {#if live.profile_used}
+          <span class="badge profile">Profile</span>
+        {/if}
       </div>
 
       <div class="progress">
@@ -246,6 +344,9 @@
     </section>
   {/if}
 
+  <!-- --------------------------------------------------------------------- -->
+  <!-- Messages                                                              -->
+  <!-- --------------------------------------------------------------------- -->
   {#if error}
     <div class="error">{error}</div>
   {/if}
@@ -256,6 +357,45 @@
     </div>
   {/if}
 
+  {#if profileMsg}
+    <div class="success">{profileMsg}</div>
+  {/if}
+
+  <!-- --------------------------------------------------------------------- -->
+  <!-- Personal profile summary                                              -->
+  <!-- --------------------------------------------------------------------- -->
+  <section class="profile-box">
+    <div class="profile-head">
+      <h2>Personal profile</h2>
+      {#if profileUsable}
+        <button class="btn-mini danger" on:click={clearProfile}>Clear profile</button>
+      {/if}
+    </div>
+
+    {#if !profile || profile.takes.length === 0}
+      <p class="profile-empty">
+        No profile yet. After validating a take, click <em>Add to profile</em> to
+        start teaching the app your personal rhythm.
+      </p>
+    {:else}
+      <p class="profile-stat">
+        <strong>{profile.takes.length}</strong>
+        take{profile.takes.length === 1 ? '' : 's'} ·
+        natural period <strong>{(profile.natural_period_ms / 1000).toFixed(2)} s</strong>
+        · σ ±{(profile.period_sigma_ms / 1000).toFixed(2)} s
+        · speed range {(profile.period_ratio_range[0]).toFixed(2)}x–{(profile.period_ratio_range[1]).toFixed(2)}x
+      </p>
+      {#if profile.template}
+        <p class="profile-note">
+          Template: {profile.template.length} samples
+        </p>
+      {/if}
+    {/if}
+  </section>
+
+  <!-- --------------------------------------------------------------------- -->
+  <!-- Recordings list                                                       -->
+  <!-- --------------------------------------------------------------------- -->
   {#if hasTake}
     <section class="list">
       <h2>Recordings</h2>
@@ -265,6 +405,7 @@
             <span class="count">{t.expected_daimoku_count} Daimoku</span>
             <span class="dur">{(t.duration_ms / 1000).toFixed(1)} s</span>
             <button class="btn-mini primary" on:click={() => validate(t.id)}>Validate</button>
+            <button class="btn-mini" on:click={() => addToProfile(t.id)}>+ Profile</button>
             <button class="btn-mini" on:click={() => exportWav(t.id)}>WAV</button>
           </li>
         {/each}
@@ -272,6 +413,9 @@
     </section>
   {/if}
 
+  <!-- --------------------------------------------------------------------- -->
+  <!-- Validation result                                                     -->
+  <!-- --------------------------------------------------------------------- -->
   {#if validation}
     <section class="validation" class:ok={validation.result.ok} class:fail={!validation.result.ok}>
       <h2>
@@ -281,6 +425,9 @@
       <p>
         Recited: <strong>{validation.result.expected}</strong>
         · Detected: <strong>{validation.result.detected}</strong>
+        {#if validation.result.profile_used}
+          · <span class="tag-profile">with profile</span>
+        {/if}
       </p>
       <p class="details">
         Period: {validation.result.analysis.period_ms.toFixed(0)} ms
@@ -288,6 +435,11 @@
         · Segments: {validation.result.analysis.segment_count}
         · Active: {validation.result.analysis.active_duration_secs.toFixed(1)} s
       </p>
+      {#if validation.result.ok && !validation.result.profile_used}
+        <p class="hint">
+          Looks good. Add this take to the profile to improve future counts.
+        </p>
+      {/if}
       {#if !validation.result.ok}
         <p class="hint">
           Recite again with clearer syllable separation and a steadier rhythm.
@@ -360,10 +512,11 @@
     background-color: #4a4a4a;
   }
   .btn-mini.primary { background-color: #3b6ea5; }
+  .btn-mini.danger { background-color: #7a2a2a; }
 
   .recording { color: #ff6b6b; }
 
-  /* ---- Live counter --------------------------------------------------- */
+  /* ---- Live counter ------------------------------------------------- */
   .live {
     width: 100%;
     max-width: 34rem;
@@ -412,10 +565,9 @@
   .badge.warming { background: #3a2f10; color: #f0c674; }
   .badge.locked  { background: #133a1c; color: #6ee7a8; }
   .badge.idle    { background: #2a2a2a; color: #b8b8b8; }
+  .badge.profile { background: #1a2a3a; color: #7dd3fc; }
 
-  .live-period {
-    font-variant-numeric: tabular-nums;
-  }
+  .live-period { font-variant-numeric: tabular-nums; }
 
   .progress {
     width: 100%;
@@ -430,7 +582,7 @@
     transition: width 0.15s linear;
   }
 
-  /* ---- Messages ------------------------------------------------------- */
+  /* ---- Messages ----------------------------------------------------- */
   .error {
     color: #ff9b9b;
     background-color: #2a1515;
@@ -452,10 +604,59 @@
     font-size: 0.85rem;
   }
 
-  /* ---- Recordings list ------------------------------------------------ */
+  .success {
+    color: #a6e3a6;
+    background-color: #152a15;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    max-width: 34rem;
+  }
+
+  /* ---- Personal profile box ---------------------------------------- */
+  .profile-box {
+    width: 100%;
+    max-width: 34rem;
+    text-align: left;
+    padding: 0.75rem 1rem;
+    background-color: #1a1d21;
+    border: 1px solid #23272c;
+    border-radius: 8px;
+  }
+  .profile-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.4rem;
+  }
+  .profile-head h2 {
+    font-size: 0.95rem;
+    margin: 0;
+    font-weight: normal;
+    opacity: 0.8;
+  }
+  .profile-empty {
+    margin: 0;
+    color: #8a8a8a;
+    font-size: 0.85rem;
+  }
+  .profile-stat {
+    margin: 0;
+    font-size: 0.85rem;
+    color: #cfcfcf;
+    line-height: 1.6;
+  }
+  .profile-stat strong { color: #7dd3fc; }
+  .profile-note {
+    margin: 0.3rem 0 0;
+    font-size: 0.75rem;
+    color: #7a7a7a;
+    font-family: ui-monospace, monospace;
+  }
+
+  /* ---- Recordings list ---------------------------------------------- */
   .list {
     width: 100%;
-    max-width: 30rem;
+    max-width: 34rem;
     text-align: left;
   }
   .list h2 {
@@ -469,18 +670,18 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.5rem;
+    gap: 0.4rem;
     padding: 0.4rem 0.75rem;
     background-color: #242424;
     border-radius: 6px;
     margin-bottom: 0.3rem;
     font-family: ui-monospace, monospace;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
   }
   .count { flex: 1; color: #cfcfcf; }
-  .dur { flex: 1; color: #888; text-align: right; }
+  .dur { color: #888; text-align: right; }
 
-  /* ---- Validation ----------------------------------------------------- */
+  /* ---- Validation --------------------------------------------------- */
   .validation {
     width: 100%;
     max-width: 34rem;
@@ -508,5 +709,12 @@
   .validation .hint {
     font-size: 0.85rem;
     opacity: 0.8;
+  }
+  .tag-profile {
+    padding: 0.05rem 0.4rem;
+    background: #1a2a3a;
+    color: #7dd3fc;
+    border-radius: 4px;
+    font-size: 0.75rem;
   }
 </style>
