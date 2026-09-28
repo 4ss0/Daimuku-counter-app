@@ -30,14 +30,24 @@ pub fn run() {
                 }
             }
 
-            let profile_state = profile::ProfileState::new();
-            let audio_state = audio::AudioState::spawn()?;
-            audio_state.live_set_profile(Some(profile_state.snapshot()));
-
-            app.manage(audio_state);
-            app.manage(profile_state);
-            app.manage(training::TrainingStore::new());
+            // Everything the UI may call is registered right away; the
+            // voice model (slow to build) is loaded in the background and
+            // commands that need it simply wait for it.
             app.manage(history::History::load());
+            app.manage(training::TrainingStore::new());
+            app.manage(profile::ProfileState::empty());
+            app.manage(audio::AudioState::spawn()?);
+
+            let handle = app.handle().clone();
+            std::thread::Builder::new()
+                .name("profile-loader".into())
+                .spawn(move || {
+                    let profile = handle.state::<profile::ProfileState>();
+                    profile.load();
+                    handle
+                        .state::<audio::AudioState>()
+                        .live_set_profile(Some(profile.snapshot()));
+                })?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -65,6 +75,10 @@ pub fn run() {
             commands::get_personal_profile,
             commands::add_take_to_profile,
             commands::clear_personal_profile,
+            commands::delete_profile_take,
+            // preferences
+            commands::get_prefs,
+            commands::set_prefs,
             commands::validate_training_take,
             // training store
             commands::list_training_takes,

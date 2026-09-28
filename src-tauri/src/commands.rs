@@ -47,32 +47,34 @@ pub struct LiveStatus {
     pub profile_used: bool,
 }
 
-#[tauri::command]
+// async: may wait for the voice model to finish loading
+#[tauri::command(async)]
 pub fn live_status(
     state: State<'_, AudioState>,
     profile_state: State<'_, ProfileState>,
-) -> LiveStatus {
+) -> Result<LiveStatus, String> {
     // Only arms the model for the *next* reset: never disturbs a session
     // that is already counting.
     state.live_set_profile(Some(profile_state.snapshot()));
 
     let s = state.live_state();
-    LiveStatus {
+    Ok(LiveStatus {
         count: state.live_count(),
         state: streaming_state_str(s).to_string(),
         period_ms: state.live_period_secs().map(|p| p * 1000.0),
         sample_rate: state.live_sample_rate(),
         profile_used: true,
-    }
+    })
 }
 
-#[tauri::command]
+// async: may wait for the voice model to finish loading
+#[tauri::command(async)]
 pub fn live_snapshot(
     state: State<'_, AudioState>,
     profile_state: State<'_, ProfileState>,
-) -> Option<DaimokuCountResult> {
+) -> Result<Option<DaimokuCountResult>, String> {
     state.live_set_profile(Some(profile_state.snapshot()));
-    state.live_finish()
+    Ok(state.live_finish())
 }
 
 #[tauri::command]
@@ -113,7 +115,8 @@ pub struct LiveSessionSummary {
 
 /// Starts counting with the current personal profile. Unlike
 /// `start_recording`, the audio does not end up in the training list.
-#[tauri::command]
+// async: may wait for the voice model to finish loading
+#[tauri::command(async)]
 pub fn start_live_session(
     audio_state: State<'_, AudioState>,
     profile_state: State<'_, ProfileState>,
@@ -220,9 +223,10 @@ pub fn set_daily_goal(history: State<'_, History>, goal: u32) -> Result<u32, Str
 // Personal profile
 // -----------------------------------------------------------------------------
 
-#[tauri::command]
-pub fn get_personal_profile(state: State<'_, ProfileState>) -> PersonalProfile {
-    state.snapshot()
+// async: may wait for the voice model to finish loading
+#[tauri::command(async)]
+pub fn get_personal_profile(state: State<'_, ProfileState>) -> Result<PersonalProfile, String> {
+    Ok(state.snapshot())
 }
 
 #[derive(Debug, Serialize)]
@@ -234,7 +238,8 @@ pub struct ValidationResult {
     pub analysis: DaimokuCountResult,
 }
 
-#[tauri::command]
+// async: may wait for the voice model to finish loading
+#[tauri::command(async)]
 pub fn validate_training_take(
     store: State<'_, TrainingStore>,
     profile_state: State<'_, ProfileState>,
@@ -261,7 +266,8 @@ pub fn validate_training_take(
 /// Adds a recorded take to the personal profile. `ProfileState::add_take`
 /// persists the audio + index to disk and retrains the model in one step,
 /// so there is no separate save call.
-#[tauri::command]
+// async: may wait for the voice model to finish loading
+#[tauri::command(async)]
 pub fn add_take_to_profile(
     store: State<'_, TrainingStore>,
     profile_state: State<'_, ProfileState>,
@@ -280,9 +286,49 @@ pub fn add_take_to_profile(
     Ok(new_profile)
 }
 
+/// Deletes one of the user's takes (by its `id`) and retrains.
+// async: may wait for the voice model to finish loading
+#[tauri::command(async)]
+pub fn delete_profile_take(
+    profile_state: State<'_, ProfileState>,
+    audio_state: State<'_, AudioState>,
+    id: usize,
+) -> Result<PersonalProfile, String> {
+    profile_state.delete_take(id)?;
+    let p = profile_state.snapshot();
+    audio_state.live_set_profile(Some(p.clone()));
+    Ok(p)
+}
+
+// -----------------------------------------------------------------------------
+// App preferences (language, theme, colour): an opaque JSON object owned by
+// the frontend, stored next to the history.
+// -----------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn get_prefs() -> serde_json::Value {
+    crate::paths::data_dir()
+        .and_then(|d| std::fs::read_to_string(d.join("prefs.json")).ok())
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+#[tauri::command]
+pub fn set_prefs(prefs: serde_json::Value) -> Result<(), String> {
+    if !prefs.is_object() {
+        return Err("prefs must be an object".to_string());
+    }
+    let dir = crate::paths::data_dir().ok_or_else(|| "no data directory".to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let tmp = dir.join("prefs.json.tmp");
+    std::fs::write(&tmp, prefs.to_string()).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, dir.join("prefs.json")).map_err(|e| e.to_string())
+}
+
 /// Deletes the user's takes and falls back to the model trained on the
 /// four built-in reference recordings only.
-#[tauri::command]
+// async: may wait for the voice model to finish loading
+#[tauri::command(async)]
 pub fn clear_personal_profile(
     profile_state: State<'_, ProfileState>,
     audio_state: State<'_, AudioState>,

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Bucket } from './stats';
   import { fmtNum } from './api';
+  import { locale, t } from './i18n';
 
   export let buckets: Bucket[] = [];
   export let unit = 'daimoku';
@@ -23,15 +24,15 @@
 <div class="chart">
   <div class="readout" aria-live="polite">
     {#if shown}
-      <strong>{fmtNum(shown.value)}</strong> {unit} · {shown.title}
+      <strong>{fmtNum(shown.value, $locale)}</strong> {unit} · {shown.title}
     {:else}
-      <span class="muted">Tocca una barra per il dettaglio</span>
+      <span class="muted">{$t('stats.tapBar')}</span>
     {/if}
   </div>
 
   <div class="plot">
-    <div class="grid top"><span>{fmtNum(nice)}</span></div>
-    <div class="grid mid"><span>{fmtNum(nice / 2)}</span></div>
+    <div class="grid top"><span>{fmtNum(nice, $locale)}</span></div>
+    <div class="grid mid"><span>{fmtNum(nice / 2, $locale)}</span></div>
     <div class="bars" style="--n:{buckets.length}">
       {#each buckets as b, i}
         <button
@@ -97,7 +98,8 @@
     top: -0.45rem;
     width: 34px;
     text-align: right;
-    background: var(--surface);
+    background: var(--surface-solid);
+    border-radius: 3px;
     font-size: 0.68rem;
     color: var(--faint);
     font-variant-numeric: tabular-nums;
@@ -131,12 +133,12 @@
   .bar {
     width: 100%;
     max-width: 26px;
-    background: var(--gold-mark);
+    background: var(--mark);
     border-radius: 4px 4px 0 0;
     transition: height 0.35s ease, background 0.15s;
   }
   .bar.current {
-    background: var(--gold);
+    background: var(--mark-current);
   }
   .col.sel .bar {
     background: var(--text);

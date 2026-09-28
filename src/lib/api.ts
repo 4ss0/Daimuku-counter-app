@@ -1,5 +1,7 @@
 // Typed wrappers around the Rust commands (src-tauri/src/commands.rs).
 import { invoke } from '@tauri-apps/api/core';
+import { get } from 'svelte/store';
+import { locale, t, type TFn } from './i18n';
 
 export interface LiveView {
   count: number;
@@ -74,6 +76,7 @@ export const api = {
 
   profile: () => invoke<PersonalProfile>('get_personal_profile'),
   clearProfile: () => invoke<void>('clear_personal_profile'),
+  deleteTake: (id: number) => invoke<PersonalProfile>('delete_profile_take', { id }),
   startRecording: () => invoke<void>('start_recording'),
   stopRecording: (expected: number) =>
     invoke<TrainingTakeMeta>('stop_recording', { expectedDaimokuCount: expected }),
@@ -84,11 +87,12 @@ export const api = {
 
 export function errText(e: unknown): string {
   const s = String(e);
-  if (/permission|denied|autorizz|build input stream|start stream|input config/i.test(s)) {
-    return "L'app non può usare il microfono: consenti l'accesso nelle impostazioni del telefono.";
+  const tr = get(t);
+  if (/permission|denied|autorizz|build input stream|start stream|input config|audio backend/i.test(s)) {
+    return `${tr('err.mic')} (${s})`;
   }
   if (/no default input device/i.test(s)) {
-    return 'Nessun microfono trovato.';
+    return tr('err.noMic');
   }
   return s;
 }
@@ -101,14 +105,13 @@ export function fmtClock(secs: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${String(m).padStart(2, '0')}:${ss}`;
 }
 
-export function fmtDuration(secs: number): string {
+export function fmtDuration(secs: number, tr: TFn = get(t)): string {
   const m = Math.round(secs / 60);
-  if (m < 1) return secs > 0 ? '<1 min' : '—';
-  if (m < 60) return `${m} min`;
-  const h = Math.floor(m / 60);
-  return `${h} h ${String(m % 60).padStart(2, '0')}`;
+  if (m < 1) return secs > 0 ? tr('dur.lessMin') : '—';
+  if (m < 60) return tr('dur.min', { m });
+  return tr('dur.hm', { h: Math.floor(m / 60), m: String(m % 60).padStart(2, '0') });
 }
 
-export function fmtNum(n: number): string {
-  return n.toLocaleString('it-IT');
+export function fmtNum(n: number, loc = get(locale)): string {
+  return n.toLocaleString(loc);
 }

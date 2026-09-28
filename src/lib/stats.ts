@@ -20,13 +20,21 @@ export interface PeriodStats {
   title: string;
 }
 
-const MONTHS = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
-const MONTHS_LONG = [
-  'gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
-  'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre',
-];
-const DAYS = ['lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'];
 const DAY_MS = 86_400_000;
+
+// Month / weekday names in the user's language.
+function fmt(loc: string, o: Intl.DateTimeFormatOptions, d: Date): string {
+  return new Intl.DateTimeFormat(loc, o).format(d);
+}
+const monthNarrow = (loc: string, m: number) => fmt(loc, { month: 'narrow' }, new Date(2021, m, 1));
+const monthLong = (loc: string, y: number, m: number) => fmt(loc, { month: 'long', year: 'numeric' }, new Date(y, m, 1));
+const monthOnly = (loc: string, m: number) => {
+  const s = fmt(loc, { month: 'long' }, new Date(2021, m, 1));
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
+// 1 Jan 2024 was a Monday
+const weekdayShort = (loc: string, i: number) => fmt(loc, { weekday: 'short' }, new Date(2024, 0, 1 + i));
+const dayTitle = (loc: string, d: Date) => fmt(loc, { weekday: 'short', day: 'numeric', month: 'short' }, d);
 
 export function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -117,7 +125,12 @@ export function goalDaysThisMonth(sessions: SessionRecord[], goal: number, now =
   return { met, elapsed: now.getDate() };
 }
 
-export function periodStats(sessions: SessionRecord[], period: Period, now = new Date()): PeriodStats {
+export function periodStats(
+  sessions: SessionRecord[],
+  period: Period,
+  now = new Date(),
+  loc = 'it-IT',
+): PeriodStats {
   const ps = parse(sessions);
   const buckets: Bucket[] = [];
   let from: Date;
@@ -129,7 +142,7 @@ export function periodStats(sessions: SessionRecord[], period: Period, now = new
     from = startOfDay(now);
     to = addDays(from, 1);
     prevFrom = addDays(from, -1);
-    title = 'Oggi';
+    title = '';
     for (let h = 0; h < 24; h++) {
       const a = new Date(from.getFullYear(), from.getMonth(), from.getDate(), h);
       const b = new Date(from.getFullYear(), from.getMonth(), from.getDate(), h + 1);
@@ -144,12 +157,12 @@ export function periodStats(sessions: SessionRecord[], period: Period, now = new
     from = startOfWeek(now);
     to = addDays(from, 7);
     prevFrom = addDays(from, -7);
-    title = 'Questa settimana';
+    title = '';
     for (let i = 0; i < 7; i++) {
       const a = addDays(from, i);
       buckets.push({
-        label: DAYS[i],
-        title: `${DAYS[i]} ${a.getDate()} ${MONTHS[a.getMonth()]}`,
+        label: weekdayShort(loc, i),
+        title: dayTitle(loc, a),
         value: sumIn(ps, a, addDays(a, 1)).total,
         current: dayKey(a) === dayKey(now),
       });
@@ -158,13 +171,13 @@ export function periodStats(sessions: SessionRecord[], period: Period, now = new
     from = new Date(now.getFullYear(), now.getMonth(), 1);
     to = new Date(now.getFullYear(), now.getMonth() + 1, 1);
     prevFrom = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    title = MONTHS_LONG[now.getMonth()][0].toUpperCase() + MONTHS_LONG[now.getMonth()].slice(1);
+    title = monthOnly(loc, now.getMonth());
     const n = daysInMonth(now.getFullYear(), now.getMonth());
     for (let d = 1; d <= n; d++) {
       const a = new Date(now.getFullYear(), now.getMonth(), d);
       buckets.push({
         label: d === 1 || d % 5 === 0 ? String(d) : '',
-        title: `${d} ${MONTHS[now.getMonth()]}`,
+        title: dayTitle(loc, a),
         value: sumIn(ps, a, addDays(a, 1)).total,
         current: d === now.getDate(),
       });
@@ -178,14 +191,14 @@ export function periodStats(sessions: SessionRecord[], period: Period, now = new
       const a = new Date(now.getFullYear(), m, 1);
       const b = new Date(now.getFullYear(), m + 1, 1);
       buckets.push({
-        label: MONTHS[m][0].toUpperCase(),
-        title: `${MONTHS_LONG[m]} ${now.getFullYear()}`,
+        label: monthNarrow(loc, m),
+        title: monthLong(loc, now.getFullYear(), m),
         value: sumIn(ps, a, b).total,
         current: m === now.getMonth(),
       });
     }
   } else {
-    title = 'Da sempre';
+    title = '';
     const first = ps.length ? ps.reduce((a, p) => (p.t < a ? p.t : a), ps[0].t) : now;
     from = new Date(0);
     to = new Date(8.64e15);
@@ -210,8 +223,8 @@ export function periodStats(sessions: SessionRecord[], period: Period, now = new
       for (let d = m0; d <= last; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) {
         const b = new Date(d.getFullYear(), d.getMonth() + 1, 1);
         buckets.push({
-          label: MONTHS[d.getMonth()][0].toUpperCase(),
-          title: `${MONTHS_LONG[d.getMonth()]} ${d.getFullYear()}`,
+          label: monthNarrow(loc, d.getMonth()),
+          title: monthLong(loc, d.getFullYear(), d.getMonth()),
           value: sumIn(ps, d, b).total,
           current: d.getTime() === last.getTime(),
         });
@@ -250,12 +263,18 @@ export function sessionsIn(sessions: SessionRecord[], period: Period, now = new 
     .sort((a, b) => b.started_at.localeCompare(a.started_at));
 }
 
-export function fmtWhen(iso: string, now = new Date()): string {
+export function fmtWhen(
+  iso: string,
+  now = new Date(),
+  loc = 'it-IT',
+  words = { today: 'Oggi', yesterday: 'Ieri' },
+): string {
   const d = new Date(iso);
-  const hm = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const hm = fmt(loc, { hour: 'numeric', minute: '2-digit' }, d);
   const diff = Math.round((startOfDay(now).getTime() - startOfDay(d).getTime()) / DAY_MS);
-  if (diff === 0) return `Oggi, ${hm}`;
-  if (diff === 1) return `Ieri, ${hm}`;
+  if (diff === 0) return `${words.today}, ${hm}`;
+  if (diff === 1) return `${words.yesterday}, ${hm}`;
   const same = d.getFullYear() === now.getFullYear();
-  return `${d.getDate()} ${MONTHS[d.getMonth()]}${same ? '' : ' ' + d.getFullYear()}, ${hm}`;
+  const day = fmt(loc, same ? { day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short', year: 'numeric' }, d);
+  return `${day}, ${hm}`;
 }

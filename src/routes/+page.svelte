@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import { api, errText, fmtClock, fmtNum, type LiveSessionSummary, type LiveView, type SessionRecord } from '$lib/api';
+  import { locale, t } from '$lib/i18n';
   import { todayTotal } from '$lib/stats';
 
   const POLL_MS = 150;
@@ -25,21 +26,20 @@
 
   $: liveCount = running ? view?.count ?? 0 : summary ? corrected : 0;
   $: baseToday = todayTotal(sessions);
-  // while counting, the session is not saved yet: add it on top
   $: today = running ? baseToday + liveCount : baseToday;
   $: progress = Math.min(1, today / Math.max(1, goal));
   $: goalReached = today >= goal;
   $: elapsed = view?.elapsed_secs ?? 0;
   $: statusLabel = !running
     ? summary
-      ? 'Sessione salvata'
-      : 'Pronto'
+      ? $t('count.saved')
+      : $t('count.ready')
     : view?.state === 'locked'
-      ? 'Sto contando'
+      ? $t('count.counting')
       : view?.speaking
-        ? 'Ti ascolto…'
-        : 'In attesa della voce…';
-  $: dateLabel = new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
+        ? $t('count.listening')
+        : $t('count.waiting');
+  $: dateLabel = new Date().toLocaleDateString($locale, { weekday: 'long', day: 'numeric', month: 'long' });
 
   async function refresh() {
     try {
@@ -166,12 +166,13 @@
   <header>
     <div class="date">{dateLabel}</div>
     <div class="today">
-      Oggi <strong>{fmtNum(today)}</strong> <span class="of">/ {fmtNum(goal)}</span>
-      {#if goalReached}<span class="done" aria-label="obiettivo raggiunto">✓</span>{/if}
+      {$t('count.today')} <strong>{fmtNum(today, $locale)}</strong> <span class="of">/ {fmtNum(goal, $locale)}</span>
+      {#if goalReached}<span class="done" aria-label={$t('count.goalReached')}>✓</span>{/if}
     </div>
   </header>
 
   <div class="ring-wrap" class:speaking={running && view?.speaking}>
+    <div class="ring-glass"></div>
     <svg class="ring" viewBox="0 0 280 280" aria-hidden="true">
       <circle class="track" cx="140" cy="140" r={R} />
       <circle
@@ -188,7 +189,7 @@
       <div class="count" class:pulse on:animationend={() => (pulse = false)} aria-live="polite">
         {liveCount}
       </div>
-      <div class="unit">daimoku</div>
+      <div class="unit">{$t('count.unit')}</div>
     </div>
   </div>
 
@@ -205,7 +206,7 @@
     class:stop={running}
     on:click={running ? stop : start}
     disabled={busy}
-    aria-label={running ? 'Ferma' : 'Inizia'}
+    aria-label={running ? $t('count.stop') : $t('count.start')}
   >
     {#if running}
       <svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" /></svg>
@@ -213,43 +214,40 @@
       <svg viewBox="0 0 24 24"><path d="M8.5 5.8v12.4a1 1 0 0 0 1.5.86l10-6.2a1 1 0 0 0 0-1.72l-10-6.2a1 1 0 0 0-1.5.86z" /></svg>
     {/if}
   </button>
-  <div class="go-label">{running ? 'Ferma' : 'Inizia'}</div>
+  <div class="go-label">{running ? $t('count.stop') : $t('count.start')}</div>
 
   {#if summary && !running}
-    <section class="sheet">
+    <section class="sheet glass">
       {#if summary.session}
         <div class="sheet-row">
           <div>
-            <div class="sheet-title">Sessione salvata</div>
+            <div class="sheet-title">{$t('count.saved')}</div>
             <div class="sheet-sub">
               {fmtClock(summary.duration_secs)}
-              {#if corrected !== summary.count}· rilevati {summary.count}{/if}
+              {#if corrected !== summary.count}· {$t('count.detected', { n: summary.count })}{/if}
             </div>
           </div>
-          <div class="stepper" role="group" aria-label="Correggi il numero">
-            <button on:click={() => adjust(-1)} aria-label="Uno in meno">−</button>
+          <div class="stepper" role="group">
+            <button on:click={() => adjust(-1)} aria-label={$t('common.less')}>−</button>
             <span>{corrected}</span>
-            <button on:click={() => adjust(1)} aria-label="Uno in più">+</button>
+            <button on:click={() => adjust(1)} aria-label={$t('common.more')}>+</button>
           </div>
         </div>
-        <p class="hint">Se ne ha persi o aggiunti, correggi il numero: le statistiche usano questo valore.</p>
+        <p class="hint">{$t('count.correctHint')}</p>
         <div class="sheet-actions">
-          <button class="link" on:click={saveWav}>Salva l'audio per segnalare un errore</button>
-          <button class="link danger" on:click={discard}>Elimina sessione</button>
+          <button class="link" on:click={saveWav}>{$t('count.saveAudio')}</button>
+          <button class="link danger" on:click={discard}>{$t('count.deleteSession')}</button>
         </div>
-        {#if savedPath}<p class="saved">Salvato in {savedPath}</p>{/if}
+        {#if savedPath}<p class="saved">{$t('count.savedIn', { p: savedPath })}</p>{/if}
       {:else}
-        <div class="sheet-title">Nessun daimoku rilevato</div>
-        <p class="hint">
-          Avvicina il telefono e recita a voce chiara. Puoi aggiungere daimoku a mano dalle
-          <a href="/stats">statistiche</a>.
-        </p>
+        <div class="sheet-title">{$t('count.noneTitle')}</div>
+        <p class="hint">{$t('count.noneHint')}</p>
       {/if}
     </section>
   {:else if !running && userTakes === 0}
-    <a class="tip" href="/voce">
-      <strong>Insegna all'app la tua voce</strong>
-      <span>Bastano tre brevi registrazioni per contare molto meglio →</span>
+    <a class="tip glass" href="/voce">
+      <strong>{$t('count.tipTitle')}</strong>
+      <span>{$t('count.tipText')}</span>
     </a>
   {/if}
 
@@ -276,11 +274,21 @@
     display: flex;
     justify-content: space-between;
     align-items: baseline;
+    gap: 12px;
     color: var(--muted);
     font-size: 0.9rem;
+    padding: 7px 14px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
   }
   .date::first-letter {
     text-transform: uppercase;
+  }
+  .today {
+    white-space: nowrap;
   }
   .today strong {
     color: var(--text);
@@ -302,10 +310,19 @@
     border-radius: 50%;
     transition: box-shadow 0.25s;
   }
+  .ring-glass {
+    position: absolute;
+    inset: 6%;
+    border-radius: 50%;
+    background: var(--surface);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
   .ring-wrap.speaking {
-    box-shadow: 0 0 60px rgba(242, 181, 68, 0.16);
+    box-shadow: 0 0 60px var(--accent-soft);
   }
   .ring {
+    position: relative;
     width: 100%;
     height: 100%;
     transform: rotate(-90deg);
@@ -318,7 +335,7 @@
     stroke: var(--surface-2);
   }
   .ring .bar {
-    stroke: var(--gold);
+    stroke: var(--accent);
     stroke-linecap: round;
     transition: stroke-dashoffset 0.4s ease;
   }
@@ -346,7 +363,7 @@
   @keyframes pulse {
     0% {
       transform: scale(1.1);
-      color: var(--gold);
+      color: var(--accent);
     }
     100% {
       transform: scale(1);
@@ -367,6 +384,11 @@
     color: var(--muted);
     font-size: 0.9rem;
     min-height: 1.4rem;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: var(--surface);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
   }
   .dot {
     width: 8px;
@@ -393,12 +415,12 @@
     height: 84px;
     border-radius: 50%;
     border: none;
-    background: var(--gold);
-    color: #1b1406;
+    background: var(--accent);
+    color: var(--accent-ink);
     display: grid;
     place-items: center;
     cursor: pointer;
-    box-shadow: 0 8px 28px rgba(242, 181, 68, 0.28);
+    box-shadow: 0 8px 28px var(--accent-soft), var(--shadow);
     transition: transform 0.1s, background 0.2s, box-shadow 0.2s;
   }
   button.go:active {
@@ -407,7 +429,6 @@
   button.go.stop {
     background: var(--red);
     color: #fff;
-    box-shadow: 0 8px 28px rgba(229, 103, 95, 0.28);
   }
   button.go:disabled {
     opacity: 0.6;
@@ -420,15 +441,13 @@
   .go-label {
     margin-top: -6px;
     font-size: 0.8rem;
-    color: var(--faint);
+    color: var(--muted);
+    text-shadow: var(--title-shadow);
   }
 
   .sheet {
     width: 100%;
     max-width: 420px;
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
     padding: 16px 18px;
     margin-top: 4px;
   }
@@ -479,9 +498,6 @@
     line-height: 1.4;
     margin: 10px 0 4px;
   }
-  .hint a {
-    color: var(--gold);
-  }
   .sheet-actions {
     display: flex;
     flex-wrap: wrap;
@@ -516,11 +532,13 @@
     flex-direction: column;
     gap: 3px;
     padding: 14px 16px;
-    border-radius: var(--radius);
-    background: var(--gold-soft);
     color: var(--text);
     text-decoration: none;
     font-size: 0.88rem;
+    border-color: var(--accent-soft);
+  }
+  .tip strong {
+    color: var(--accent);
   }
   .tip span {
     color: var(--muted);
@@ -531,5 +549,8 @@
     font-size: 0.85rem;
     text-align: center;
     max-width: 420px;
+    background: var(--surface);
+    padding: 8px 12px;
+    border-radius: 10px;
   }
 </style>

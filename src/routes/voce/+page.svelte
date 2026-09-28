@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import { api, errText, fmtClock, type PersonalProfile, type ValidationResult } from '$lib/api';
+  import { t, type Key } from '$lib/i18n';
 
   type Speed = 'slow' | 'medium' | 'fast';
-  const SPEEDS: { id: Speed; label: string; n: number; how: string }[] = [
-    { id: 'slow', label: 'Lento', n: 3, how: 'molto lentamente, come quando inizi' },
-    { id: 'medium', label: 'Medio', n: 5, how: 'al tuo ritmo abituale' },
-    { id: 'fast', label: 'Veloce', n: 10, how: 'veloce, come quando reciti a lungo' },
+  const SPEEDS: { id: Speed; label: Key; n: number; how: Key }[] = [
+    { id: 'slow', label: 'voice.slow', n: 3, how: 'voice.howSlow' },
+    { id: 'medium', label: 'voice.medium', n: 5, how: 'voice.howMedium' },
+    { id: 'fast', label: 'voice.fast', n: 10, how: 'voice.howFast' },
   ];
 
   let profile: PersonalProfile | null = null;
@@ -23,19 +24,25 @@
   let result: ValidationResult | null = null;
   let added = false;
   let confirmReset = false;
+  let confirmDelete: number | null = null;
   let errorText = '';
 
   $: sp = SPEEDS.find((s) => s.id === speed)!;
   $: done = coverage(profile);
 
+  function speedOf(ms: number): Speed {
+    if (ms >= 2600) return 'slow';
+    if (ms >= 1150) return 'medium';
+    return 'fast';
+  }
+
+  function takeMs(tk: PersonalProfile['takes'][number]): number {
+    return tk.period_ms ?? (tk.duration_secs * 1000) / Math.max(1, tk.n_daimoku);
+  }
+
   function coverage(p: PersonalProfile | null): Record<Speed, boolean> {
     const c = { slow: false, medium: false, fast: false };
-    for (const t of p?.takes ?? []) {
-      const ms = t.period_ms ?? (t.duration_secs * 1000) / Math.max(1, t.n_daimoku);
-      if (ms >= 2600) c.slow = true;
-      else if (ms >= 1150) c.medium = true;
-      else c.fast = true;
-    }
+    for (const tk of p?.takes ?? []) c[speedOf(takeMs(tk))] = true;
     return c;
   }
 
@@ -91,7 +98,7 @@
       recording = false;
       takeIndex = meta.id;
       if (meta.duration_ms < 1500) {
-        errorText = 'Registrazione troppo breve, riprova.';
+        errorText = $t('voice.tooShort');
         takeIndex = null;
       } else {
         result = await api.validateTake(meta.id);
@@ -123,6 +130,18 @@
     added = false;
   }
 
+  async function removeTake(id: number) {
+    busy = true;
+    try {
+      profile = await api.deleteTake(id);
+      confirmDelete = null;
+    } catch (e) {
+      errorText = errText(e);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function resetVoice() {
     try {
       await api.clearProfile();
@@ -141,105 +160,113 @@
 </script>
 
 <div class="page">
-  <h1>La tua voce</h1>
-  <p class="lead">
-    L'app riconosce «Nam-myoho-renge-kyo» sillaba per sillaba. Registrando la tua voce a tre
-    velocità impara il tuo modo di recitare e conta molto meglio.
-  </p>
+  <h1>{$t('voice.title')}</h1>
+  <p class="lead glass">{$t('voice.lead')}</p>
 
   <div class="checks">
     {#each SPEEDS as s}
-      <div class="check" class:ok={done[s.id]}>
-        <span class="mark">{done[s.id] ? '✓' : ''}</span>{s.label}
+      <div class="check glass" class:ok={done[s.id]}>
+        <span class="mark">{done[s.id] ? '✓' : ''}</span>{$t(s.label)}
       </div>
     {/each}
   </div>
 
-  <section class="card rec">
+  <section class="card glass rec">
     {#if !recording && !result}
       <div class="seg">
         {#each SPEEDS as s}
-          <button class:on={speed === s.id} on:click={() => pick(s.id)}>{s.label}</button>
+          <button class:on={speed === s.id} on:click={() => pick(s.id)}>{$t(s.label)}</button>
         {/each}
       </div>
       <div class="howmany">
-        <span>Daimoku da recitare</span>
+        <span>{$t('voice.howMany')}</span>
         <div class="stepper">
-          <button on:click={() => (n = Math.max(1, n - 1))} aria-label="Meno">−</button>
+          <button on:click={() => (n = Math.max(1, n - 1))} aria-label={$t('common.less')}>−</button>
           <span>{n}</span>
-          <button on:click={() => (n = Math.min(30, n + 1))} aria-label="Più">+</button>
+          <button on:click={() => (n = Math.min(30, n + 1))} aria-label={$t('common.more')}>+</button>
         </div>
       </div>
-      <p class="instr">Premi e recita <strong>{n}</strong> daimoku {sp.how}. Poi premi di nuovo.</p>
+      <p class="instr">{$t('voice.instr', { n, how: $t(sp.how) })}</p>
     {:else if recording}
       <div class="rec-live">
         <span class="dot" class:on={speaking}></span>
-        <span>Registrazione · recita {n} daimoku</span>
+        <span>{$t('voice.recording', { n })}</span>
         <span class="clock">{fmtClock(secs)}</span>
       </div>
     {/if}
 
     {#if !result}
-      <button class="go" class:stop={recording} on:click={recording ? stop : start} disabled={busy} aria-label={recording ? 'Fine' : 'Registra'}>
+      <button class="go" class:stop={recording} on:click={recording ? stop : start} disabled={busy} aria-label={recording ? $t('voice.finish') : $t('voice.record')}>
         {#if recording}
           <svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" /></svg>
         {:else}
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5" /></svg>
         {/if}
       </button>
-      <div class="go-label">{recording ? 'Fine' : 'Registra'}</div>
+      <div class="go-label">{recording ? $t('voice.finish') : $t('voice.record')}</div>
     {:else}
       <div class="result" class:good={result.ok}>
-        <div class="r-big">{result.detected} <span>su {result.expected}</span></div>
+        <div class="r-big">{result.detected} <span>{$t('voice.of', { n: result.expected })}</span></div>
         <div class="r-sub">
           {#if added}
-            Aggiunta alla tua voce ✓
+            {$t('voice.added')}
           {:else if result.ok}
-            Riconosciuti tutti. Aggiungila comunque: rende il conteggio più sicuro.
+            {$t('voice.okAll')}
           {:else}
-            Non li ha riconosciuti tutti: aggiungendola l'app impara proprio da questo.
+            {$t('voice.notAll')}
           {/if}
         </div>
       </div>
       <div class="actions">
         {#if added}
-          <button class="btn primary" on:click={discard}>Registra un'altra</button>
+          <button class="btn primary" on:click={discard}>{$t('voice.another')}</button>
         {:else}
-          <button class="btn ghost" on:click={discard} disabled={busy}>Scarta</button>
-          <button class="btn primary" on:click={add} disabled={busy}>{busy ? 'Imparo…' : 'Aggiungi'}</button>
+          <button class="btn ghost" on:click={discard} disabled={busy}>{$t('voice.discard')}</button>
+          <button class="btn primary" on:click={add} disabled={busy}>{busy ? $t('voice.learning') : $t('common.add')}</button>
         {/if}
       </div>
-      <p class="note">Aggiungi solo registrazioni in cui hai recitato esattamente {result.expected} daimoku.</p>
+      <p class="note">{$t('voice.note', { n: result.expected })}</p>
     {/if}
   </section>
 
-  <section class="card">
+  <section class="card glass">
     <div class="row">
-      <div class="c-title">Registrazioni imparate</div>
+      <div class="c-title">{$t('voice.learned')}</div>
       <div class="c-count">{profile?.takes.length ?? 0}</div>
     </div>
     {#if profile && profile.takes.length > 0}
       <ul>
-        {#each profile.takes as t}
+        {#each profile.takes as tk (tk.id)}
           <li>
-            <span>{t.n_daimoku} daimoku</span>
-            <span class="muted">
-              {t.period_ms ? `~${(t.period_ms / 1000).toFixed(1)} s ciascuno` : `${t.duration_secs.toFixed(0)} s`}
+            <span class="tk-speed" data-speed={speedOf(takeMs(tk))}>{$t(SPEEDS.find((s) => s.id === speedOf(takeMs(tk)))!.label)}</span>
+            <span class="tk-main">
+              {$t('voice.takeLine', { n: tk.n_daimoku })}
+              <span class="muted">· {$t('voice.each', { s: (takeMs(tk) / 1000).toFixed(1) })}</span>
             </span>
+            {#if confirmDelete === tk.id}
+              <span class="tk-confirm">
+                <button class="mini ghost" on:click={() => (confirmDelete = null)}>{$t('common.no')}</button>
+                <button class="mini danger" on:click={() => removeTake(tk.id)} disabled={busy}>{$t('common.delete')}</button>
+              </span>
+            {:else}
+              <button class="icon-btn" on:click={() => (confirmDelete = tk.id)} aria-label={$t('voice.deleteConfirm')}>
+                <svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" /></svg>
+              </button>
+            {/if}
           </li>
         {/each}
       </ul>
       {#if confirmReset}
         <div class="confirm">
-          <span>Cancellare tutte le registrazioni?</span>
-          <button class="btn ghost small" on:click={() => (confirmReset = false)}>No</button>
-          <button class="btn danger small" on:click={resetVoice}>Sì, cancella</button>
+          <span>{$t('voice.resetConfirm')}</span>
+          <button class="btn ghost small" on:click={() => (confirmReset = false)}>{$t('common.no')}</button>
+          <button class="btn danger small" on:click={resetVoice}>{$t('voice.resetYes')}</button>
         </div>
       {:else}
-        <button class="reset" on:click={() => (confirmReset = true)}>Ricomincia da zero</button>
+        <button class="reset" on:click={() => (confirmReset = true)}>{$t('voice.reset')}</button>
       {/if}
     {:else}
-      <p class="muted small-text">Nessuna ancora: per ora l'app usa esempi generici.</p>
+      <p class="muted small-text">{$t('voice.none')}</p>
     {/if}
   </section>
 
@@ -254,17 +281,19 @@
     padding: 18px 16px 28px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
   }
   h1 {
     font-size: 1.5rem;
-    margin: 4px 0 0;
+    margin: 4px 2px 0;
+    text-shadow: var(--title-shadow);
   }
   .lead {
     color: var(--muted);
-    font-size: 0.9rem;
+    font-size: 0.88rem;
     line-height: 1.45;
     margin: 0;
+    padding: 12px 14px;
   }
   .checks {
     display: flex;
@@ -277,8 +306,7 @@
     justify-content: center;
     gap: 6px;
     padding: 8px 0;
-    border-radius: 10px;
-    border: 1px dashed var(--line);
+    border-radius: 12px;
     color: var(--faint);
     font-size: 0.85rem;
   }
@@ -292,20 +320,15 @@
     font-size: 0.7rem;
   }
   .check.ok {
-    border-style: solid;
-    border-color: rgba(111, 211, 154, 0.35);
     color: var(--text);
   }
   .check.ok .mark {
-    background: var(--green);
-    border-color: var(--green);
-    color: #0b2014;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-ink);
   }
 
   .card {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
     padding: 16px;
   }
   .rec {
@@ -318,7 +341,7 @@
     width: 100%;
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    background: var(--bg);
+    background: var(--surface-2);
     border-radius: 12px;
     padding: 3px;
   }
@@ -332,8 +355,8 @@
     cursor: pointer;
   }
   .seg button.on {
-    background: var(--surface-2);
-    color: var(--text);
+    background: var(--accent);
+    color: var(--accent-ink);
   }
   .howmany {
     width: 100%;
@@ -371,9 +394,7 @@
     text-align: center;
     color: var(--muted);
     font-size: 0.88rem;
-  }
-  .instr strong {
-    color: var(--text);
+    line-height: 1.4;
   }
   .rec-live {
     display: flex;
@@ -438,7 +459,7 @@
     font-size: 2.6rem;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
-    color: var(--gold);
+    color: var(--accent);
   }
   .result.good .r-big {
     color: var(--green);
@@ -474,8 +495,8 @@
     white-space: nowrap;
   }
   .btn.primary {
-    background: var(--gold);
-    color: #1b1406;
+    background: var(--accent);
+    color: var(--accent-ink);
   }
   .btn.ghost {
     background: var(--surface-2);
@@ -503,7 +524,7 @@
     font-weight: 600;
   }
   .c-count {
-    color: var(--gold);
+    color: var(--accent);
     font-weight: 700;
   }
   ul {
@@ -513,13 +534,69 @@
   }
   li {
     display: flex;
-    justify-content: space-between;
-    padding: 9px 0;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
     border-top: 1px solid var(--line);
     font-size: 0.9rem;
+    min-height: 48px;
+  }
+  .tk-speed {
+    font-size: 0.72rem;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  .tk-main {
+    flex: 1;
+    min-width: 0;
   }
   .muted {
     color: var(--muted);
+  }
+  .icon-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: var(--faint);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+  }
+  .icon-btn svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .icon-btn:active {
+    color: var(--red);
+  }
+  .tk-confirm {
+    display: flex;
+    gap: 6px;
+  }
+  .mini {
+    border: none;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .mini.ghost {
+    background: var(--surface-2);
+  }
+  .mini.danger {
+    background: var(--red);
+    color: #fff;
   }
   .small-text {
     font-size: 0.85rem;

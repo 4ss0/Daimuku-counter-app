@@ -2,14 +2,15 @@
   import { onMount } from 'svelte';
   import BarChart from '$lib/BarChart.svelte';
   import { api, errText, fmtDuration, fmtNum, type SessionRecord } from '$lib/api';
+  import { locale, t, type Key } from '$lib/i18n';
   import { bestDay, fmtWhen, goalDaysThisMonth, periodStats, sessionsIn, streak, type Period } from '$lib/stats';
 
-  const PERIODS: { id: Period; label: string; prev: string }[] = [
-    { id: 'day', label: 'Giorno', prev: 'rispetto a ieri alla stessa ora' },
-    { id: 'week', label: 'Settimana', prev: 'rispetto alla settimana scorsa' },
-    { id: 'month', label: 'Mese', prev: 'rispetto al mese scorso' },
-    { id: 'year', label: 'Anno', prev: "rispetto all'anno scorso" },
-    { id: 'all', label: 'Totale', prev: '' },
+  const PERIODS: { id: Period; label: Key; prev: Key | null; title: Key | null }[] = [
+    { id: 'day', label: 'stats.day', prev: 'stats.prevDay', title: 'stats.titleDay' },
+    { id: 'week', label: 'stats.week', prev: 'stats.prevWeek', title: 'stats.titleWeek' },
+    { id: 'month', label: 'stats.month', prev: 'stats.prevMonth', title: null },
+    { id: 'year', label: 'stats.year', prev: 'stats.prevYear', title: null },
+    { id: 'all', label: 'stats.all', prev: null, title: 'stats.titleAll' },
   ];
 
   let sessions: SessionRecord[] = [];
@@ -24,8 +25,9 @@
   let openId: number | null = null;
   let showAll = false;
 
-  $: st = periodStats(sessions, period);
+  $: st = periodStats(sessions, period, new Date(), $locale);
   $: p = PERIODS.find((x) => x.id === period)!;
+  $: heroTitle = p.title ? $t(p.title) : st.title;
   $: delta = st.prevTotal !== null && st.prevTotal > 0 ? Math.round(((st.total - st.prevTotal) / st.prevTotal) * 100) : null;
   $: days = streak(sessions);
   $: best = bestDay(sessions);
@@ -33,6 +35,7 @@
   $: list = sessionsIn(sessions, period);
   $: visible = showAll ? list : list.slice(0, 20);
   $: period, (showAll = false);
+  $: words = { today: $t('common.today'), yesterday: $t('common.yesterday') };
 
   async function load() {
     try {
@@ -71,7 +74,6 @@
 
   async function change(s: SessionRecord, d: number) {
     const count = Math.max(0, s.count + d);
-    // optimistic update, then persist
     sessions = sessions.map((x) => (x.id === s.id ? { ...x, count } : x));
     try {
       await api.updateSessionCount(s.id, count);
@@ -95,82 +97,82 @@
 </script>
 
 <div class="page">
-  <h1>Statistiche</h1>
+  <h1>{$t('stats.title')}</h1>
 
-  <div class="seg" role="tablist">
+  <div class="seg glass" role="tablist">
     {#each PERIODS as x}
       <button role="tab" aria-selected={period === x.id} class:on={period === x.id} on:click={() => (period = x.id)}>
-        {x.label}
+        {$t(x.label)}
       </button>
     {/each}
   </div>
 
-  <section class="hero">
-    <div class="hero-label">{st.title}</div>
-    <div class="hero-num">{fmtNum(st.total)}</div>
+  <section class="hero glass">
+    <div class="hero-label">{heroTitle}</div>
+    <div class="hero-num">{fmtNum(st.total, $locale)}</div>
     <div class="hero-sub">
-      daimoku
-      {#if delta !== null}
+      {$t('count.unit')}
+      {#if delta !== null && p.prev}
         <span class="delta" class:up={delta >= 0} class:down={delta < 0}>
           {delta >= 0 ? '▲' : '▼'} {Math.abs(delta)}%
         </span>
-        <span class="vs">{p.prev}</span>
+        <span class="vs">{$t(p.prev)}</span>
       {/if}
     </div>
   </section>
 
-  <section class="card">
-    <BarChart buckets={st.buckets} />
+  <section class="card glass">
+    <BarChart buckets={st.buckets} unit={$t('count.unit')} />
   </section>
 
   <div class="tiles">
-    <div class="tile">
-      <div class="t-num">{fmtNum(st.sessions)}</div>
-      <div class="t-label">sessioni</div>
+    <div class="tile glass">
+      <div class="t-num">{fmtNum(st.sessions, $locale)}</div>
+      <div class="t-label">{$t('stats.sessions')}</div>
     </div>
-    <div class="tile">
-      <div class="t-num">{fmtDuration(st.seconds)}</div>
-      <div class="t-label">di recitazione</div>
+    <div class="tile glass">
+      <div class="t-num">{fmtDuration(st.seconds, $t)}</div>
+      <div class="t-label">{$t('stats.chanting')}</div>
     </div>
-    <div class="tile">
-      <div class="t-num">{st.perDay === null ? fmtNum(goal) : fmtNum(Math.round(st.perDay))}</div>
-      <div class="t-label">{st.perDay === null ? 'obiettivo del giorno' : 'media al giorno'}</div>
+    <div class="tile glass">
+      <div class="t-num">{st.perDay === null ? fmtNum(goal, $locale) : fmtNum(Math.round(st.perDay), $locale)}</div>
+      <div class="t-label">{st.perDay === null ? $t('stats.goalToday') : $t('stats.perDay')}</div>
     </div>
-    <div class="tile">
+    <div class="tile glass">
       <div class="t-num">{days}</div>
-      <div class="t-label">{days === 1 ? 'giorno di fila' : 'giorni di fila'}</div>
+      <div class="t-label">{days === 1 ? $t('stats.streak1') : $t('stats.streakN')}</div>
     </div>
   </div>
 
-  <section class="card goal">
+  <section class="card glass goal">
     <div class="row">
       <div>
-        <div class="c-title">Obiettivo giornaliero</div>
+        <div class="c-title">{$t('stats.goalTitle')}</div>
         <div class="c-sub">
-          Raggiunto {goalMonth.met} {goalMonth.met === 1 ? 'giorno' : 'giorni'} su {goalMonth.elapsed} questo mese
-          {#if best}· record {fmtNum(best.total)} in un giorno{/if}
+          {$t('stats.goalMet', { met: goalMonth.met, n: goalMonth.elapsed })}
+          {#if best}· {$t('stats.record', { n: fmtNum(best.total, $locale) })}{/if}
         </div>
       </div>
       {#if editingGoal}
         <form class="inline" on:submit|preventDefault={saveGoal}>
-          <input type="number" inputmode="numeric" min="1" bind:value={goalInput} aria-label="Nuovo obiettivo" />
-          <button class="small primary" type="submit">OK</button>
+          <input type="number" inputmode="numeric" min="1" bind:value={goalInput} aria-label={$t('stats.newGoal')} />
+          <button class="small primary" type="submit">{$t('common.ok')}</button>
         </form>
       {:else}
-        <button class="pill" on:click={() => { goalInput = String(goal); editingGoal = true; }}>{fmtNum(goal)} ✎</button>
+        <button class="pill" on:click={() => { goalInput = String(goal); editingGoal = true; }}>{fmtNum(goal, $locale)} ✎</button>
       {/if}
     </div>
   </section>
 
-  <section class="card">
-    <div class="c-title">Sessioni</div>
+  <section class="card glass">
+    <div class="c-title">{$t('stats.sessionsTitle')}</div>
     <form class="inline add" on:submit|preventDefault={addManual}>
-      <input type="number" inputmode="numeric" min="1" placeholder="Aggiungi a mano…" bind:value={manualInput} aria-label="Daimoku da aggiungere" />
-      <button class="small primary" type="submit" disabled={!manualInput}>Aggiungi</button>
+      <input type="number" inputmode="numeric" min="1" placeholder={$t('stats.addManual')} bind:value={manualInput} aria-label={$t('stats.addManualLabel')} />
+      <button class="small primary" type="submit" disabled={!manualInput}>{$t('common.add')}</button>
     </form>
 
     {#if loaded && list.length === 0}
-      <p class="empty">Nessuna sessione in questo periodo.</p>
+      <p class="empty">{$t('stats.empty')}</p>
     {/if}
 
     <ul>
@@ -178,30 +180,30 @@
         <li class:open={openId === s.id}>
           <button class="item" on:click={() => (openId = openId === s.id ? null : s.id)}>
             <span class="when">
-              {fmtWhen(s.started_at)}
-              {#if s.manual}<span class="badge">a mano</span>{/if}
+              {fmtWhen(s.started_at, new Date(), $locale, words)}
+              {#if s.manual}<span class="badge">{$t('stats.manual')}</span>{/if}
             </span>
-            <span class="dur">{s.manual ? '' : fmtDuration(s.duration_secs)}</span>
-            <span class="n">{fmtNum(s.count)}</span>
+            <span class="dur">{s.manual ? '' : fmtDuration(s.duration_secs, $t)}</span>
+            <span class="n">{fmtNum(s.count, $locale)}</span>
           </button>
           {#if openId === s.id}
             <div class="edit">
               <div class="stepper">
-                <button on:click={() => change(s, -1)} aria-label="Uno in meno">−</button>
+                <button on:click={() => change(s, -1)} aria-label={$t('common.less')}>−</button>
                 <span>{s.count}</span>
-                <button on:click={() => change(s, 1)} aria-label="Uno in più">+</button>
+                <button on:click={() => change(s, 1)} aria-label={$t('common.more')}>+</button>
               </div>
               {#if !s.manual && s.detected !== s.count}
-                <span class="det">rilevati {s.detected}</span>
+                <span class="det">{$t('count.detected', { n: s.detected })}</span>
               {/if}
-              <button class="link danger" on:click={() => remove(s)}>Elimina</button>
+              <button class="link danger" on:click={() => remove(s)}>{$t('common.delete')}</button>
             </div>
           {/if}
         </li>
       {/each}
     </ul>
     {#if list.length > visible.length}
-      <button class="more" on:click={() => (showAll = true)}>Mostra tutte ({list.length})</button>
+      <button class="more" on:click={() => (showAll = true)}>{$t('stats.showAll', { n: list.length })}</button>
     {/if}
   </section>
 
@@ -216,19 +218,18 @@
     padding: 18px 16px 28px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
   }
   h1 {
     font-size: 1.5rem;
-    margin: 4px 0 0;
+    margin: 4px 2px 0;
     letter-spacing: -0.01em;
+    text-shadow: var(--title-shadow);
   }
 
   .seg {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
-    background: var(--surface);
-    border: 1px solid var(--line);
     border-radius: 12px;
     padding: 3px;
   }
@@ -238,24 +239,24 @@
     color: var(--muted);
     padding: 8px 0;
     border-radius: 9px;
-    font-size: 0.78rem;
+    font-size: 0.76rem;
     font-weight: 500;
     cursor: pointer;
   }
   .seg button.on {
-    background: var(--surface-2);
-    color: var(--text);
+    background: var(--accent);
+    color: var(--accent-ink);
   }
 
   .hero {
-    padding: 6px 2px 0;
+    padding: 14px 16px;
   }
   .hero-label {
     color: var(--muted);
     font-size: 0.85rem;
   }
   .hero-num {
-    font-size: 3.4rem;
+    font-size: 3.2rem;
     font-weight: 700;
     letter-spacing: -0.03em;
     line-height: 1.05;
@@ -284,9 +285,6 @@
   }
 
   .card {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
     padding: 16px;
   }
 
@@ -296,8 +294,6 @@
     gap: 10px;
   }
   .tile {
-    background: var(--surface);
-    border: 1px solid var(--line);
     border-radius: 14px;
     padding: 12px 14px;
   }
@@ -331,7 +327,7 @@
     flex-shrink: 0;
     border: 1px solid var(--line);
     background: var(--surface-2);
-    color: var(--gold);
+    color: var(--accent);
     border-radius: 999px;
     padding: 8px 14px;
     font-weight: 600;
@@ -358,7 +354,7 @@
     font-size: 1rem;
   }
   input:focus {
-    outline: 2px solid var(--gold);
+    outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
   .small {
@@ -369,8 +365,8 @@
     font-weight: 600;
   }
   .primary {
-    background: var(--gold);
-    color: #1b1406;
+    background: var(--accent);
+    color: var(--accent-ink);
   }
   .primary:disabled {
     opacity: 0.4;

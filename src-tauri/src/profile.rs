@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex, MutexGuard};
 
 /// Base clips count for roughly as much as one ordinary take; the user's
 /// own recordings count for more, so the model leans towards their voice
@@ -152,49 +152,87 @@ struct ProfileInner {
     model: Model,
 }
 
+/// Holds the trained model. Loading it means re-analysing the base clips
+/// and every stored take, which takes a moment (seconds on a phone in a
+/// debug build), so the app registers an *empty* state immediately and
+/// fills it from a background thread (`load`). Every accessor waits until
+/// the model is ready instead of failing.
 pub struct ProfileState {
-    inner: Mutex<ProfileInner>,
+    inner: Mutex<Option<ProfileInner>>,
+    ready: Condvar,
+}
+
+fn load_inner() -> ProfileInner {
+    let base_items = load_base_items();
+    let index = read_index();
+    let mut user_items = Vec::with_capacity(index.takes.len());
+    let mut kept_takes = Vec::with_capacity(index.takes.len());
+    for t in &index.takes {
+        let Some(path) = take_wav_path(t.id) else { continue };
+        match fs::read(&path).ok().and_then(|b| decode_wav(&b).ok()) {
+            Some((samples, sr)) => match build_item(&samples, sr, t.n_daimoku as usize, USER_WEIGHT) {
+                Some(item) => {
+                    user_items.push(item);
+                    kept_takes.push(t.clone());
+                }
+                None => eprintln!("[profile] take {} could not be re-analysed, skipping", t.id),
+            },
+            None => eprintln!("[profile] missing/corrupt audio for take {}, skipping", t.id),
+        }
+    }
+    let index = ProfileIndex {
+        version: 1,
+        takes: kept_takes,
+    };
+    let model = retrain(&base_items, &user_items).unwrap_or_else(base_only_fallback);
+    let mut inner = ProfileInner {
+        index,
+        base_items,
+        user_items,
+        model,
+    };
+    recompute_take_periods(&mut inner);
+    inner
 }
 
 impl ProfileState {
+    /// Loads synchronously (tests, desktop tools).
     pub fn new() -> Self {
-        let base_items = load_base_items();
-        let index = read_index();
-        let mut user_items = Vec::with_capacity(index.takes.len());
-        let mut kept_takes = Vec::with_capacity(index.takes.len());
-        for t in &index.takes {
-            let Some(path) = take_wav_path(t.id) else { continue };
-            match fs::read(&path).ok().and_then(|b| decode_wav(&b).ok()) {
-                Some((samples, sr)) => match build_item(&samples, sr, t.n_daimoku as usize, USER_WEIGHT) {
-                    Some(item) => {
-                        user_items.push(item);
-                        kept_takes.push(t.clone());
-                    }
-                    None => eprintln!("[profile] take {} could not be re-analysed, skipping", t.id),
-                },
-                None => eprintln!("[profile] missing/corrupt audio for take {}, skipping", t.id),
-            }
-        }
-        let index = ProfileIndex {
-            version: 1,
-            takes: kept_takes,
-        };
-        let model = retrain(&base_items, &user_items).unwrap_or_else(base_only_fallback);
-        let mut inner = ProfileInner {
-            index,
-            base_items,
-            user_items,
-            model,
-        };
-        recompute_take_periods(&mut inner);
+        let s = Self::empty();
+        s.load();
+        s
+    }
 
+    /// Not loaded yet: call `load` (typically from a background thread).
+    pub fn empty() -> Self {
         Self {
-            inner: Mutex::new(inner),
+            inner: Mutex::new(None),
+            ready: Condvar::new(),
         }
     }
 
+    /// Loads (or reloads) the model from the base clips and stored takes.
+    pub fn load(&self) {
+        let inner = load_inner();
+        *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = Some(inner);
+        self.ready.notify_all();
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.inner.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+
+    /// Locks the state, waiting for the first load to finish.
+    fn guard(&self) -> MutexGuard<'_, Option<ProfileInner>> {
+        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        self.ready
+            .wait_while(g, |v| v.is_none())
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
     pub fn snapshot(&self) -> PersonalProfile {
-        let g = self.inner.lock().unwrap();
+        let g = self.guard();
+        let g = g.as_ref().expect("loaded");
         PersonalProfile {
             version: g.index.version.max(1),
             takes: g.index.takes.clone(),
@@ -223,8 +261,10 @@ impl ProfileState {
         let item = build_item(samples, sample_rate, n_daimoku as usize, USER_WEIGHT)
             .ok_or_else(|| "could not find enough voiced audio in this take".to_string())?;
 
-        let mut g = self.inner.lock().unwrap();
-        let id = g.index.takes.len();
+        let mut guard = self.guard();
+        let g = guard.as_mut().expect("loaded");
+        // never reuse an id: its WAV file would be overwritten
+        let id = g.index.takes.iter().map(|t| t.id + 1).max().unwrap_or(0);
         if let Some(path) = take_wav_path(id) {
             write_wav_f32(&path, samples, sample_rate)?;
         }
@@ -237,13 +277,34 @@ impl ProfileState {
         });
         g.user_items.push(item);
         g.model = retrain(&g.base_items, &g.user_items).unwrap_or_else(|| g.model.clone());
-        recompute_take_periods(&mut g);
+        recompute_take_periods(g);
         write_index(&g.index)?;
         Ok(id)
     }
 
+    /// Removes one stored take (and its audio) and retrains.
+    pub fn delete_take(&self, id: usize) -> Result<(), String> {
+        let mut guard = self.guard();
+        let g = guard.as_mut().expect("loaded");
+        let pos = g
+            .index
+            .takes
+            .iter()
+            .position(|t| t.id == id)
+            .ok_or_else(|| format!("take {id} not found"))?;
+        g.index.takes.remove(pos);
+        g.user_items.remove(pos);
+        if let Some(path) = take_wav_path(id) {
+            let _ = fs::remove_file(path);
+        }
+        g.model = retrain(&g.base_items, &g.user_items).unwrap_or_else(base_only_fallback);
+        recompute_take_periods(g);
+        write_index(&g.index)
+    }
+
     pub fn clear(&self) -> Result<(), String> {
-        let mut g = self.inner.lock().unwrap();
+        let mut guard = self.guard();
+        let g = guard.as_mut().expect("loaded");
         if let Some(dir) = takes_dir() {
             let _ = fs::remove_dir_all(&dir);
         }
@@ -287,6 +348,12 @@ fn retrain(base: &[TrainItem], user: &[TrainItem]) -> Option<Model> {
     all.extend(base.iter().cloned());
     all.extend(user.iter().cloned());
     train_model(&all, &[], None, 8).map(|t| t.model)
+}
+
+/// Cheap model that never recognises anything: used by the live counter
+/// until the real one has been loaded.
+pub fn placeholder_model() -> Model {
+    base_only_fallback()
 }
 
 /// Fallback for the pathological case where even the base clips fail to
@@ -377,6 +444,41 @@ mod tests {
         assert!(after.takes[0].period_ms.is_some());
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn delete_single_take() {
+        let _guard = ENV_TEST_LOCK.lock().unwrap();
+        let tmp = std::env::temp_dir().join(format!("daimuku-test-del-{}", std::process::id()));
+        std::env::set_var("XDG_DATA_HOME", &tmp);
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        let s = ProfileState::new();
+        let (samples, sr) = crate::base::decode_wav(crate::base::BASE_CLIPS[1].wav).unwrap();
+        let a = s.add_take(&samples, sr, 1).unwrap();
+        let b = s.add_take(&samples, sr, 1).unwrap();
+        s.delete_take(a).unwrap();
+        assert!(s.delete_take(a).is_err());
+        let c = s.add_take(&samples, sr, 1).unwrap();
+        assert!(c != b, "ids are never reused");
+        let ids: Vec<usize> = s.snapshot().takes.iter().map(|t| t.id).collect();
+        assert_eq!(ids, vec![b, c]);
+        // survives a reload from disk
+        let s2 = ProfileState::new();
+        assert_eq!(s2.snapshot().takes.len(), 2);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn empty_state_waits_for_load() {
+        let _guard = ENV_TEST_LOCK.lock().unwrap();
+        let s = std::sync::Arc::new(ProfileState::empty());
+        assert!(!s.is_ready());
+        let s2 = std::sync::Arc::clone(&s);
+        let h = std::thread::spawn(move || s2.snapshot().base_clip_count);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        s.load();
+        assert_eq!(h.join().unwrap(), 4);
     }
 
     #[test]

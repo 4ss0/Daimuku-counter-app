@@ -8,7 +8,7 @@ use tokio::sync::oneshot;
 
 use crate::dsp::{DaimokuCountResult, StreamingState};
 use crate::engine::{Engine, EngineState};
-use crate::profile::{base_only_model, PersonalProfile};
+use crate::profile::{base_only_model, placeholder_model, PersonalProfile};
 
 // -----------------------------------------------------------------------------
 // Device enumeration
@@ -114,7 +114,8 @@ impl LiveCounter {
             inner: Mutex::new(LiveInner {
                 engine: None,
                 sample_rate: initial_sample_rate,
-                pending_model: base_only_model(),
+                // replaced by the real model as soon as it is loaded
+                pending_model: placeholder_model(),
                 finished_result: None,
             }),
         }
