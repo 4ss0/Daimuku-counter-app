@@ -78,6 +78,12 @@ impl TrainingStore {
     }
 }
 
+impl Default for TrainingStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn meta_for(
     id: usize,
     audio: &RecordedAudio,

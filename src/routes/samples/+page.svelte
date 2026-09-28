@@ -1,10 +1,27 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { onDestroy } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
 
-  // ---------------------------------------------------------------------------
-  // Types (inline, no external api.ts needed)
-  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------
+  // Types (mirror the Rust side)
+  // ---------------------------------------------------------------------
+
+  interface TakeRecord {
+    id: number;
+    n_daimoku: number;
+    duration_secs: number;
+    period_ms: number | null;
+    created_at: string;
+  }
+
+  interface PersonalProfile {
+    version: number;
+    takes: TakeRecord[];
+    base_clip_count: number;
+    ref_llr: number;
+    min_cycle_ms: number;
+    max_cycle_ms: number;
+  }
 
   interface TrainingTakeMeta {
     id: number;
@@ -16,14 +33,14 @@
 
   interface DaimokuCountResult {
     count: number;
-    period_ms: number;
     confidence: number;
-    duration_secs: number;
+    phrase_count: number;
+    mean_period_ms: number;
+    method: string;
+    period_ms: number;
     segment_count: number;
+    duration_secs: number;
     active_duration_secs: number;
-    mean_period_ms?: number;
-    phrase_count?: number;
-    method?: string;
   }
 
   interface ValidationResult {
@@ -34,687 +51,517 @@
     analysis: DaimokuCountResult;
   }
 
-  interface TakeRecord {
-    id: number;
-    n_daimoku: number;
-    duration_secs: number;
-    period_ms: number;
-    template: number[] | null;
-    created_at: string;
-  }
-
-  interface PersonalProfile {
-    version: number;
-    takes: TakeRecord[];
-    natural_period_ms: number;
-    period_sigma_ms: number;
-    template: number[] | null;
-    period_ratio_range: [number, number];
-  }
-
-  type StreamingState = 'warming' | 'locked' | 'idle';
-
-  interface LiveStatus {
-    count: number;
-    state: StreamingState;
-    period_ms: number | null;
-    sample_rate: number;
-    profile_used: boolean;
-  }
-
-  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------
   // State
-  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------
 
-  let takes = $state<TrainingTakeMeta[]>([]);
-  let expectedCount = $state(10);
-  let recording = $state(false);
-  let error = $state<string | null>(null);
-  let exportedPath = $state<string | null>(null);
-  let validation = $state<{ index: number; result: ValidationResult } | null>(null);
+  let profile: PersonalProfile | null = null;
+  let recordings: TrainingTakeMeta[] = [];
+  let validations: Record<number, ValidationResult | 'error'> = {};
+  let errorText: Record<number, string> = {};
 
-  // Personal profile
-  let profile = $state<PersonalProfile | null>(null);
-  let profileMsg = $state<string | null>(null);
+  let isRecording = false;
+  let expectedCount = 1;
+  let recordingLabel = 'medio';
+  let elapsedMs = 0;
+  let elapsedTimer: ReturnType<typeof setInterval> | null = null;
+  let recordingStartedAt = 0;
 
-  // Live counter
-  let live = $state<LiveStatus>({
-    count: 0,
-    state: 'idle',
-    period_ms: null,
-    sample_rate: 0,
-    profile_used: false,
+  let busy = false;
+  let statusMsg = '';
+
+  const SPEED_PRESETS: { label: string; hint: string }[] = [
+    { label: 'lento', hint: 'Recita un solo Nam-myoho-renge-kyo, il più lento possibile.' },
+    { label: 'medio', hint: 'Recita un solo Nam-myoho-renge-kyo, al tuo ritmo naturale.' },
+    { label: 'veloce', hint: 'Recita un solo Nam-myoho-renge-kyo, il più veloce possibile.' },
+  ];
+
+  // ---------------------------------------------------------------------
+  // Lifecycle
+  // ---------------------------------------------------------------------
+
+  onMount(refreshAll);
+  onDestroy(() => {
+    if (elapsedTimer) clearInterval(elapsedTimer);
   });
-  let pollHandle: number | null = null;
 
-  // ---------------------------------------------------------------------------
-  // Derived
-  // ---------------------------------------------------------------------------
-
-  let hasTake = $derived(takes.length > 0);
-  let targetReached = $derived(recording && live.count >= expectedCount);
-  let profileUsable = $derived(profile !== null && profile.takes.length > 0);
-
-  let stateLabel = $derived(
-    live.state === 'warming'
-      ? 'Listening…'
-      : live.state === 'locked'
-        ? 'Counting'
-        : recording
-          ? 'Waiting for voice'
-          : 'Idle'
-  );
-
-  let stateClass = $derived(
-    live.state === 'locked'
-      ? 'badge locked'
-      : live.state === 'warming'
-        ? 'badge warming'
-        : 'badge idle'
-  );
-
-  let periodLabel = $derived(
-    live.period_ms && live.period_ms > 0
-      ? `${(live.period_ms / 1000).toFixed(2)} s / Daimoku`
-      : '—'
-  );
-
-  let progressPct = $derived(
-    Math.min(100, (live.count / Math.max(1, expectedCount)) * 100)
-  );
-
-  // ---------------------------------------------------------------------------
-  // Data loading
-  // ---------------------------------------------------------------------------
-
-  async function refresh() {
-    try {
-      takes = await invoke<TrainingTakeMeta[]>('list_training_takes');
-    } catch (e) {
-      error = String(e);
-    }
+  async function refreshAll() {
+    await Promise.all([refreshProfile(), refreshRecordings()]);
   }
 
   async function refreshProfile() {
-    try {
-      profile = await invoke<PersonalProfile>('get_personal_profile');
-    } catch (e) {
-      error = String(e);
-    }
+    profile = await invoke<PersonalProfile>('get_personal_profile');
   }
 
-  // ---------------------------------------------------------------------------
-  // Recording flow
-  // ---------------------------------------------------------------------------
+  async function refreshRecordings() {
+    recordings = await invoke<TrainingTakeMeta[]>('list_training_takes');
+  }
 
-  async function start() {
-    error = null;
-    exportedPath = null;
-    validation = null;
-    profileMsg = null;
+  // ---------------------------------------------------------------------
+  // Recording
+  // ---------------------------------------------------------------------
+
+  async function startRecording() {
+    statusMsg = '';
     try {
       await invoke('start_recording');
-      recording = true;
-      startPolling();
+      isRecording = true;
+      recordingStartedAt = Date.now();
+      elapsedMs = 0;
+      elapsedTimer = setInterval(() => {
+        elapsedMs = Date.now() - recordingStartedAt;
+      }, 100);
     } catch (e) {
-      error = String(e);
+      statusMsg = `Impossibile avviare la registrazione: ${e}`;
     }
   }
 
-  async function stop() {
-    error = null;
-    stopPolling();
+  async function stopRecording() {
+    if (elapsedTimer) {
+      clearInterval(elapsedTimer);
+      elapsedTimer = null;
+    }
+    isRecording = false;
     try {
-      await invoke<TrainingTakeMeta>('stop_recording', {
-        expectedDaimokuCount: expectedCount,
-      });
-      recording = false;
-      await refresh();
+      await invoke('stop_recording', { expectedDaimokuCount: expectedCount });
+      await refreshRecordings();
     } catch (e) {
-      error = String(e);
-      recording = false;
+      statusMsg = `Errore durante il salvataggio: ${e}`;
     }
   }
 
-  async function clearAll() {
-    if (!confirm('Delete all training recordings?')) return;
-    error = null;
-    exportedPath = null;
-    validation = null;
-    profileMsg = null;
+  function pickSpeed(label: string) {
+    recordingLabel = label;
+    expectedCount = 1;
+  }
+
+  // ---------------------------------------------------------------------
+  // Per-recording actions
+  // ---------------------------------------------------------------------
+
+  async function validate(index: number) {
+    busy = true;
     try {
-      await invoke<number>('clear_training_takes');
-      await refresh();
+      const result = await invoke<ValidationResult>('validate_training_take', { index });
+      validations = { ...validations, [index]: result };
     } catch (e) {
-      error = String(e);
+      validations = { ...validations, [index]: 'error' };
+      errorText = { ...errorText, [index]: String(e) };
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function addToProfile(index: number) {
+    busy = true;
+    try {
+      profile = await invoke<PersonalProfile>('add_take_to_profile', { index });
+      statusMsg = 'Registrazione aggiunta al tuo profilo personale.';
+    } catch (e) {
+      statusMsg = `Impossibile aggiungere al profilo: ${e}`;
+    } finally {
+      busy = false;
     }
   }
 
   async function exportWav(index: number) {
-    error = null;
-    exportedPath = null;
     try {
-      exportedPath = await invoke<string>('export_training_wav', { index });
+      const path = await invoke<string>('export_training_wav', { index });
+      statusMsg = `WAV esportato in: ${path}`;
     } catch (e) {
-      error = String(e);
+      statusMsg = `Esportazione fallita: ${e}`;
     }
   }
 
-  async function validate(index: number) {
-    error = null;
-    validation = null;
-    profileMsg = null;
-    try {
-      const result = await invoke<ValidationResult>('validate_training_take', { index });
-      validation = { index, result };
-    } catch (e) {
-      error = String(e);
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Personal profile
-  // ---------------------------------------------------------------------------
-
-  async function addToProfile(index: number) {
-    error = null;
-    profileMsg = null;
-    try {
-      const updated = await invoke<PersonalProfile>('add_take_to_profile', { index });
-      profile = updated;
-      profileMsg = `Added take #${index} to profile (${updated.takes.length} take${
-        updated.takes.length === 1 ? '' : 's'
-      }, natural period ${(updated.natural_period_ms / 1000).toFixed(2)} s)`;
-    } catch (e) {
-      error = String(e);
-    }
+  async function clearRecordings() {
+    await invoke('clear_training_takes');
+    validations = {};
+    errorText = {};
+    await refreshRecordings();
   }
 
   async function clearProfile() {
-    if (!confirm('Delete the personal profile? The counter will use default parameters.')) {
-      return;
-    }
-    error = null;
-    profileMsg = null;
-    try {
-      await invoke<void>('clear_personal_profile');
-      await refreshProfile();
-      profileMsg = 'Profile cleared';
-    } catch (e) {
-      error = String(e);
-    }
+    await invoke('clear_personal_profile');
+    await refreshProfile();
   }
 
-  // ---------------------------------------------------------------------------
-  // Live counter polling
-  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------
+  // Formatting helpers
+  // ---------------------------------------------------------------------
 
-  function startPolling() {
-    stopPolling();
-    void tick();
-    pollHandle = window.setInterval(tick, 150);
+  function fmtSecs(ms: number): string {
+    return (ms / 1000).toFixed(1) + ' s';
   }
-
-  function stopPolling() {
-    if (pollHandle !== null) {
-      clearInterval(pollHandle);
-      pollHandle = null;
-    }
-    live = {
-      count: 0,
-      state: 'idle',
-      period_ms: null,
-      sample_rate: 0,
-      profile_used: false,
-    };
+  function fmtMs(ms: number | null): string {
+    if (ms === null || ms === undefined) return '—';
+    return (ms / 1000).toFixed(2) + ' s';
   }
-
-  async function tick() {
-    try {
-      live = await invoke<LiveStatus>('live_status');
-    } catch {
-      /* keep last value */
-    }
+  function fmtPct(x: number): string {
+    return Math.round(x * 100) + '%';
   }
-
-  onDestroy(stopPolling);
-
-  // Initial load
-  refresh();
-  refreshProfile();
 </script>
 
 <div class="page">
-  <h1>Teach the Daimoku</h1>
+  <header>
+    <h1>Campioni</h1>
+    <p class="subtitle">
+      L'app riconosce "Nam-myoho-renge-kyo" per intero, non solo il ritmo. Parte già
+      pronta con esempi generici: registra il tuo daimoku (uno lento, uno medio, uno
+      veloce) per affinarla sulla tua voce.
+    </p>
+  </header>
 
-  <p class="instructions">
-    Recite <strong>{expectedCount}</strong> Daimoku in one continuous take — no need to
-    stop between them. Press <em>Start</em>, recite, then press <em>Stop</em>.
-    The system will learn the rhythm from your recording.
-  </p>
-
-  <label class="count-input">
-    Number of Daimoku to recite:
-    <input
-      type="number"
-      min="3"
-      max="60"
-      bind:value={expectedCount}
-      disabled={recording}
-    />
-  </label>
-
-  <div class="actions">
-    <button on:click={start} disabled={recording}>Start</button>
-    <button on:click={stop} disabled={!recording}>Stop</button>
-    <button class="secondary" on:click={clearAll} disabled={recording || !hasTake}>
-      Clear all
-    </button>
-  </div>
-
-  <!-- --------------------------------------------------------------------- -->
-  <!-- Live counter                                                          -->
-  <!-- --------------------------------------------------------------------- -->
-  {#if recording}
-    <section class="live">
-      <div class="live-count">
-        <span class="live-number">{live.count}</span>
-        <span class="live-target">/ {expectedCount}</span>
+  {#if profile}
+    <section class="card profile-card">
+      <div class="card-header">
+        <h2>Il tuo profilo</h2>
+        <button class="danger" on:click={clearProfile} disabled={busy}>Azzera profilo</button>
       </div>
-
-      <div class="live-meta">
-        <span class={stateClass}>{stateLabel}</span>
-        <span class="live-period">{periodLabel}</span>
-        {#if live.profile_used}
-          <span class="badge profile">Profile</span>
-        {/if}
+      <div class="profile-stats">
+        <div class="stat">
+          <span class="stat-value">{profile.base_clip_count}</span>
+          <span class="stat-label">esempi di base</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value">{profile.takes.length}</span>
+          <span class="stat-label">tue registrazioni</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value">{fmtMs(profile.min_cycle_ms)}–{fmtMs(profile.max_cycle_ms)}</span>
+          <span class="stat-label">intervallo di velocità</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value">{profile.ref_llr.toFixed(1)}</span>
+          <span class="stat-label">nitidezza del modello</span>
+        </div>
       </div>
-
-      <div class="progress">
-        <div class="progress-fill" style="width: {progressPct}%"></div>
-      </div>
-
-      <div class="recording">
-        {#if targetReached}
-          ● Target reached — press Stop to save
-        {:else}
-          ● Recording… recite {expectedCount - live.count} more
-        {/if}
-      </div>
+      {#if profile.takes.length > 0}
+        <ul class="take-list">
+          {#each profile.takes as t}
+            <li>
+              #{t.id} · {t.n_daimoku} daimoku · {fmtSecs(t.duration_secs * 1000)}
+              {#if t.period_ms !== null} · ~{fmtMs(t.period_ms)}/daimoku{/if}
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="hint">
+          Nessuna registrazione ancora promossa. Registra sotto un daimoku lento, uno
+          medio e uno veloce, poi premi "Aggiungi al profilo" su ciascuno.
+        </p>
+      {/if}
     </section>
   {/if}
 
-  <!-- --------------------------------------------------------------------- -->
-  <!-- Messages                                                              -->
-  <!-- --------------------------------------------------------------------- -->
-  {#if error}
-    <div class="error">{error}</div>
-  {/if}
-
-  {#if exportedPath}
-    <div class="info">
-      Exported to <code>{exportedPath}</code>
+  <section class="card">
+    <h2>Nuova registrazione</h2>
+    <div class="speed-picker">
+      {#each SPEED_PRESETS as p}
+        <button
+          class:selected={recordingLabel === p.label}
+          on:click={() => pickSpeed(p.label)}
+          disabled={isRecording}
+        >
+          {p.label}
+        </button>
+      {/each}
     </div>
-  {/if}
+    <p class="hint">
+      {SPEED_PRESETS.find((p) => p.label === recordingLabel)?.hint ?? ''}
+    </p>
 
-  {#if profileMsg}
-    <div class="success">{profileMsg}</div>
-  {/if}
-
-  <!-- --------------------------------------------------------------------- -->
-  <!-- Personal profile summary                                              -->
-  <!-- --------------------------------------------------------------------- -->
-  <section class="profile-box">
-    <div class="profile-head">
-      <h2>Personal profile</h2>
-      {#if profileUsable}
-        <button class="btn-mini danger" on:click={clearProfile}>Clear profile</button>
-      {/if}
+    <div class="count-row">
+      <label for="count">Daimoku recitati in questa presa</label>
+      <input id="count" type="number" min="1" bind:value={expectedCount} disabled={isRecording} />
     </div>
 
-    {#if !profile || profile.takes.length === 0}
-      <p class="profile-empty">
-        No profile yet. After validating a take, click <em>Add to profile</em> to
-        start teaching the app your personal rhythm.
-      </p>
-    {:else}
-      <p class="profile-stat">
-        <strong>{profile.takes.length}</strong>
-        take{profile.takes.length === 1 ? '' : 's'} ·
-        natural period <strong>{(profile.natural_period_ms / 1000).toFixed(2)} s</strong>
-        · σ ±{(profile.period_sigma_ms / 1000).toFixed(2)} s
-        · speed range {(profile.period_ratio_range[0]).toFixed(2)}x–{(profile.period_ratio_range[1]).toFixed(2)}x
-      </p>
-      {#if profile.template}
-        <p class="profile-note">
-          Template: {profile.template.length} samples
-        </p>
+    <div class="record-row">
+      {#if !isRecording}
+        <button class="primary" on:click={startRecording}>Avvia registrazione</button>
+      {:else}
+        <button class="danger" on:click={stopRecording}>Ferma · {fmtSecs(elapsedMs)}</button>
       {/if}
-    {/if}
+    </div>
+    {#if statusMsg}<p class="status">{statusMsg}</p>{/if}
   </section>
 
-  <!-- --------------------------------------------------------------------- -->
-  <!-- Recordings list                                                       -->
-  <!-- --------------------------------------------------------------------- -->
-  {#if hasTake}
-    <section class="list">
-      <h2>Recordings</h2>
-      <ul>
-        {#each takes as t (t.id)}
-          <li>
-            <span class="count">{t.expected_daimoku_count} Daimoku</span>
-            <span class="dur">{(t.duration_ms / 1000).toFixed(1)} s</span>
-            <button class="btn-mini primary" on:click={() => validate(t.id)}>Validate</button>
-            <button class="btn-mini" on:click={() => addToProfile(t.id)}>+ Profile</button>
-            <button class="btn-mini" on:click={() => exportWav(t.id)}>WAV</button>
+  <section class="card">
+    <div class="card-header">
+      <h2>Registrazioni di questa sessione</h2>
+      {#if recordings.length > 0}
+        <button class="ghost" on:click={clearRecordings}>Svuota lista</button>
+      {/if}
+    </div>
+
+    {#if recordings.length === 0}
+      <p class="hint">Nessuna registrazione in questa sessione.</p>
+    {:else}
+      <ul class="recording-list">
+        {#each recordings as r}
+          <li class="recording-row">
+            <div class="recording-main">
+              <span class="rec-title">{r.expected_daimoku_count} daimoku</span>
+              <span class="rec-sub">{fmtSecs(r.duration_ms)}</span>
+            </div>
+            <div class="recording-actions">
+              <button on:click={() => validate(r.id)} disabled={busy}>Verifica</button>
+              <button on:click={() => addToProfile(r.id)} disabled={busy}>+ Profilo</button>
+              <button class="ghost" on:click={() => exportWav(r.id)}>WAV</button>
+            </div>
+
+            {#if validations[r.id] === 'error'}
+              <div class="result error">
+                <strong>Verifica non riuscita</strong>
+                <p>{errorText[r.id]}</p>
+              </div>
+            {:else if validations[r.id]}
+              {@const v = validations[r.id] as ValidationResult}
+              <div class="result" class:ok={v.ok} class:bad={!v.ok}>
+                <strong>{v.ok ? '✓ Corrisponde' : '✗ Non corrisponde'} — presa #{r.id}</strong>
+                <p>
+                  Recitati: <b>{v.expected}</b> · Rilevati: <b>{v.detected}</b>
+                </p>
+                <p class="detail">
+                  Periodo: {v.analysis.period_ms.toFixed(0)} ms · Confidenza:
+                  {fmtPct(v.analysis.confidence)} · Segmenti: {v.analysis.segment_count} ·
+                  Attivo: {v.analysis.active_duration_secs.toFixed(1)} s
+                </p>
+                {#if !v.ok}
+                  <p class="detail hint">
+                    Recita di nuovo con sillabe chiare e un ritmo costante, oppure
+                    verifica di aver dichiarato il numero corretto di daimoku.
+                  </p>
+                {/if}
+              </div>
+            {/if}
           </li>
         {/each}
       </ul>
-    </section>
-  {/if}
-
-  <!-- --------------------------------------------------------------------- -->
-  <!-- Validation result                                                     -->
-  <!-- --------------------------------------------------------------------- -->
-  {#if validation}
-    <section class="validation" class:ok={validation.result.ok} class:fail={!validation.result.ok}>
-      <h2>
-        {validation.result.ok ? '✓ Training validated' : '✗ Validation failed'}
-        — take #{validation.index}
-      </h2>
-      <p>
-        Recited: <strong>{validation.result.expected}</strong>
-        · Detected: <strong>{validation.result.detected}</strong>
-        {#if validation.result.profile_used}
-          · <span class="tag-profile">with profile</span>
-        {/if}
-      </p>
-      <p class="details">
-        Period: {validation.result.analysis.period_ms.toFixed(0)} ms
-        · Confidence: {(validation.result.analysis.confidence * 100).toFixed(0)}%
-        · Segments: {validation.result.analysis.segment_count}
-        · Active: {validation.result.analysis.active_duration_secs.toFixed(1)} s
-      </p>
-      {#if validation.result.ok && !validation.result.profile_used}
-        <p class="hint">
-          Looks good. Add this take to the profile to improve future counts.
-        </p>
-      {/if}
-      {#if !validation.result.ok}
-        <p class="hint">
-          Recite again with clearer syllable separation and a steadier rhythm.
-        </p>
-      {/if}
-    </section>
-  {/if}
+    {/if}
+  </section>
 </div>
 
 <style>
   .page {
-    flex: 1;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: flex-start;
-    text-align: center;
-    gap: 1.25rem;
-    padding-top: 1rem;
-    max-width: 42rem;
+    gap: 1.5rem;
+    max-width: 46rem;
     margin: 0 auto;
     width: 100%;
   }
 
-  h1 { margin: 0; }
-
-  .instructions {
+  header h1 {
+    margin: 0 0 0.4rem;
+    font-size: 1.8rem;
+  }
+  .subtitle {
     margin: 0;
-    opacity: 0.8;
-    line-height: 1.6;
-    max-width: 34rem;
+    opacity: 0.7;
+    line-height: 1.5;
   }
 
-  .count-input {
+  .card {
+    background: #232323;
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+  }
+  .card h2 {
+    margin: 0 0 0.75rem;
+    font-size: 1.1rem;
+  }
+  .card-header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+  }
+  .card-header h2 {
+    margin: 0;
+  }
+
+  .profile-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
     gap: 0.75rem;
-    font-size: 0.95rem;
+    margin-bottom: 0.75rem;
   }
-
-  .count-input input {
-    width: 5rem;
-    padding: 0.4rem 0.6rem;
-    border: 1px solid #444;
-    border-radius: 6px;
-    background-color: #1e1e1e;
-    color: inherit;
-    font-size: 1rem;
-    text-align: center;
-  }
-
-  .actions { display: flex; gap: 1rem; }
-
-  button {
-    padding: 0.6rem 1.4rem;
-    border: none;
+  .stat {
+    background: #1a1a1a;
     border-radius: 8px;
-    background-color: #3b6ea5;
-    color: #fff;
-    cursor: pointer;
-    font-size: 1rem;
-  }
-  button.secondary { background-color: #4a4a4a; }
-  button:disabled { background-color: #2f2f2f; color: #666; cursor: not-allowed; }
-  button:hover:not(:disabled) { filter: brightness(1.15); }
-
-  .btn-mini {
-    padding: 0.25rem 0.6rem;
-    font-size: 0.75rem;
-    background-color: #4a4a4a;
-  }
-  .btn-mini.primary { background-color: #3b6ea5; }
-  .btn-mini.danger { background-color: #7a2a2a; }
-
-  .recording { color: #ff6b6b; }
-
-  /* ---- Live counter ------------------------------------------------- */
-  .live {
-    width: 100%;
-    max-width: 34rem;
-    padding: 1.25rem 1.5rem 1rem;
-    background-color: #1a1d21;
-    border: 1px solid #23272c;
-    border-radius: 12px;
+    padding: 0.6rem 0.8rem;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 0.75rem;
+  }
+  .stat-value {
+    font-size: 1.15rem;
+    font-weight: 600;
+  }
+  .stat-label {
+    font-size: 0.78rem;
+    opacity: 0.65;
   }
 
-  .live-count {
-    display: flex;
-    align-items: baseline;
-    gap: 0.6rem;
-    font-variant-numeric: tabular-nums;
-  }
-  .live-number {
-    font-size: 3.5rem;
-    font-weight: 700;
-    color: #7dd3fc;
-    line-height: 1;
-  }
-  .live-target {
-    font-size: 1.4rem;
-    color: #8a8a8a;
-  }
-
-  .live-meta {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    font-size: 0.85rem;
-    color: #b8b8b8;
-  }
-
-  .badge {
-    padding: 0.15rem 0.6rem;
-    border-radius: 999px;
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .badge.warming { background: #3a2f10; color: #f0c674; }
-  .badge.locked  { background: #133a1c; color: #6ee7a8; }
-  .badge.idle    { background: #2a2a2a; color: #b8b8b8; }
-  .badge.profile { background: #1a2a3a; color: #7dd3fc; }
-
-  .live-period { font-variant-numeric: tabular-nums; }
-
-  .progress {
-    width: 100%;
-    height: 6px;
-    background: #1f2226;
-    border-radius: 999px;
-    overflow: hidden;
-  }
-  .progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #3b6ea5, #7dd3fc);
-    transition: width 0.15s linear;
-  }
-
-  /* ---- Messages ----------------------------------------------------- */
-  .error {
-    color: #ff9b9b;
-    background-color: #2a1515;
-    padding: 0.75rem 1rem;
-    border-radius: 8px;
-    max-width: 34rem;
-  }
-
-  .info {
-    color: #9bd4ff;
-    background-color: #152433;
-    padding: 0.75rem 1rem;
-    border-radius: 8px;
-    max-width: 32rem;
-    word-break: break-all;
-  }
-  .info code {
-    font-family: ui-monospace, monospace;
-    font-size: 0.85rem;
-  }
-
-  .success {
-    color: #a6e3a6;
-    background-color: #152a15;
-    padding: 0.75rem 1rem;
-    border-radius: 8px;
-    max-width: 34rem;
-  }
-
-  /* ---- Personal profile box ---------------------------------------- */
-  .profile-box {
-    width: 100%;
-    max-width: 34rem;
-    text-align: left;
-    padding: 0.75rem 1rem;
-    background-color: #1a1d21;
-    border: 1px solid #23272c;
-    border-radius: 8px;
-  }
-  .profile-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.4rem;
-  }
-  .profile-head h2 {
-    font-size: 0.95rem;
+  .take-list {
+    list-style: none;
     margin: 0;
-    font-weight: normal;
+    padding: 0;
+    font-size: 0.85rem;
+    opacity: 0.85;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .hint {
+    font-size: 0.85rem;
+    opacity: 0.65;
+    line-height: 1.4;
+    margin: 0.4rem 0;
+  }
+
+  .speed-picker {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .speed-picker button {
+    flex: 1;
+    padding: 0.55rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid #3a3a3a;
+    background: #1e1e1e;
+    color: #ddd;
+    text-transform: capitalize;
+    cursor: pointer;
+  }
+  .speed-picker button.selected {
+    background: #3b6ea5;
+    border-color: #3b6ea5;
+    color: #fff;
+  }
+  .speed-picker button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .count-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0.75rem 0;
+  }
+  .count-row label {
+    font-size: 0.85rem;
     opacity: 0.8;
   }
-  .profile-empty {
-    margin: 0;
-    color: #8a8a8a;
-    font-size: 0.85rem;
-  }
-  .profile-stat {
-    margin: 0;
-    font-size: 0.85rem;
-    color: #cfcfcf;
-    line-height: 1.6;
-  }
-  .profile-stat strong { color: #7dd3fc; }
-  .profile-note {
-    margin: 0.3rem 0 0;
-    font-size: 0.75rem;
-    color: #7a7a7a;
-    font-family: ui-monospace, monospace;
-  }
-
-  /* ---- Recordings list ---------------------------------------------- */
-  .list {
-    width: 100%;
-    max-width: 34rem;
-    text-align: left;
-  }
-  .list h2 {
-    font-size: 0.95rem;
-    opacity: 0.7;
-    margin: 0 0 0.5rem;
-    font-weight: normal;
-  }
-  .list ul { list-style: none; padding: 0; margin: 0; }
-  .list li {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.4rem;
-    padding: 0.4rem 0.75rem;
-    background-color: #242424;
+  .count-row input {
+    width: 4.5rem;
+    padding: 0.35rem 0.5rem;
     border-radius: 6px;
-    margin-bottom: 0.3rem;
-    font-family: ui-monospace, monospace;
-    font-size: 0.8rem;
+    border: 1px solid #3a3a3a;
+    background: #1a1a1a;
+    color: #eee;
   }
-  .count { flex: 1; color: #cfcfcf; }
-  .dur { color: #888; text-align: right; }
 
-  /* ---- Validation --------------------------------------------------- */
-  .validation {
-    width: 100%;
-    max-width: 34rem;
-    text-align: left;
-    padding: 0.75rem 1rem;
+  .record-row {
+    margin-top: 0.5rem;
+  }
+
+  button.primary {
+    background: #3b6ea5;
+    color: #fff;
+    border: none;
+    padding: 0.6rem 1.2rem;
     border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.95rem;
   }
-  .validation.ok {
-    background-color: #152a15;
-    border: 1px solid #2f4a2f;
-    color: #8fe38f;
+  button.danger {
+    background: #a53b3b;
+    color: #fff;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    cursor: pointer;
   }
-  .validation.fail {
-    background-color: #2a1515;
-    border: 1px solid #4a2f2f;
-    color: #ff9b9b;
+  button.ghost {
+    background: transparent;
+    border: 1px solid #444;
+    color: #ccc;
+    padding: 0.45rem 0.9rem;
+    border-radius: 8px;
+    cursor: pointer;
   }
-  .validation h2 {
-    font-size: 1rem;
-    margin: 0 0 0.5rem;
-    font-weight: normal;
-  }
-  .validation p { margin: 0.25rem 0; font-size: 0.9rem; }
-  .validation .details,
-  .validation .hint {
+
+  .status {
     font-size: 0.85rem;
     opacity: 0.8;
+    margin-top: 0.5rem;
   }
-  .tag-profile {
-    padding: 0.05rem 0.4rem;
-    background: #1a2a3a;
-    color: #7dd3fc;
-    border-radius: 4px;
-    font-size: 0.75rem;
+
+  .recording-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .recording-row {
+    background: #1a1a1a;
+    border-radius: 10px;
+    padding: 0.75rem 1rem;
+  }
+  .recording-main {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+  }
+  .rec-title {
+    font-weight: 600;
+  }
+  .rec-sub {
+    opacity: 0.6;
+    font-size: 0.85rem;
+  }
+  .recording-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+  .recording-actions button {
+    flex: 1;
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid #3a3a3a;
+    background: #262626;
+    color: #ddd;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+
+  .result {
+    margin-top: 0.6rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    background: #262626;
+    border: 1px solid #3a3a3a;
+  }
+  .result.ok {
+    background: #16321f;
+    border-color: #2a6b41;
+  }
+  .result.bad,
+  .result.error {
+    background: #33191b;
+    border-color: #7a3038;
+  }
+  .result p {
+    margin: 0.25rem 0 0;
+  }
+  .result .detail {
+    opacity: 0.75;
   }
 </style>

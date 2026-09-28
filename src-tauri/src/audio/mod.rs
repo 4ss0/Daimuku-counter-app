@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use tokio::sync::oneshot;
 
-use crate::dsp::{count_daimoku_with_profile, DaimokuCountResult, StreamingState};
-use crate::dsp_common::{find_active_segments, moving_average, rms_envelope};
-use crate::profile::PersonalProfile;
+use crate::dsp::{DaimokuCountResult, StreamingState};
+use crate::engine::{Engine, EngineState};
+use crate::profile::{base_only_model, PersonalProfile};
 
 // -----------------------------------------------------------------------------
 // Device enumeration
@@ -38,8 +38,24 @@ pub fn list_input_devices() -> Result<Vec<DeviceInfo>, String> {
 }
 
 // -----------------------------------------------------------------------------
-// Live counter (incremental batch, with a bounded sliding window)
+// Live counter
 // -----------------------------------------------------------------------------
+//
+// Unlike the old template-matching counter, `Engine` is a true streaming
+// decoder: `push()` is O(1) amortised per sample regardless of how long
+// the recording has been running, and memory is bounded by a small ring
+// buffer (~5s of lag), not by the whole session's audio. So there is no
+// "recompute the whole buffer every half second" step to manage any more
+// - `snapshot()` below is just reading state the engine already
+// maintains incrementally.
+//
+// `finish()` finalises the engine's last few lag-buffered frames and is
+// the only mutating, one-shot operation; it is wired to fire when the
+// recording actually stops (`AudioCommand::Stop`, below), not on every
+// poll, so it is safe for the frontend to call `finish()`/`live_finish`
+// as often as it likes - before the real stop it returns the current
+// best live estimate, and after it returns the same finalised result
+// every time.
 
 #[derive(Debug, Clone, Copy)]
 pub struct LiveSnapshot {
@@ -49,102 +65,82 @@ pub struct LiveSnapshot {
     pub sample_rate: u32,
 }
 
+/// Everything the live-counting screen shows. Cheap to build.
+#[derive(Debug, Clone, Serialize)]
+pub struct LiveView {
+    pub count: usize,
+    /// "idle" | "warming" | "locked"
+    pub state: String,
+    /// Someone is producing sound right now.
+    pub speaking: bool,
+    pub elapsed_secs: f32,
+    /// Typical time per Daimoku (ms), once known.
+    pub period_ms: Option<f32>,
+    /// Second of the session at which each of the most recent Daimoku
+    /// was counted (at most `LIVE_VIEW_EVENTS`, oldest first).
+    pub recent_events_secs: Vec<f32>,
+    pub finished: bool,
+}
+
+const LIVE_VIEW_EVENTS: usize = 50;
+
+pub fn state_str(s: StreamingState) -> &'static str {
+    match s {
+        StreamingState::Warming => "warming",
+        StreamingState::Locked => "locked",
+        StreamingState::Idle => "idle",
+    }
+}
+
 pub struct LiveCounter {
     inner: Mutex<LiveInner>,
 }
 
 struct LiveInner {
-    /// Only the recent "tail" of the recording — bounded by
-    /// `MAX_WINDOW_SECS` — is kept here for recompute. Older audio is
-    /// trimmed away once its count has been folded into
-    /// `committed_count` (see `maybe_trim`).
-    samples: Vec<f32>,
+    engine: Option<Engine>,
     sample_rate: u32,
-    profile: Option<PersonalProfile>,
-    profile_fp: u64,
-    cached: Option<DaimokuCountResult>,
-    last_compute_len: usize,
-    computed_once: bool,
-
-    /// Daimoku already counted in audio that has since been trimmed
-    /// out of `samples`. Added to the freshly-computed tail count to
-    /// get the total shown to the user.
-    committed_count: usize,
-    /// Total samples ever pushed since the last reset, independent of
-    /// trimming — used only for the Warming/Locked/Idle state and
-    /// elapsed-time logic, never for counting.
-    total_samples_seen: u64,
-    /// Most recent valid period estimate. Kept around so the UI
-    /// doesn't flash back to "—" right after a trim, before the
-    /// shrunk tail has re-accumulated enough audio to estimate it
-    /// again.
-    last_known_period_ms: Option<f32>,
-    /// Bumped on every reset; lets `maybe_trim` detect and safely
-    /// abandon a trim if a reset happened while it was computing.
-    generation: u64,
+    /// Model to use for the *next* `reset()` (a running engine keeps the
+    /// model it was built with - swapping models mid-recording would
+    /// invalidate everything decoded so far).
+    pending_model: crate::model::Model,
+    /// Cached result of the one authoritative `finish()` call, if the
+    /// recording has actually stopped.
+    finished_result: Option<DaimokuCountResult>,
 }
-
-const MIN_NEW_SECS_F32: f32 = 0.5;
-
-/// Once the retained audio buffer grows past this, we look for a safe
-/// place to "freeze" the older part of it into `committed_count` and
-/// drop the raw samples — this is what keeps the matched-filter
-/// recompute bounded instead of growing (and getting quadratically
-/// expensive) with the whole session's length.
-const MAX_WINDOW_SECS: f32 = 35.0;
-
-/// Always keep at least this much of the most recent audio in the
-/// live buffer, even right after a trim, so there's enough context
-/// left for period/phase estimation.
-const MIN_KEEP_SECS: f32 = 8.0;
 
 impl LiveCounter {
     pub fn new(initial_sample_rate: u32) -> Self {
         Self {
             inner: Mutex::new(LiveInner {
-                samples: Vec::new(),
+                engine: None,
                 sample_rate: initial_sample_rate,
-                profile: None,
-                profile_fp: 0,
-                cached: None,
-                last_compute_len: 0,
-                computed_once: false,
-                committed_count: 0,
-                total_samples_seen: 0,
-                last_known_period_ms: None,
-                generation: 0,
+                pending_model: base_only_model(),
+                finished_result: None,
             }),
         }
     }
 
+    /// Starts a new recording: builds a fresh engine from the currently
+    /// selected model, discarding any previous session's counts.
     pub fn reset(&self, sample_rate: u32) {
-        let mut g = self.inner.lock().unwrap();
-        g.samples.clear();
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         g.sample_rate = sample_rate;
-        g.cached = None;
-        g.last_compute_len = 0;
-        g.computed_once = false;
-        g.committed_count = 0;
-        g.total_samples_seen = 0;
-        g.last_known_period_ms = None;
-        g.generation = g.generation.wrapping_add(1);
+        g.engine = Some(Engine::new(&g.pending_model, sample_rate));
+        g.finished_result = None;
     }
 
+    /// Selects the model to use for the *next* recording. Does not
+    /// affect a recording already in progress.
     pub fn set_profile(&self, profile: Option<PersonalProfile>) {
-        if let Ok(mut g) = self.inner.lock() {
-            let fp = profile_fingerprint(profile.as_ref());
-            if fp != g.profile_fp {
-                g.profile = profile;
-                g.profile_fp = fp;
-                g.computed_once = false;
-            }
-        }
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        g.pending_model = profile.map(|p| p.model).unwrap_or_else(base_only_model);
     }
 
     pub fn push(&self, samples: &[f32]) {
         if let Ok(mut g) = self.inner.lock() {
-            g.samples.extend_from_slice(samples);
-            g.total_samples_seen = g.total_samples_seen.saturating_add(samples.len() as u64);
+            if let Some(engine) = g.engine.as_mut() {
+                engine.push(samples);
+            }
         }
     }
 
@@ -152,143 +148,60 @@ impl LiveCounter {
         self.inner.lock().map(|g| g.sample_rate).unwrap_or(48_000)
     }
 
+    /// Cheap, non-destructive: safe to poll as often as the UI wants
+    /// while recording is in progress.
     pub fn snapshot(&self) -> LiveSnapshot {
-        self.maybe_trim();
-
-        let (to_compute, sr, cached, profile, committed, last_period) = {
-            let g = match self.inner.lock() {
-                Ok(g) => g,
-                Err(_) => return empty_snapshot(),
+        let g = match self.inner.lock() {
+            Ok(g) => g,
+            Err(_) => return empty_snapshot(),
+        };
+        let sr = g.sample_rate;
+        let Some(engine) = g.engine.as_ref() else {
+            return LiveSnapshot {
+                count: 0,
+                state: EngineState::Idle,
+                period_ms: None,
+                sample_rate: sr,
             };
-            let min_new = (g.sample_rate as f32 * MIN_NEW_SECS_F32) as usize;
-            let enough = g.samples.len() >= g.sample_rate as usize / 4;
-            let delta = g.samples.len().saturating_sub(g.last_compute_len);
-            let should_compute = enough && (!g.computed_once || delta >= min_new);
-            if should_compute {
-                (
-                    Some(g.samples.clone()),
-                    g.sample_rate,
-                    None,
-                    g.profile.clone(),
-                    g.committed_count,
-                    g.last_known_period_ms,
-                )
-            } else {
-                (
-                    None,
-                    g.sample_rate,
-                    g.cached.clone(),
-                    g.profile.clone(),
-                    g.committed_count,
-                    g.last_known_period_ms,
-                )
-            }
         };
-
-        let (result, computed_len) = match to_compute {
-            Some(s) => {
-                let len = s.len();
-                let r = count_daimoku_with_profile(&s, sr, profile.as_ref());
-                (r, Some(len))
-            }
-            None => (cached, None),
-        };
-
-        if let Some(len) = computed_len {
-            if let Ok(mut g) = self.inner.lock() {
-                if g.samples.len() >= len {
-                    g.cached = result.clone();
-                    g.last_compute_len = len;
-                    g.computed_once = true;
-                    if let Some(r) = &result {
-                        if r.period_ms > 0.0 {
-                            g.last_known_period_ms = Some(r.period_ms);
-                        }
-                    }
-                }
-            }
-        }
-
-        let tail_count = result.as_ref().map(|r| r.count).unwrap_or(0);
-        let total_count = committed + tail_count;
-        let period_ms = result
-            .as_ref()
-            .map(|r| r.period_ms)
-            .filter(|p| *p > 0.0)
-            .or(last_period);
-
-        let total_seen = self
-            .inner
-            .lock()
-            .map(|g| g.total_samples_seen)
-            .unwrap_or(0);
-
-        let state = if total_seen < (sr as u64 / 2) {
-            StreamingState::Warming
-        } else if total_count == 0 {
-            StreamingState::Idle
-        } else if total_count >= 2 {
-            StreamingState::Locked
-        } else {
-            StreamingState::Warming
-        };
-
+        let s = engine.snapshot();
         LiveSnapshot {
-            count: total_count,
-            state,
-            period_ms,
+            count: s.count,
+            state: s.state,
+            period_ms: s.period_ms,
             sample_rate: sr,
         }
     }
 
-    /// Bounds the recompute cost of `snapshot()`: if the retained
-    /// buffer has grown past `MAX_WINDOW_SECS`, look for a silence gap
-    /// safely inside it, run one batch count on everything before that
-    /// gap, fold it into `committed_count`, and drop those samples.
-    /// If no safe gap exists yet (e.g. one long unbroken recitation),
-    /// this is a no-op and the buffer is simply allowed to grow a bit
-    /// past the target until a pause happens — favoring correctness
-    /// (never risk splitting a Daimoku) over a hard memory bound.
-    fn maybe_trim(&self) {
-        let (sr, generation) = match self.inner.lock() {
-            Ok(g) => (g.sample_rate, g.generation),
-            Err(_) => return,
+    /// Detailed view for the live-counting screen. Non-destructive.
+    pub fn view(&self) -> LiveView {
+        let empty = LiveView {
+            count: 0,
+            state: "idle".to_string(),
+            speaking: false,
+            elapsed_secs: 0.0,
+            period_ms: None,
+            recent_events_secs: Vec::new(),
+            finished: false,
         };
-        if sr == 0 {
-            return;
-        }
-        let max_window_samples = (MAX_WINDOW_SECS * sr as f32) as usize;
-
-        let (samples_snapshot, profile_snapshot) = {
-            let g = match self.inner.lock() {
-                Ok(g) => g,
-                Err(_) => return,
-            };
-            if g.generation != generation || g.samples.len() <= max_window_samples {
-                return;
-            }
-            (g.samples.clone(), g.profile.clone())
+        let g = match self.inner.lock() {
+            Ok(g) => g,
+            Err(_) => return empty,
         };
-
-        let Some(cut_sample) = find_safe_cut_point(&samples_snapshot, sr, MIN_KEEP_SECS) else {
-            return;
+        let Some(engine) = g.engine.as_ref() else {
+            return empty;
         };
-        if cut_sample == 0 {
-            return;
-        }
-
-        let dropped = &samples_snapshot[..cut_sample];
-        let dropped_result = count_daimoku_with_profile(dropped, sr, profile_snapshot.as_ref());
-        let dropped_count = dropped_result.as_ref().map(|r| r.count).unwrap_or(0);
-
-        if let Ok(mut g) = self.inner.lock() {
-            if g.generation == generation && g.samples.len() >= samples_snapshot.len() {
-                g.samples.drain(0..cut_sample);
-                g.committed_count += dropped_count;
-                g.last_compute_len = g.last_compute_len.saturating_sub(cut_sample);
-                g.cached = None;
-                g.computed_once = false;
-            }
+        let snap = engine.snapshot();
+        let ev = engine.events();
+        let from = ev.len().saturating_sub(LIVE_VIEW_EVENTS);
+        LiveView {
+            count: snap.count,
+            state: state_str(snap.state).to_string(),
+            speaking: engine.is_speaking() && !engine.is_finished(),
+            elapsed_secs: engine.elapsed_secs(),
+            period_ms: snap.period_ms,
+            recent_events_secs: ev[from..].iter().map(|e| e.frame as f32 * 0.01).collect(),
+            finished: engine.is_finished(),
         }
     }
 
@@ -302,128 +215,73 @@ impl LiveCounter {
         self.snapshot().period_ms.map(|ms| ms / 1000.0)
     }
 
-    pub fn finish(&self) -> Option<DaimokuCountResult> {
-        self.maybe_trim();
-        let (samples, sr, profile, committed) = {
-            let g = match self.inner.lock() {
-                Ok(g) => g,
-                Err(_) => return None,
-            };
-            if g.samples.is_empty() && g.committed_count == 0 {
-                return None;
-            }
-            (
-                g.samples.clone(),
-                g.sample_rate,
-                g.profile.clone(),
-                g.committed_count,
-            )
+    /// Called once, when the recording has actually stopped (from the
+    /// audio thread, right after the input stream is torn down).
+    /// Finalises the engine's pending lag window and caches the result.
+    /// Safe to call more than once (e.g. defensively) - only the first
+    /// call does any work.
+    fn mark_finished(&self) {
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if g.finished_result.is_some() {
+            return;
+        }
+        let Some(engine) = g.engine.as_mut() else {
+            return;
         };
-        let tail = count_daimoku_with_profile(&samples, sr, profile.as_ref());
-        merge_committed(committed, tail)
+        if !engine.is_finished() {
+            engine.finish();
+        }
+        let sr = g.sample_rate;
+        g.finished_result = Some(engine_to_result(g.engine.as_ref().unwrap(), sr));
+    }
+
+    /// Best current result: the authoritative one if the recording has
+    /// stopped, otherwise a live estimate from what has been decoded so
+    /// far. Never mutates engine state that would affect future counts.
+    pub fn finish(&self) -> Option<DaimokuCountResult> {
+        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(r) = &g.finished_result {
+            return Some(r.clone());
+        }
+        let engine = g.engine.as_ref()?;
+        if engine.frames_seen() == 0 {
+            return None;
+        }
+        let sr = g.sample_rate;
+        Some(engine_to_result(engine, sr))
     }
 }
 
-#[cfg(test)]
-impl LiveCounter {
-    fn debug_buffered_secs(&self) -> f32 {
-        let g = self.inner.lock().unwrap();
-        if g.sample_rate == 0 {
-            0.0
-        } else {
-            g.samples.len() as f32 / g.sample_rate as f32
-        }
+fn engine_to_result(engine: &Engine, sample_rate: u32) -> DaimokuCountResult {
+    let hop_secs = 0.010_f32;
+    let duration_secs = engine.frames_seen() as f32 * hop_secs;
+    let active_duration_secs = engine.active_frames() as f32 * hop_secs;
+    let period_ms = engine.period_ms().unwrap_or(0.0);
+    let confidence = if engine.count() > 0 {
+        (engine.mean_llr() / engine.params().llr_hi.max(0.1)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let _ = sample_rate;
+    DaimokuCountResult {
+        count: engine.count(),
+        confidence,
+        phrase_count: 0,
+        mean_period_ms: period_ms,
+        method: "nam-myoho-renge-kyo".to_string(),
+        period_ms,
+        segment_count: 0,
+        duration_secs,
+        active_duration_secs,
     }
 }
 
 fn empty_snapshot() -> LiveSnapshot {
     LiveSnapshot {
         count: 0,
-        state: StreamingState::Idle,
+        state: EngineState::Idle,
         period_ms: None,
         sample_rate: 48_000,
-    }
-}
-
-fn profile_fingerprint(p: Option<&PersonalProfile>) -> u64 {
-    match p {
-        None => 0,
-        Some(p) => {
-            let n = p.takes.len() as u64;
-            let per = (p.natural_period_ms.max(0.0) * 10.0) as u64;
-            n.wrapping_mul(1_000_003).wrapping_add(per)
-        }
-    }
-}
-
-/// Looks for a point inside a sustained silence that still leaves at
-/// least `min_keep_secs` of audio after it, so trimming everything
-/// before that point can never cut a Daimoku in half. Returns `None`
-/// if no such pause exists yet.
-fn find_safe_cut_point(samples: &[f32], sr: u32, min_keep_secs: f32) -> Option<usize> {
-    if sr == 0 || samples.is_empty() {
-        return None;
-    }
-    let hop_ms = 10u32;
-    let env = rms_envelope(samples, sr, 30, hop_ms);
-    if env.is_empty() {
-        return None;
-    }
-    let smoothed = moving_average(&env, 20);
-    let peak = smoothed.iter().cloned().fold(f32::MIN, f32::max);
-    if peak <= 1e-6 {
-        return None;
-    }
-    let floor = 0.12 * peak;
-    // ~200ms of continuous silence counts as a real pause worth
-    // cutting on.
-    let min_gap_frames = ((200.0 / hop_ms as f32).ceil() as usize).max(2);
-    let segments = find_active_segments(&smoothed, floor, min_gap_frames);
-    if segments.len() < 2 {
-        return None;
-    }
-
-    let hop_samples = (hop_ms as usize * sr as usize) / 1000;
-    let keep_from_sample = samples
-        .len()
-        .saturating_sub((min_keep_secs * sr as f32) as usize);
-
-    for w in segments.windows(2).rev() {
-        let gap_start = w[0].1;
-        let gap_end = w[1].0;
-        if gap_end <= gap_start {
-            continue;
-        }
-        let mid_frame = gap_start + (gap_end - gap_start) / 2;
-        let mid_sample = mid_frame * hop_samples;
-        if mid_sample > 0 && mid_sample <= keep_from_sample {
-            return Some(mid_sample);
-        }
-    }
-    None
-}
-
-fn merge_committed(
-    committed: usize,
-    tail: Option<DaimokuCountResult>,
-) -> Option<DaimokuCountResult> {
-    match tail {
-        Some(mut r) => {
-            r.count += committed;
-            Some(r)
-        }
-        None if committed > 0 => Some(DaimokuCountResult {
-            count: committed,
-            confidence: 0.5,
-            phrase_count: 0,
-            mean_period_ms: 0.0,
-            method: "committed-only".to_string(),
-            period_ms: 0.0,
-            segment_count: 0,
-            duration_secs: 0.0,
-            active_duration_secs: 0.0,
-        }),
-        None => None,
     }
 }
 
@@ -438,47 +296,90 @@ pub struct RecordedAudio {
 }
 
 enum AudioCommand {
-    Start,
+    /// Start capturing. `keep_secs` caps how much audio is kept in memory
+    /// (the live counter always sees everything): `None` = keep it all
+    /// (training takes), `Some(n)` = keep only the first n seconds (live
+    /// sessions, which can last an hour).
+    Start {
+        keep_secs: Option<u32>,
+        reply: mpsc::Sender<Result<(), String>>,
+    },
     Stop(oneshot::Sender<RecordedAudio>),
 }
+
+/// Audio kept from a live session, for "save WAV" (the first 10 minutes).
+pub const LIVE_KEEP_SECS: u32 = 600;
 
 pub struct AudioState {
     cmd_tx: Mutex<Sender<AudioCommand>>,
     live: Arc<LiveCounter>,
+    /// Audio of the last finished live session (see `LIVE_KEEP_SECS`).
+    last_live: Mutex<Option<RecordedAudio>>,
 }
 
 impl AudioState {
     pub fn spawn() -> Result<Self, String> {
-        let (cmd_tx, cmd_rx) = mpsc::channel();
         let live = Arc::new(LiveCounter::new(48_000));
-        let live_for_thread = Arc::clone(&live);
-
-        thread::Builder::new()
-            .name("audio-engine".into())
-            .spawn(move || audio_thread_main(cmd_rx, live_for_thread))
-            .map_err(|e| format!("failed to spawn audio thread: {e}"))?;
-
+        let cmd_tx = spawn_audio_thread(Arc::clone(&live))?;
         Ok(Self {
             cmd_tx: Mutex::new(cmd_tx),
             live,
+            last_live: Mutex::new(None),
         })
     }
 
+    /// Sends a command to the audio thread. If the thread is gone (it
+    /// should never be: every call into the audio backend is guarded), a
+    /// fresh one is started and the command is sent again.
+    fn send(&self, cmd: AudioCommand) -> Result<(), String> {
+        let mut tx = self.cmd_tx.lock().unwrap();
+        match tx.send(cmd) {
+            Ok(()) => Ok(()),
+            Err(mpsc::SendError(cmd)) => {
+                eprintln!("[audio] audio thread was gone, restarting it");
+                *tx = spawn_audio_thread(Arc::clone(&self.live))?;
+                tx.send(cmd)
+                    .map_err(|_| "audio thread is not running".to_string())
+            }
+        }
+    }
+
+    /// Starts a recording that keeps all its audio (training takes).
     pub fn start(&self) -> Result<(), String> {
-        self.cmd_tx
-            .lock()
-            .unwrap()
-            .send(AudioCommand::Start)
-            .map_err(|_| "audio thread is not running".to_string())
+        self.send_start(None)
+    }
+
+    /// Starts a live counting session (audio kept only for the first
+    /// `LIVE_KEEP_SECS`, so an hour of chanting cannot fill the memory).
+    pub fn start_live(&self) -> Result<(), String> {
+        self.send_start(Some(LIVE_KEEP_SECS))
+    }
+
+    /// Waits until the microphone is really open, so that a missing
+    /// permission or device is reported to the UI instead of silently
+    /// counting nothing.
+    fn send_start(&self, keep_secs: Option<u32>) -> Result<(), String> {
+        let (reply, rx) = mpsc::channel();
+        self.send(AudioCommand::Start { keep_secs, reply })?;
+        rx.recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|_| "the microphone did not respond".to_string())?
+    }
+
+    pub fn set_last_live(&self, audio: RecordedAudio) {
+        *self.last_live.lock().unwrap() = Some(audio);
+    }
+
+    pub fn last_live(&self) -> Option<RecordedAudio> {
+        self.last_live.lock().unwrap().clone()
+    }
+
+    pub fn live_view(&self) -> LiveView {
+        self.live.view()
     }
 
     pub fn stop(&self) -> Result<oneshot::Receiver<RecordedAudio>, String> {
         let (reply_tx, reply_rx) = oneshot::channel();
-        self.cmd_tx
-            .lock()
-            .unwrap()
-            .send(AudioCommand::Stop(reply_tx))
-            .map_err(|_| "audio thread is not running".to_string())?;
+        self.send(AudioCommand::Stop(reply_tx))?;
         Ok(reply_rx)
     }
 
@@ -508,29 +409,73 @@ impl AudioState {
     }
 }
 
+fn spawn_audio_thread(live: Arc<LiveCounter>) -> Result<Sender<AudioCommand>, String> {
+    let (cmd_tx, cmd_rx) = mpsc::channel();
+    thread::Builder::new()
+        .name("audio-engine".into())
+        .spawn(move || audio_thread_main(cmd_rx, live))
+        .map_err(|e| format!("failed to spawn audio thread: {e}"))?;
+    Ok(cmd_tx)
+}
+
+/// Text of a caught panic, so it can be shown instead of lost.
+fn panic_text(p: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = p.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = p.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
 fn audio_thread_main(cmd_rx: mpsc::Receiver<AudioCommand>, live: Arc<LiveCounter>) {
     let mut current: Option<ActiveRecording> = None;
 
     for cmd in cmd_rx {
         match cmd {
-            AudioCommand::Start => {
+            AudioCommand::Start { keep_secs, reply } => {
                 if current.is_some() {
-                    eprintln!("[audio] start ignored: already recording");
+                    let _ = reply.send(Err("already recording".to_string()));
                     continue;
                 }
-                match ActiveRecording::start(Arc::clone(&live)) {
-                    Ok(rec) => current = Some(rec),
-                    Err(e) => eprintln!("[audio] failed to start: {e}"),
+                // The audio backend (AAudio via JNI on Android) may panic
+                // on an unexpected device; report it instead of letting
+                // this thread die.
+                let started = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    ActiveRecording::start(Arc::clone(&live), keep_secs)
+                }));
+                match started {
+                    Ok(Ok(rec)) => {
+                        current = Some(rec);
+                        let _ = reply.send(Ok(()));
+                    }
+                    Ok(Err(e)) => {
+                        eprintln!("[audio] failed to start: {e}");
+                        let _ = reply.send(Err(e));
+                    }
+                    Err(p) => {
+                        let e = format!("audio backend error: {}", panic_text(p));
+                        eprintln!("[audio] {e}");
+                        let _ = reply.send(Err(e));
+                    }
                 }
             }
             AudioCommand::Stop(reply_tx) => {
-                let result = current
-                    .take()
-                    .map(ActiveRecording::stop)
-                    .unwrap_or(RecordedAudio {
-                        samples: Vec::new(),
-                        sample_rate: 0,
-                    });
+                let rec = current.take();
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    rec.map(ActiveRecording::stop)
+                }))
+                .ok()
+                .flatten()
+                .unwrap_or(RecordedAudio {
+                    samples: Vec::new(),
+                    sample_rate: 0,
+                });
+                // The stream is torn down now: no more audio will ever
+                // arrive for this session, so this is the one correct
+                // moment to finalise the engine's pending lag window.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| live.mark_finished()));
                 let _ = reply_tx.send(result);
             }
         }
@@ -547,6 +492,17 @@ fn on_stream_error(err: cpal::StreamError) {
     eprintln!("[audio] stream error: {err}");
 }
 
+/// Appends to the kept recording, up to `max` samples in total.
+fn keep(buf: &Mutex<Vec<f32>>, mono: &[f32], max: usize) {
+    if let Ok(mut b) = buf.lock() {
+        let room = max.saturating_sub(b.len());
+        if room > 0 {
+            let n = room.min(mono.len());
+            b.extend_from_slice(&mono[..n]);
+        }
+    }
+}
+
 fn downmix_to_mono(data: &[f32], channels: u16) -> Vec<f32> {
     let ch = channels as usize;
     if ch <= 1 {
@@ -558,76 +514,113 @@ fn downmix_to_mono(data: &[f32], channels: u16) -> Vec<f32> {
 }
 
 impl ActiveRecording {
-    fn start(live: Arc<LiveCounter>) -> Result<Self, String> {
+    fn start(live: Arc<LiveCounter>, keep_secs: Option<u32>) -> Result<Self, String> {
         let host = cpal::default_host();
         let device = host
             .default_input_device()
             .ok_or_else(|| "no default input device".to_string())?;
 
-        let supported = device
-            .default_input_config()
-            .map_err(|e| format!("failed to get default input config: {e}"))?;
-        let sample_rate = supported.sample_rate().0;
-        let channels = supported.channels();
-        let sample_format = supported.sample_format();
-        let config: StreamConfig = supported.into();
+        // On Android, cpal's default_input_config() probes ~40 formats
+        // through JNI; asking AAudio directly for 48 kHz mono is simpler
+        // and more robust (AAudio converts from whatever the mic delivers).
+        #[cfg(target_os = "android")]
+        let (sample_rate, channels, formats, config) = (
+            48_000u32,
+            1u16,
+            vec![SampleFormat::F32, SampleFormat::I16],
+            StreamConfig {
+                channels: 1,
+                sample_rate: cpal::SampleRate(48_000),
+                buffer_size: cpal::BufferSize::Default,
+            },
+        );
+        #[cfg(not(target_os = "android"))]
+        let (sample_rate, channels, formats, config) = {
+            let supported = device
+                .default_input_config()
+                .map_err(|e| format!("failed to get default input config: {e}"))?;
+            let sr = supported.sample_rate().0;
+            let ch = supported.channels();
+            let fmt = supported.sample_format();
+            let cfg: StreamConfig = supported.into();
+            (sr, ch, vec![fmt], cfg)
+        };
 
         live.reset(sample_rate);
 
         let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
+        let keep_max = keep_secs.map_or(usize::MAX, |s| s as usize * sample_rate as usize);
 
-        let stream = match sample_format {
-            SampleFormat::F32 => {
-                let buf = Arc::clone(&buffer);
-                let live = Arc::clone(&live);
-                device.build_input_stream(
-                    &config,
-                    move |data: &[f32], _| {
-                        let mono = downmix_to_mono(data, channels);
-                        buf.lock().unwrap().extend_from_slice(&mono);
-                        live.push(&mono);
-                    },
-                    on_stream_error,
-                    None,
-                )
+        let build = |sample_format: SampleFormat| -> Result<cpal::Stream, String> {
+            match sample_format {
+                SampleFormat::F32 => {
+                    let buf = Arc::clone(&buffer);
+                    let live = Arc::clone(&live);
+                    device.build_input_stream(
+                        &config,
+                        move |data: &[f32], _| {
+                            let mono = downmix_to_mono(data, channels);
+                            keep(&buf, &mono, keep_max);
+                            live.push(&mono);
+                        },
+                        on_stream_error,
+                        None,
+                    )
+                }
+                SampleFormat::I16 => {
+                    let buf = Arc::clone(&buffer);
+                    let live = Arc::clone(&live);
+                    device.build_input_stream(
+                        &config,
+                        move |data: &[i16], _| {
+                            let as_f32: Vec<f32> =
+                                data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
+                            let mono = downmix_to_mono(&as_f32, channels);
+                            keep(&buf, &mono, keep_max);
+                            live.push(&mono);
+                        },
+                        on_stream_error,
+                        None,
+                    )
+                }
+                SampleFormat::U16 => {
+                    let buf = Arc::clone(&buffer);
+                    let live = Arc::clone(&live);
+                    device.build_input_stream(
+                        &config,
+                        move |data: &[u16], _| {
+                            let as_f32: Vec<f32> = data
+                                .iter()
+                                .map(|&s| (s as f32 - 32768.0) / 32768.0)
+                                .collect();
+                            let mono = downmix_to_mono(&as_f32, channels);
+                            keep(&buf, &mono, keep_max);
+                            live.push(&mono);
+                        },
+                        on_stream_error,
+                        None,
+                    )
+                }
+                other => return Err(format!("unsupported sample format: {other:?}")),
             }
-            SampleFormat::I16 => {
-                let buf = Arc::clone(&buffer);
-                let live = Arc::clone(&live);
-                device.build_input_stream(
-                    &config,
-                    move |data: &[i16], _| {
-                        let as_f32: Vec<f32> =
-                            data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
-                        let mono = downmix_to_mono(&as_f32, channels);
-                        buf.lock().unwrap().extend_from_slice(&mono);
-                        live.push(&mono);
-                    },
-                    on_stream_error,
-                    None,
-                )
+            .map_err(|e| format!("failed to build input stream: {e}"))
+        };
+
+        // Try each candidate format in turn, keeping the first error.
+        let mut stream = None;
+        let mut first_err = None;
+        for f in formats {
+            match build(f) {
+                Ok(s) => {
+                    stream = Some(s);
+                    break;
+                }
+                Err(e) => {
+                    first_err.get_or_insert(e);
+                }
             }
-            SampleFormat::U16 => {
-                let buf = Arc::clone(&buffer);
-                let live = Arc::clone(&live);
-                device.build_input_stream(
-                    &config,
-                    move |data: &[u16], _| {
-                        let as_f32: Vec<f32> = data
-                            .iter()
-                            .map(|&s| (s as f32 - 32768.0) / 32768.0)
-                            .collect();
-                        let mono = downmix_to_mono(&as_f32, channels);
-                        buf.lock().unwrap().extend_from_slice(&mono);
-                        live.push(&mono);
-                    },
-                    on_stream_error,
-                    None,
-                )
-            }
-            other => return Err(format!("unsupported sample format: {other:?}")),
         }
-        .map_err(|e| format!("failed to build input stream: {e}"))?;
+        let stream = stream.ok_or_else(|| first_err.unwrap_or_else(|| "no input format".into()))?;
 
         stream
             .play()
@@ -642,7 +635,7 @@ impl ActiveRecording {
 
     fn stop(self) -> RecordedAudio {
         drop(self._stream);
-        let samples = std::mem::take(&mut *self.buffer.lock().unwrap());
+        let samples = std::mem::take(&mut *self.buffer.lock().unwrap_or_else(|e| e.into_inner()));
         RecordedAudio {
             samples,
             sample_rate: self.sample_rate,
@@ -682,13 +675,13 @@ mod tests {
         let lc = LiveCounter::new(48_000);
         let snap = lc.snapshot();
         assert_eq!(snap.count, 0);
-        assert_eq!(snap.state, StreamingState::Warming);
         assert!(snap.period_ms.is_none());
     }
 
     #[test]
     fn live_counter_accepts_silence_without_counting() {
         let lc = LiveCounter::new(48_000);
+        lc.reset(48_000);
         let silence = vec![0.0f32; 48_000];
         lc.push(&silence);
         assert_eq!(lc.count(), 0);
@@ -697,6 +690,7 @@ mod tests {
     #[test]
     fn live_counter_reset_clears_state() {
         let lc = LiveCounter::new(48_000);
+        lc.reset(48_000);
         let tone = vec![0.5f32; 480];
         lc.push(&tone);
         lc.reset(44_100);
@@ -704,78 +698,59 @@ mod tests {
         assert_eq!(lc.sample_rate(), 44_100);
     }
 
-    fn synth_bumps(bumps: usize, period_s: f32, sr: u32) -> Vec<f32> {
-        use std::f32::consts::PI;
-        let n = (bumps as f32 * period_s * sr as f32) as usize;
-        let mut v = Vec::with_capacity(n);
-        for i in 0..n {
-            let t = i as f32 / sr as f32;
-            let car = (2.0 * PI * 220.0 * t).sin() + 0.4 * (2.0 * PI * 660.0 * t).sin();
-            let phase = (t / period_s).fract();
-            let bump = 0.55 + 0.45 * (PI * phase).sin().powf(0.6);
-            v.push(car * bump * 0.4);
+    #[test]
+    fn failed_start_keeps_the_audio_thread_alive() {
+        // Without a usable microphone every start must fail with a real
+        // reason, again and again - never with "thread is not running".
+        let state = AudioState::spawn().expect("spawn");
+        for _ in 0..3 {
+            match state.start_live() {
+                Ok(()) => {
+                    // a real microphone exists on this machine: just stop
+                    let _ = state.stop();
+                    return;
+                }
+                Err(e) => assert!(!e.contains("not running"), "{e}"),
+            }
         }
-        v
-    }
-
-    fn synth_silence(secs: f32, sr: u32) -> Vec<f32> {
-        vec![0.0; (secs * sr as f32) as usize]
     }
 
     #[test]
-    fn live_counter_bounds_buffer_growth_across_pauses() {
-        let sr = 48_000u32;
-        let lc = LiveCounter::new(sr);
-        lc.reset(sr);
-
-        // Several minutes' worth of pushes, but with regular pauses so
-        // the window has plenty of safe cut points.
-        for _ in 0..30 {
-            let chunk = synth_silence(2.0, sr);
-            lc.push(&chunk);
-            let _ = lc.snapshot();
-        }
-
-        assert!(
-            lc.debug_buffered_secs() < (MAX_WINDOW_SECS * 2.0),
-            "buffer grew to {:.1}s — trimming does not seem to be bounding it",
-            lc.debug_buffered_secs()
-        );
+    fn keep_caps_the_buffer() {
+        let b = Mutex::new(Vec::new());
+        keep(&b, &[1.0; 6], 10);
+        keep(&b, &[2.0; 6], 10);
+        keep(&b, &[3.0; 6], 10);
+        let v = b.lock().unwrap();
+        assert_eq!(v.len(), 10);
+        assert_eq!(v[5], 1.0);
+        assert_eq!(v[9], 2.0);
     }
 
     #[test]
-    fn live_counter_preserves_count_across_a_trim() {
-        let sr = 48_000u32;
-        let lc = LiveCounter::new(sr);
-        lc.reset(sr);
+    fn view_is_empty_before_reset() {
+        let lc = LiveCounter::new(48_000);
+        let v = lc.view();
+        assert_eq!(v.count, 0);
+        assert_eq!(v.state, "idle");
+        assert!(!v.speaking);
+    }
 
-        let rounds = 5usize;
-        let per_round = 10usize;
-        for _ in 0..rounds {
-            // Push in chunks and poll snapshot() in between, like the
-            // real audio callback + UI poll do, so trimming has a
-            // chance to kick in mid-session exactly like in
-            // production.
-            let active = synth_bumps(per_round, 1.0, sr);
-            for chunk in active.chunks(96_000) {
-                lc.push(chunk);
-                let _ = lc.snapshot();
-            }
-            let pause = synth_silence(3.0, sr);
-            for chunk in pause.chunks(96_000) {
-                lc.push(chunk);
-                let _ = lc.snapshot();
-            }
-        }
+    #[test]
+    fn finish_before_reset_returns_none() {
+        let lc = LiveCounter::new(48_000);
+        assert!(lc.finish().is_none());
+    }
 
-        let result = lc.finish().expect("expected a count");
-        let expected = (rounds * per_round) as i64;
-        let got = result.count as i64;
-        assert!(
-            (got - expected).abs() <= 10,
-            "expected roughly {expected} Daimoku across {rounds} rounds with \
-             pauses, got {got}"
-        );
+    #[test]
+    fn finish_is_idempotent_after_mark_finished() {
+        let lc = LiveCounter::new(48_000);
+        lc.reset(48_000);
+        lc.push(&vec![0.0f32; 48_000]);
+        lc.mark_finished();
+        let a = lc.finish();
+        let b = lc.finish();
+        assert_eq!(a.map(|r| r.count), b.map(|r| r.count));
     }
 
     #[test]

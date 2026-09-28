@@ -1,5 +1,6 @@
-use crate::audio::{self, AudioState, RecordedAudio};
+use crate::audio::{self, AudioState, LiveView, RecordedAudio};
 use crate::dsp::{count_daimoku_with_profile, DaimokuCountResult, StreamingState};
+use crate::history::{started_before_now, History, SessionRecord};
 use crate::profile::{PersonalProfile, ProfileState};
 use crate::training::{TrainingStore, TrainingTakeMeta};
 use serde::Serialize;
@@ -51,9 +52,9 @@ pub fn live_status(
     state: State<'_, AudioState>,
     profile_state: State<'_, ProfileState>,
 ) -> LiveStatus {
-    let snap = profile_state.snapshot();
-    let usable = snap.is_usable();
-    state.live_set_profile(if usable { Some(snap) } else { None });
+    // Only arms the model for the *next* reset: never disturbs a session
+    // that is already counting.
+    state.live_set_profile(Some(profile_state.snapshot()));
 
     let s = state.live_state();
     LiveStatus {
@@ -61,7 +62,7 @@ pub fn live_status(
         state: streaming_state_str(s).to_string(),
         period_ms: state.live_period_secs().map(|p| p * 1000.0),
         sample_rate: state.live_sample_rate(),
-        profile_used: usable,
+        profile_used: true,
     }
 }
 
@@ -70,8 +71,7 @@ pub fn live_snapshot(
     state: State<'_, AudioState>,
     profile_state: State<'_, ProfileState>,
 ) -> Option<DaimokuCountResult> {
-    let snap = profile_state.snapshot();
-    state.live_set_profile(if snap.is_usable() { Some(snap) } else { None });
+    state.live_set_profile(Some(profile_state.snapshot()));
     state.live_finish()
 }
 
@@ -93,6 +93,127 @@ fn streaming_state_str(s: StreamingState) -> &'static str {
         StreamingState::Locked => "locked",
         StreamingState::Idle => "idle",
     }
+}
+
+// -----------------------------------------------------------------------------
+// Live counting session (what an end user does: press start, chant, stop)
+// -----------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LiveSessionSummary {
+    pub count: usize,
+    pub duration_secs: f32,
+    pub period_ms: Option<f32>,
+    /// Seconds of audio kept for "save WAV" (the start of the session).
+    pub saved_audio_secs: f32,
+    /// The saved session (for statistics), if at least one Daimoku was
+    /// counted. Its `count` can be corrected with `update_session_count`.
+    pub session: Option<SessionRecord>,
+}
+
+/// Starts counting with the current personal profile. Unlike
+/// `start_recording`, the audio does not end up in the training list.
+#[tauri::command]
+pub fn start_live_session(
+    audio_state: State<'_, AudioState>,
+    profile_state: State<'_, ProfileState>,
+) -> Result<(), String> {
+    audio_state.live_set_profile(Some(profile_state.snapshot()));
+    audio_state.start_live()
+}
+
+#[tauri::command]
+pub async fn stop_live_session(
+    audio_state: State<'_, AudioState>,
+    history: State<'_, History>,
+) -> Result<LiveSessionSummary, String> {
+    let rx = audio_state.stop()?;
+    let audio = rx
+        .await
+        .map_err(|e| format!("audio thread dropped reply: {e}"))?;
+    let view = audio_state.live_view();
+    let saved_audio_secs = if audio.sample_rate > 0 {
+        audio.samples.len() as f32 / audio.sample_rate as f32
+    } else {
+        0.0
+    };
+    if !audio.samples.is_empty() {
+        audio_state.set_last_live(audio);
+    }
+    let session = if view.count > 0 {
+        let n = view.count as u32;
+        Some(history.add(started_before_now(view.elapsed_secs), view.elapsed_secs, n, n, false)?)
+    } else {
+        None
+    };
+    Ok(LiveSessionSummary {
+        count: view.count,
+        duration_secs: view.elapsed_secs,
+        period_ms: view.period_ms,
+        saved_audio_secs,
+        session,
+    })
+}
+
+/// Everything the live screen needs; cheap, poll it every ~150 ms.
+#[tauri::command]
+pub fn live_view(state: State<'_, AudioState>) -> LiveView {
+    state.live_view()
+}
+
+/// Saves the last live session's audio to the Desktop (or home folder),
+/// to send it for analysis when the count was wrong.
+#[tauri::command]
+pub fn export_live_session_wav(state: State<'_, AudioState>) -> Result<String, String> {
+    let audio = state
+        .last_live()
+        .ok_or_else(|| "nessuna sessione live registrata".to_string())?;
+    let dir = crate::paths::export_dir()
+        .ok_or_else(|| "cannot determine output directory".to_string())?;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let path = dir.join(format!("daimuku-live-{stamp}.wav"));
+    write_wav(&path, &audio)?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+// -----------------------------------------------------------------------------
+// Session history (statistics) and daily goal
+// -----------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_sessions(history: State<'_, History>) -> Vec<SessionRecord> {
+    history.list()
+}
+
+/// Corrects the credited count of a saved session.
+#[tauri::command]
+pub fn update_session_count(
+    history: State<'_, History>,
+    id: u64,
+    count: u32,
+) -> Result<SessionRecord, String> {
+    history.set_count(id, count)
+}
+
+#[tauri::command]
+pub fn delete_session(history: State<'_, History>, id: u64) -> Result<(), String> {
+    history.delete(id)
+}
+
+/// Daimoku chanted without the counter (e.g. at a meeting).
+#[tauri::command]
+pub fn add_manual_session(history: State<'_, History>, count: u32) -> Result<SessionRecord, String> {
+    history.add_manual(count)
+}
+
+#[tauri::command]
+pub fn get_daily_goal(history: State<'_, History>) -> u32 {
+    history.daily_goal()
+}
+
+#[tauri::command]
+pub fn set_daily_goal(history: State<'_, History>, goal: u32) -> Result<u32, String> {
+    history.set_daily_goal(goal)
 }
 
 // -----------------------------------------------------------------------------
@@ -122,13 +243,9 @@ pub fn validate_training_take(
     let (audio, expected) = store.get_with_expected(index)?;
 
     let snap = profile_state.snapshot();
-    let profile_used = snap.is_usable();
-    let profile_ref = if profile_used { Some(&snap) } else { None };
-
-    let analysis = count_daimoku_with_profile(&audio.samples, audio.sample_rate, profile_ref)
+    let analysis = count_daimoku_with_profile(&audio.samples, audio.sample_rate, Some(&snap))
         .ok_or_else(|| {
-            "No periodicity detected in the recording. Recite with clear syllables and steady rhythm."
-                .to_string()
+            "Nessun audio utilizzabile nella registrazione (troppo breve o silenziosa).".to_string()
         })?;
 
     let ok = analysis.count == expected as usize;
@@ -136,11 +253,14 @@ pub fn validate_training_take(
         expected,
         detected: analysis.count,
         ok,
-        profile_used,
+        profile_used: true,
         analysis,
     })
 }
 
+/// Adds a recorded take to the personal profile. `ProfileState::add_take`
+/// persists the audio + index to disk and retrains the model in one step,
+/// so there is no separate save call.
 #[tauri::command]
 pub fn add_take_to_profile(
     store: State<'_, TrainingStore>,
@@ -153,34 +273,22 @@ pub fn add_take_to_profile(
         return Err("take has no declared Daimoku count".to_string());
     }
 
-    let new_profile = profile_state.with_mut(|p| {
-        p.add_take(&audio.samples, audio.sample_rate, expected)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-            .and_then(|_| p.save())
-            .map(|_| p.clone())
-    })?;
-
-    let to_inject = if new_profile.is_usable() {
-        Some(new_profile.clone())
-    } else {
-        None
-    };
-    audio_state.live_set_profile(to_inject);
+    profile_state.add_take(&audio.samples, audio.sample_rate, expected as u32)?;
+    let new_profile = profile_state.snapshot();
+    audio_state.live_set_profile(Some(new_profile.clone()));
 
     Ok(new_profile)
 }
 
+/// Deletes the user's takes and falls back to the model trained on the
+/// four built-in reference recordings only.
 #[tauri::command]
 pub fn clear_personal_profile(
     profile_state: State<'_, ProfileState>,
     audio_state: State<'_, AudioState>,
 ) -> Result<(), String> {
-    profile_state.with_mut(|p| {
-        p.clear();
-        let _ = p.save();
-    });
-    audio_state.live_set_profile(None);
+    profile_state.clear()?;
+    audio_state.live_set_profile(Some(profile_state.snapshot()));
     Ok(())
 }
 
@@ -204,8 +312,7 @@ pub fn export_training_wav(
     index: usize,
 ) -> Result<String, String> {
     let audio = store.get(index)?;
-    let dir = dirs::desktop_dir()
-        .or_else(dirs::home_dir)
+    let dir = crate::paths::export_dir()
         .ok_or_else(|| "cannot determine output directory".to_string())?;
     let path = dir.join(format!("daimuku-training-{index}.wav"));
     write_wav(&path, &audio)?;
