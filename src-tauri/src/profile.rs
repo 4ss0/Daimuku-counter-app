@@ -302,6 +302,61 @@ impl ProfileState {
         write_index(&g.index)
     }
 
+    /// Every stored take with its audio (for a backup).
+    pub fn export_takes(&self) -> Vec<(TakeRecord, Vec<f32>, u32)> {
+        let guard = self.guard();
+        let g = guard.as_ref().expect("loaded");
+        g.index
+            .takes
+            .iter()
+            .filter_map(|t| {
+                let bytes = fs::read(take_wav_path(t.id)?).ok()?;
+                let (samples, sr) = decode_wav(&bytes).ok()?;
+                Some((t.clone(), samples, sr))
+            })
+            .collect()
+    }
+
+    /// Replaces all stored takes (restore from a backup) and retrains.
+    /// Takes that cannot be analysed are skipped; returns how many were kept.
+    pub fn replace_takes(&self, takes: Vec<(TakeRecord, Vec<f32>, u32)>) -> Result<usize, String> {
+        // analyse first, outside the lock: a bad backup leaves everything as it was
+        let mut kept: Vec<(TakeRecord, Vec<f32>, u32, TrainItem)> = Vec::new();
+        for (rec, samples, sr) in takes {
+            if sr == 0 || rec.n_daimoku == 0 || (samples.len() as f32 / sr as f32) < MIN_TAKE_SECS {
+                continue;
+            }
+            if let Some(item) = build_item(&samples, sr, rec.n_daimoku as usize, USER_WEIGHT) {
+                kept.push((rec, samples, sr, item));
+            }
+        }
+        let mut guard = self.guard();
+        let g = guard.as_mut().expect("loaded");
+        if let Some(dir) = takes_dir() {
+            let _ = fs::remove_dir_all(&dir);
+        }
+        let mut index = ProfileIndex { version: 1, takes: Vec::new() };
+        let mut user_items = Vec::new();
+        for (id, (rec, samples, sr, item)) in kept.into_iter().enumerate() {
+            if let Some(path) = take_wav_path(id) {
+                write_wav_f32(&path, &samples, sr)?;
+            }
+            index.takes.push(TakeRecord {
+                id,
+                duration_secs: samples.len() as f32 / sr as f32,
+                period_ms: None,
+                ..rec
+            });
+            user_items.push(item);
+        }
+        g.index = index;
+        g.user_items = user_items;
+        g.model = retrain(&g.base_items, &g.user_items).unwrap_or_else(base_only_fallback);
+        recompute_take_periods(g);
+        write_index(&g.index)?;
+        Ok(g.index.takes.len())
+    }
+
     pub fn clear(&self) -> Result<(), String> {
         let mut guard = self.guard();
         let g = guard.as_mut().expect("loaded");

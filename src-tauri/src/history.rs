@@ -135,6 +135,24 @@ impl History {
         Ok(v)
     }
 
+    /// The whole file (sessions + goal), for a backup.
+    pub fn to_backup(&self) -> serde_json::Value {
+        serde_json::to_value(&*self.inner.lock().unwrap()).unwrap_or(serde_json::Value::Null)
+    }
+
+    /// Replaces sessions and goal with those of a backup. Returns the
+    /// number of sessions restored.
+    pub fn restore_backup(&self, v: serde_json::Value) -> Result<usize, String> {
+        let mut data: HistoryFile =
+            serde_json::from_value(v).map_err(|e| format!("backup-invalid: sessions: {e}"))?;
+        normalize(&mut data);
+        let n = data.sessions.len();
+        let mut g = self.inner.lock().unwrap();
+        self.persist(&data)?;
+        *g = data;
+        Ok(n)
+    }
+
     fn persist(&self, data: &HistoryFile) -> Result<(), String> {
         let Some(path) = &self.path else {
             return Ok(());
@@ -149,16 +167,24 @@ impl History {
     }
 }
 
+fn normalize(h: &mut HistoryFile) {
+    // never reuse an id, even if the file was edited by hand
+    let max_id = h.sessions.iter().map(|s| s.id).max().unwrap_or(0);
+    h.next_id = h.next_id.max(max_id + 1);
+    if h.daily_goal == 0 {
+        h.daily_goal = DEFAULT_DAILY_GOAL;
+    }
+    h.daily_goal = h.daily_goal.min(MAX_COUNT);
+    for s in &mut h.sessions {
+        s.count = s.count.min(MAX_COUNT);
+    }
+}
+
 fn read_file(path: &Path) -> HistoryFile {
     match fs::read_to_string(path) {
         Ok(s) => match serde_json::from_str::<HistoryFile>(&s) {
             Ok(mut h) => {
-                // never reuse an id, even if the file was edited by hand
-                let max_id = h.sessions.iter().map(|s| s.id).max().unwrap_or(0);
-                h.next_id = h.next_id.max(max_id + 1);
-                if h.daily_goal == 0 {
-                    h.daily_goal = DEFAULT_DAILY_GOAL;
-                }
+                normalize(&mut h);
                 h
             }
             Err(e) => {

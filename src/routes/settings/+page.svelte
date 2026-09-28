@@ -2,8 +2,9 @@
   import { onMount } from 'svelte';
   import { getVersion } from '@tauri-apps/api/app';
   import { api, errText } from '$lib/api';
-  import { LANGS, t, type Key } from '$lib/i18n';
-  import { ACCENTS, prefs, updatePrefs, type Accent, type ThemePref } from '$lib/prefs';
+  import { LANGS, locale, t, type Key } from '$lib/i18n';
+  import { ACCENTS, initPrefs, prefs, updatePrefs, type Accent, type ThemePref } from '$lib/prefs';
+  import { hasNative, saveFile, shareFile, type ExportedFile } from '$lib/native';
 
   const THEMES: { id: ThemePref; label: Key }[] = [
     { id: 'system', label: 'set.themeSystem' },
@@ -22,8 +23,16 @@
   let goal = 100;
   let goalInput = '';
   let errorText = '';
+  let native = false;
+
+  // backup / restore / export
+  let working = false;
+  let dataMsg = '';
+  let pendingRestore: { content: string; date: string } | null = null;
+  let fileInput: HTMLInputElement;
 
   onMount(async () => {
+    native = hasNative();
     try {
       version = await getVersion();
     } catch {
@@ -48,6 +57,109 @@
       goalInput = String(goal);
     } catch (e) {
       errorText = errText(e);
+    }
+  }
+
+  async function deliver(f: ExportedFile, mime: string, how: 'save' | 'share') {
+    if (!native) {
+      dataMsg = $t('set.fileSavedIn', { p: f.path });
+      return;
+    }
+    if (how === 'share') {
+      await shareFile(f, mime, f.name);
+    } else if (await saveFile(f, mime)) {
+      dataMsg = $t('set.fileSaved');
+    }
+  }
+
+  async function backup(how: 'save' | 'share') {
+    if (working) return;
+    working = true;
+    dataMsg = '';
+    errorText = '';
+    try {
+      await deliver(await api.createBackup(), 'application/json', how);
+    } catch (e) {
+      errorText = errText(e);
+    } finally {
+      working = false;
+    }
+  }
+
+  function csvCell(v: string | number): string {
+    const s = String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+
+  async function exportCsv() {
+    if (working) return;
+    working = true;
+    dataMsg = '';
+    errorText = '';
+    try {
+      const sessions = (await api.listSessions()).slice().sort((a, b) => a.started_at.localeCompare(b.started_at));
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const rows = sessions.map((s) => {
+        const d = new Date(s.started_at);
+        return [
+          `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+          `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+          Math.round(s.duration_secs),
+          s.count,
+          s.detected,
+          s.manual ? 1 : 0,
+        ]
+          .map(csvCell)
+          .join(',');
+      });
+      const csv = '\ufeff' + [$t('csv.header'), ...rows].join('\r\n') + '\r\n';
+      const now = new Date();
+      const name = `daimoku-sessions-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}.csv`;
+      await deliver(await api.writeTextExport(name, csv), 'text/csv', native ? 'share' : 'save');
+    } catch (e) {
+      errorText = errText(e);
+    } finally {
+      working = false;
+    }
+  }
+
+  async function pickRestore() {
+    dataMsg = '';
+    errorText = '';
+    const file = fileInput.files?.[0];
+    fileInput.value = '';
+    if (!file) return;
+    try {
+      const content = await file.text();
+      let date = file.name;
+      try {
+        const head = JSON.parse(content);
+        if (head?.format !== 'daimoku-counter-backup') throw new Error('backup-invalid');
+        date = new Date(head.created_at).toLocaleString($locale, { dateStyle: 'medium', timeStyle: 'short' });
+      } catch {
+        errorText = $t('err.backupInvalid');
+        return;
+      }
+      pendingRestore = { content, date };
+    } catch (e) {
+      errorText = errText(e);
+    }
+  }
+
+  async function confirmRestore() {
+    if (!pendingRestore || working) return;
+    working = true;
+    try {
+      const r = await api.restoreBackup(pendingRestore.content);
+      pendingRestore = null;
+      await initPrefs();
+      goal = await api.getGoal();
+      goalInput = String(goal);
+      dataMsg = $t('set.restoreDone', { s: r.sessions, n: r.takes });
+    } catch (e) {
+      errorText = errText(e);
+    } finally {
+      working = false;
     }
   }
 </script>
@@ -96,6 +208,50 @@
         <span class="unit">{$t('count.unit')}</span>
       </form>
     </div>
+  </section>
+
+  {#if native}
+    <section class="card glass">
+      <label class="toggle">
+        <span>
+          <span class="label">{$t('set.keepAwake')}</span>
+          <span class="muted small-hint">{$t('set.keepAwakeHint')}</span>
+        </span>
+        <input
+          type="checkbox"
+          role="switch"
+          checked={$prefs.keepAwake}
+          on:change={(e) => updatePrefs({ keepAwake: e.currentTarget.checked })}
+        />
+      </label>
+    </section>
+  {/if}
+
+  <section class="card glass">
+    <div class="label">{$t('set.data')}</div>
+    <p class="muted small-hint">{$t('set.dataHint')}</p>
+    <div class="options data-actions">
+      {#if native}
+        <button on:click={() => backup('save')} disabled={working}>{$t('set.backupSave')}</button>
+        <button on:click={() => backup('share')} disabled={working}>{$t('set.backupShare')}</button>
+      {:else}
+        <button class="wide" on:click={() => backup('save')} disabled={working}>{$t('set.backupCreate')}</button>
+      {/if}
+      <button class="wide" on:click={() => fileInput.click()} disabled={working}>{$t('set.restore')}</button>
+      <button class="wide" on:click={exportCsv} disabled={working}>{$t('set.exportCsv')}</button>
+    </div>
+    <input class="hidden-file" type="file" bind:this={fileInput} on:change={pickRestore} />
+    {#if pendingRestore}
+      <div class="confirm">
+        <p>{$t('set.restoreConfirm', { d: pendingRestore.date })}</p>
+        <div class="confirm-actions">
+          <button on:click={() => (pendingRestore = null)} disabled={working}>{$t('common.cancel')}</button>
+          <button class="danger" on:click={confirmRestore} disabled={working}>{$t('common.yes')}</button>
+        </div>
+      </div>
+    {/if}
+    {#if working}<p class="muted small-hint">{$t('set.working')}</p>{/if}
+    {#if dataMsg}<p class="ok-msg">{dataMsg}</p>{/if}
   </section>
 
   <section class="card glass about">
@@ -258,5 +414,98 @@
   .error {
     color: var(--red);
     font-size: 0.85rem;
+  }
+  .toggle {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    cursor: pointer;
+  }
+  .toggle .label {
+    display: block;
+    margin-bottom: 4px;
+  }
+  .toggle input {
+    appearance: none;
+    -webkit-appearance: none;
+    flex-shrink: 0;
+    width: 46px;
+    height: 28px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .toggle input::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: transform 0.2s, background 0.2s;
+  }
+  .toggle input:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .toggle input:checked::after {
+    transform: translateX(18px);
+    background: var(--accent-ink);
+  }
+  .small-hint {
+    display: block;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    margin: 0 0 10px;
+  }
+  .data-actions .wide {
+    grid-column: 1 / -1;
+  }
+  .options button:disabled {
+    opacity: 0.55;
+  }
+  .hidden-file {
+    display: none;
+  }
+  .confirm {
+    margin-top: 12px;
+    padding: 12px;
+    border-radius: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+  }
+  .confirm p {
+    margin: 0 0 10px;
+    font-size: 0.9rem;
+  }
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .confirm-actions button {
+    padding: 8px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: transparent;
+    cursor: pointer;
+  }
+  .confirm-actions .danger {
+    background: var(--red);
+    border-color: var(--red);
+    color: #fff;
+    font-weight: 600;
+  }
+  .ok-msg {
+    color: var(--green);
+    font-size: 0.85rem;
+    margin: 10px 0 0;
+    word-break: break-all;
   }
 </style>

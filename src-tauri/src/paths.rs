@@ -31,10 +31,30 @@ pub fn export_dir() -> Option<PathBuf> {
     {
         let d = data_dir()?.join("exports");
         let _ = std::fs::create_dir_all(&d);
+        prune_old(&d);
         Some(d)
     }
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         dirs::desktop_dir().or_else(dirs::home_dir)
+    }
+}
+
+/// On mobile the exports folder is only a hand-over point to the system
+/// "save"/"share" screens: files older than a day are removed.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn prune_old(dir: &std::path::Path) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let limit = std::time::Duration::from_secs(24 * 3600);
+    for e in rd.flatten() {
+        let old = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > limit);
+        if old {
+            let _ = std::fs::remove_file(e.path());
+        }
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "daimuku-counter"
-version = "0.1.0"
+version = "0.2.0"
 description = "Daimoku counter application"
 authors = ["you"]
 edition = "2021"
@@ -21,6 +21,7 @@ cpal = "0.16"
 tokio = { version = "1", features = ["sync"] }
 chrono = { version = "0.4", features = ["serde"] }
 hound = "3"
+base64 = "0.22"
 dirs = "5"
 
 [profile.dev.package.daimuku-counter]

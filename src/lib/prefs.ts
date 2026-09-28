@@ -12,9 +12,11 @@ export interface Prefs {
   lang: 'auto' | Lang;
   theme: ThemePref;
   accent: Accent;
+  /** Keep the screen on while counting (counting also works with it off). */
+  keepAwake: boolean;
 }
 
-const DEFAULTS: Prefs = { lang: 'auto', theme: 'system', accent: 'lotus' };
+const DEFAULTS: Prefs = { lang: 'auto', theme: 'system', accent: 'lotus', keepAwake: false };
 
 export const prefs = writable<Prefs>({ ...DEFAULTS });
 /** The theme actually shown (system preference resolved). */
@@ -65,6 +67,7 @@ function sanitize(p: Partial<Prefs> | null | undefined): Partial<Prefs> {
   if (p.lang && ['auto', 'it', 'en', 'ja'].includes(p.lang)) out.lang = p.lang;
   if (p.theme && ['system', 'light', 'dark'].includes(p.theme)) out.theme = p.theme;
   if (p.accent && (ACCENTS as string[]).includes(p.accent)) out.accent = p.accent;
+  if (typeof p.keepAwake === 'boolean') out.keepAwake = p.keepAwake;
   return out;
 }
 

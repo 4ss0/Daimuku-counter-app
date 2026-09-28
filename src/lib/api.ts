@@ -2,6 +2,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import { get } from 'svelte/store';
 import { locale, t, type TFn } from './i18n';
+import type { ExportedFile } from './native';
+
+export interface RestoreSummary {
+  sessions: number;
+  takes: number;
+  takes_skipped: number;
+}
 
 export interface LiveView {
   count: number;
@@ -64,7 +71,7 @@ export const api = {
   startLive: () => invoke<void>('start_live_session'),
   stopLive: () => invoke<LiveSessionSummary>('stop_live_session'),
   liveView: () => invoke<LiveView>('live_view'),
-  exportLiveWav: () => invoke<string>('export_live_session_wav'),
+  exportLiveWav: () => invoke<ExportedFile>('export_live_session_wav'),
 
   listSessions: () => invoke<SessionRecord[]>('list_sessions'),
   updateSessionCount: (id: number, count: number) =>
@@ -83,6 +90,10 @@ export const api = {
   validateTake: (index: number) => invoke<ValidationResult>('validate_training_take', { index }),
   addTakeToProfile: (index: number) => invoke<PersonalProfile>('add_take_to_profile', { index }),
   clearTrainingTakes: () => invoke<number>('clear_training_takes'),
+
+  createBackup: () => invoke<ExportedFile>('create_backup'),
+  restoreBackup: (content: string) => invoke<RestoreSummary>('restore_backup', { content }),
+  writeTextExport: (name: string, content: string) => invoke<ExportedFile>('write_text_export', { name, content }),
 };
 
 export function errText(e: unknown): string {
@@ -94,6 +105,8 @@ export function errText(e: unknown): string {
   if (/no default input device/i.test(s)) {
     return tr('err.noMic');
   }
+  if (s.includes('backup-newer')) return tr('err.backupNewer');
+  if (s.includes('backup-invalid')) return tr('err.backupInvalid');
   return s;
 }
 

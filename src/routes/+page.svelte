@@ -3,6 +3,8 @@
   import { api, errText, fmtClock, fmtNum, type LiveSessionSummary, type LiveView, type SessionRecord } from '$lib/api';
   import { locale, t } from '$lib/i18n';
   import { todayTotal } from '$lib/stats';
+  import { hasNative, shareFile, startCounting, stopCounting } from '$lib/native';
+  import { prefs } from '$lib/prefs';
 
   const POLL_MS = 150;
   const R = 118;
@@ -76,6 +78,8 @@
       await api.startLive();
       running = true;
       timer = setInterval(poll, POLL_MS);
+      // Android: keeps counting with the screen off (shows a notification)
+      startCounting($t('notif.title'), $t('notif.text'), $prefs.keepAwake);
     } catch (e) {
       errorText = errText(e);
     } finally {
@@ -90,6 +94,7 @@
       clearInterval(timer);
       timer = null;
     }
+    stopCounting();
     try {
       summary = await api.stopLive();
       corrected = summary.count;
@@ -132,7 +137,9 @@
 
   async function saveWav() {
     try {
-      savedPath = await api.exportLiveWav();
+      const f = await api.exportLiveWav();
+      if (hasNative()) await shareFile(f, 'audio/wav', $t('count.saveAudio'));
+      else savedPath = f.path;
     } catch (e) {
       errorText = errText(e);
     }
@@ -158,7 +165,10 @@
   onDestroy(() => {
     window.removeEventListener('keydown', onKey);
     if (timer) clearInterval(timer);
-    if (running) api.stopLive().catch(() => {});
+    if (running) {
+      stopCounting();
+      api.stopLive().catch(() => {});
+    }
   });
 </script>
 

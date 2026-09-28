@@ -167,7 +167,7 @@ pub fn live_view(state: State<'_, AudioState>) -> LiveView {
 /// Saves the last live session's audio to the Desktop (or home folder),
 /// to send it for analysis when the count was wrong.
 #[tauri::command]
-pub fn export_live_session_wav(state: State<'_, AudioState>) -> Result<String, String> {
+pub fn export_live_session_wav(state: State<'_, AudioState>) -> Result<ExportedFile, String> {
     let audio = state
         .last_live()
         .ok_or_else(|| "nessuna sessione live registrata".to_string())?;
@@ -176,7 +176,7 @@ pub fn export_live_session_wav(state: State<'_, AudioState>) -> Result<String, S
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let path = dir.join(format!("daimuku-live-{stamp}.wav"));
     write_wav(&path, &audio)?;
-    Ok(path.to_string_lossy().into_owned())
+    Ok(exported(&path))
 }
 
 // -----------------------------------------------------------------------------
@@ -307,22 +307,69 @@ pub fn delete_profile_take(
 
 #[tauri::command]
 pub fn get_prefs() -> serde_json::Value {
-    crate::paths::data_dir()
-        .and_then(|d| std::fs::read_to_string(d.join("prefs.json")).ok())
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}))
+    crate::backup::read_prefs()
 }
 
 #[tauri::command]
 pub fn set_prefs(prefs: serde_json::Value) -> Result<(), String> {
-    if !prefs.is_object() {
-        return Err("prefs must be an object".to_string());
+    crate::backup::write_prefs(&prefs)
+}
+
+// -----------------------------------------------------------------------------
+// Backup, restore and exports
+// -----------------------------------------------------------------------------
+
+/// A file written for the user: on desktop `path` is where to find it; on
+/// Android the app then hands it to the system "save"/"share" screens.
+#[derive(Serialize)]
+pub struct ExportedFile {
+    pub path: String,
+    pub name: String,
+}
+
+fn exported(path: &Path) -> ExportedFile {
+    ExportedFile {
+        path: path.to_string_lossy().into_owned(),
+        name: path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
     }
-    let dir = crate::paths::data_dir().ok_or_else(|| "no data directory".to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let tmp = dir.join("prefs.json.tmp");
-    std::fs::write(&tmp, prefs.to_string()).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, dir.join("prefs.json")).map_err(|e| e.to_string())
+}
+
+// async: waits for the voice model to be loaded
+#[tauri::command(async)]
+pub fn create_backup(
+    app: tauri::AppHandle,
+    history: State<'_, History>,
+    profile_state: State<'_, ProfileState>,
+) -> Result<ExportedFile, String> {
+    let version = app.package_info().version.to_string();
+    let json = crate::backup::build(&history, &profile_state, &version)?;
+    let stamp = chrono::Local::now().format("%Y-%m-%d_%H%M");
+    let path = crate::backup::write_export(&format!("daimoku-backup-{stamp}.json"), json.as_bytes())?;
+    Ok(exported(&path))
+}
+
+/// Replaces sessions, goal, preferences and voice recordings with those
+/// of a backup file (its text content).
+#[tauri::command(async)]
+pub fn restore_backup(
+    history: State<'_, History>,
+    profile_state: State<'_, ProfileState>,
+    audio_state: State<'_, AudioState>,
+    content: String,
+) -> Result<crate::backup::RestoreSummary, String> {
+    let summary = crate::backup::restore(&content, &history, &profile_state)?;
+    audio_state.live_set_profile(Some(profile_state.snapshot()));
+    Ok(summary)
+}
+
+/// Writes a text export prepared by the app (e.g. sessions as CSV).
+#[tauri::command]
+pub fn write_text_export(name: String, content: String) -> Result<ExportedFile, String> {
+    let path = crate::backup::write_export(&name, content.as_bytes())?;
+    Ok(exported(&path))
 }
 
 /// Deletes the user's takes and falls back to the model trained on the

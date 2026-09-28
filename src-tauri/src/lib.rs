@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod backup;
 pub mod base;
 pub mod commands;
 pub mod dsp;
@@ -79,6 +80,10 @@ pub fn run() {
             // preferences
             commands::get_prefs,
             commands::set_prefs,
+            // backup & exports
+            commands::create_backup,
+            commands::restore_backup,
+            commands::write_text_export,
             commands::validate_training_take,
             // training store
             commands::list_training_takes,
