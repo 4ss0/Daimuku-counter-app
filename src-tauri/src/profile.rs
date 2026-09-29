@@ -479,7 +479,7 @@ mod tests {
 
     #[test]
     fn add_take_persists_and_updates_model() {
-        let _guard = ENV_TEST_LOCK.lock().unwrap();
+        let _guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // isolate this test's data dir
         let tmp = std::env::temp_dir().join(format!("daimuku-test-{}", std::process::id()));
         std::env::set_var("XDG_DATA_HOME", &tmp);
@@ -503,7 +503,7 @@ mod tests {
 
     #[test]
     fn delete_single_take() {
-        let _guard = ENV_TEST_LOCK.lock().unwrap();
+        let _guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = std::env::temp_dir().join(format!("daimuku-test-del-{}", std::process::id()));
         std::env::set_var("XDG_DATA_HOME", &tmp);
         let _ = std::fs::remove_dir_all(&tmp);
@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn empty_state_waits_for_load() {
-        let _guard = ENV_TEST_LOCK.lock().unwrap();
+        let _guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let s = std::sync::Arc::new(ProfileState::empty());
         assert!(!s.is_ready());
         let s2 = std::sync::Arc::clone(&s);
@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn clear_resets_to_base_only() {
-        let _guard = ENV_TEST_LOCK.lock().unwrap();
+        let _guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = std::env::temp_dir().join(format!("daimuku-test-clear-{}", std::process::id()));
         std::env::set_var("XDG_DATA_HOME", &tmp);
         let _ = std::fs::remove_dir_all(&tmp);

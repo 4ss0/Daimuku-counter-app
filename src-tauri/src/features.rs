@@ -26,7 +26,14 @@ const TARGET_SR: u32 = 16_000;
 
 /// Frames whose mean power is below this are never "active" (about
 /// -54 dBFS RMS): microphone hiss, digital silence.
-const ABS_ENERGY_FLOOR: f32 = -12.4; // ln(4e-6)
+const ABS_ENERGY_FLOOR: f32 = -15.0; // ln(3e-7), about -65 dBFS
+/// ... and at least this far (about 5 dB) above the background noise.
+const NOISE_MARGIN_NATS: f32 = 1.2;
+/// Background noise level tracking: follows drops quickly (10% of the way
+/// per frame) and rises slowly (0.2 nats/s), so it stays on the floor
+/// between words instead of climbing onto the voice.
+const NOISE_DOWN: f32 = 0.10;
+const NOISE_UP_NATS: f32 = 0.002;
 /// A frame is active only if it is within this many nats (ln units of
 /// power, 6.5 nats ~ 28 dB) of the recent loudest frame.
 const GATE_NATS: f32 = 6.5;
@@ -190,6 +197,9 @@ pub struct FrontEnd {
     started: bool,
 
     peak: f32,
+    /// Estimated background noise level (ln power).
+    noise_energy: f32,
+    noise_init: bool,
 }
 
 impl FrontEnd {
@@ -219,6 +229,8 @@ impl FrontEnd {
             hist: VecDeque::new(),
             started: false,
             peak: f32::MIN,
+            noise_energy: 0.0,
+            noise_init: false,
         }
     }
 
@@ -312,7 +324,20 @@ impl FrontEnd {
         } else {
             energy.max(self.peak - PEAK_DECAY_PER_FRAME)
         };
-        let active = energy > ABS_ENERGY_FLOOR && energy > self.peak - GATE_NATS;
+        // Background noise level, for the gate below.
+        if !self.noise_init {
+            // start low: the first frame may already be voice
+            self.noise_energy = energy.min(ABS_ENERGY_FLOOR);
+            self.noise_init = true;
+        } else if energy < self.noise_energy {
+            self.noise_energy += NOISE_DOWN * (energy - self.noise_energy);
+        } else {
+            self.noise_energy += NOISE_UP_NATS;
+        }
+        // A soft voice counts as long as it is clearly above the room noise.
+        let active = energy > ABS_ENERGY_FLOOR
+            && energy > self.peak - GATE_NATS
+            && energy > self.noise_energy + NOISE_MARGIN_NATS;
 
         let item = (energy, cep, active);
         if !self.started {

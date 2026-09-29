@@ -73,6 +73,8 @@ pub struct Model {
 }
 
 const LN_2PI: f32 = 1.837_877_1;
+/// Score of a syllable state on a quiet frame (garbage scores -2 there).
+pub const QUIET_IN_SYLLABLE: f32 = -4.0;
 /// Per-frame cost (vs. the garbage model) of voiced audio in a pause slot.
 const PAUSE_VOICED_COST: f32 = 3.0;
 const LL_FLOOR: f32 = -600.0;
@@ -220,8 +222,11 @@ impl Scorer {
             }
             out[NODE_SIL] = sil;
         } else {
+            // A quiet frame inside a syllable (the closure of "k", "g", a
+            // dip of a compressed recording) costs less than leaving the
+            // phrase for garbage would.
             for s in 0..N_CHAIN {
-                out[s] = -8.0;
+                out[s] = QUIET_IN_SYLLABLE;
             }
             out[NODE_GAR] = -2.0;
             for p in 0..N_PAUSE {
@@ -255,3 +260,4 @@ impl Scorer {
         }
     }
 }
+

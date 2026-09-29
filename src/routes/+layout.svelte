@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import { page } from '$app/stores';
+  import { api } from '$lib/api';
   import { t } from '$lib/i18n';
   import { initPrefs } from '$lib/prefs';
 
@@ -13,7 +15,34 @@
 
   $: path = $page.url.pathname.replace(/\/$/, '') || '/';
 
-  onMount(initPrefs);
+  /** The splash in app.html stays at least this long, and at most MAX. */
+  const SPLASH_MIN_MS = 700;
+  const SPLASH_MAX_MS = 8000;
+
+  function hideSplash() {
+    const el = document.getElementById('splash');
+    if (!el || el.classList.contains('hide')) return;
+    const wait = Math.max(0, SPLASH_MIN_MS - performance.now());
+    setTimeout(() => {
+      el.classList.add('hide');
+      setTimeout(() => el.remove(), 400);
+    }, wait);
+  }
+
+  onMount(async () => {
+    const safety = setTimeout(hideSplash, SPLASH_MAX_MS);
+    await initPrefs();
+    // First start (no voice recordings yet): open the voice page, so the
+    // app learns the user's voice before counting.
+    try {
+      const profile = await api.profile();
+      if (profile.takes.length === 0 && path === '/') await goto('/voce', { replaceState: true });
+    } catch {
+      /* keep the counter page */
+    }
+    clearTimeout(safety);
+    hideSplash();
+  });
 </script>
 
 <div class="bg" aria-hidden="true"></div>

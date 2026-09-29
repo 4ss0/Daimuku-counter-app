@@ -37,6 +37,36 @@ const MIN_STATE_FRAMES: usize = 2;
 /// real Daimoku are still rejected.
 const MAX_GAP_SHARE: f32 = 0.15;
 const MAX_GAP_FRAMES: u32 = 90;
+/// Inside a run of Daimoku (the phrase starts right where the previous
+/// counted one ended) the next phrase is almost certainly another Daimoku,
+/// so the evidence needed is lower. Still required: every syllable present
+/// in order with a plausible length, and a duration that fits the rhythm.
+const RUN_JOIN_FRAMES: u64 = 100;
+/// A breath between two Daimoku does not end the run.
+const RUN_BREATH_FRAMES: u64 = 160;
+const RUN_LLR_FACTOR: f32 = 0.10;
+const RUN_LLR_MIN: f32 = 0.35;
+const RUN_GOOD: f32 = 0.50;
+const RUN_WORST: f32 = -3.5;
+const RUN_GAP_SHARE: f32 = 0.25;
+const RUN_RHYTHM: std::ops::RangeInclusive<f32> = 0.7..=1.45;
+/// Up to this many "almost" phrases just before an accepted one are
+/// counted too, when they chain into it (typically the first Daimoku of a
+/// session or after a breath, heard before the voice/rhythm was known).
+const MAX_PENDING: usize = 3;
+/// Gap filling: between two counted Daimoku of the same run, voiced time
+/// worth `k` phrases (at the rhythm of the run) means `k - 1` were missed.
+/// Silences at least `FILL_SILENCE_FRAMES` long (breaths) are not counted
+/// as voiced time; one longer than `FILL_MAX_SILENCE` ends the run.
+const FILL_SILENCE_FRAMES: u32 = 25;
+const FILL_MAX_SILENCE: u32 = 150;
+const FILL_MAX_MISSED: u32 = 4;
+const FILL_TOLERANCE: f32 = 0.25;
+/// Slow Daimoku ending on a held "kyo" the model does not recognise: they
+/// may be judged up to "ge" if at least this long (2.5 s) ...
+const SLOW_MIN_SPAN: u32 = 250;
+/// ... and with this share of the normal minimum evidence.
+const SLOW_GE_LLR: f32 = 0.8;
 /// Frames after leaving the phrase at which it is traced back and judged
 /// (see `Engine::watch_exit`).
 const EXIT_EVAL_FRAMES: u32 = 30;
@@ -63,6 +93,7 @@ pub struct Params {
     pub kyo_eval: u32,
     pub cycle_min: u32,
     pub cycle_max: u32,
+    pub ref_llr: f32,
 }
 
 impl Params {
@@ -76,6 +107,7 @@ impl Params {
             kyo_eval: 8,
             cycle_min: m.min_cycle_frames,
             cycle_max: m.max_cycle_frames,
+            ref_llr: m.ref_llr,
         }
     }
 }
@@ -108,6 +140,9 @@ pub struct CountEvent {
     pub llr: f32,
     /// Frames from "Nam" to "kyo".
     pub span: u32,
+    /// Not heard as such but inferred from the rhythm (a Daimoku missed
+    /// between two counted ones, or the opening one).
+    pub inferred: bool,
 }
 
 #[derive(Default)]
@@ -127,6 +162,27 @@ struct Counter {
     aborted: u32,
     /// Candidates that reached "kyo" but failed the checks.
     rejected: u32,
+    /// Plausible phrases not counted yet (see `Verdict::Pending`), in
+    /// order, each starting where the previous one ended.
+    pending: Vec<PendingCycle>,
+    /// Frames between consecutive counted Daimoku of a run.
+    recent_gaps: VecDeque<f32>,
+    /// Before anything is counted: the last phrase that reached "kyo" but
+    /// was refused (often the first Daimoku, heard before the voice and
+    /// the rhythm were known).
+    first_weak: Option<u64>,
+    /// First voiced frame of the session.
+    first_voice: Option<u64>,
+    /// Last committed frame inside the phrase, and its node.
+    last_chain: Option<(u64, usize)>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingCycle {
+    start: u64,
+    end: u64,
+    span: u32,
+    llr: f32,
 }
 
 fn median_of(v: &VecDeque<f32>) -> Option<f32> {
@@ -147,6 +203,67 @@ fn median_of(v: &VecDeque<f32>) -> Option<f32> {
 ///   minimum length (3 frames) or one that the acoustics flatly deny;
 /// - real phrases have every syllable at least ~7 frames long and at most
 ///   one syllable mildly below the garbage model.
+/// How a phrase that failed `accept` could still count.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Verdict {
+    Accept,
+    /// Plausible Daimoku with weak evidence: counted only if an accepted
+    /// phrase follows right after it.
+    Pending,
+    Reject,
+}
+
+fn run_llr(p: &Params) -> f32 {
+    (RUN_LLR_FACTOR * p.ref_llr).max(RUN_LLR_MIN)
+}
+
+/// Relaxed test, used inside a run and for pending phrases: all syllables
+/// there with a plausible length, some positive evidence, little noise.
+fn plausible(c: &Cycle, span: u32, p: &Params) -> bool {
+    let llr = if c.act > 0 { c.llr_sum / c.act as f32 } else { -1.0 };
+    let mut pos = 0;
+    for i in 0..N_SYL - 1 {
+        if c.syl_frames[i] < p.min_syl || c.syl_act[i] == 0 {
+            return false;
+        }
+        let m = c.syl_llr[i] / c.syl_act[i] as f32;
+        if m < RUN_WORST {
+            return false;
+        }
+        if m > 0.5 {
+            pos += 1;
+        }
+    }
+    let good = c.good as f32 / c.act.max(1) as f32;
+    let lo_span = (p.cycle_min as f32 * 0.7) as u32;
+    c.act >= 20
+        && llr >= run_llr(p)
+        && good >= RUN_GOOD
+        && pos >= 3
+        && c.max_gap <= MAX_GAP_FRAMES
+        && c.gap_act as f32 <= RUN_GAP_SHARE * (c.act + c.gap_act) as f32
+        && span >= lo_span
+        && span <= p.cycle_max
+}
+
+fn judge(c: &Cycle, span: u32, recent: &VecDeque<f32>, in_run: bool, p: &Params) -> (Verdict, f32) {
+    let (ok, llr) = accept(c, span, recent, p);
+    if ok {
+        return (Verdict::Accept, llr);
+    }
+    if !plausible(c, span, p) {
+        return (Verdict::Reject, llr);
+    }
+    if in_run {
+        if let Some(med) = median_of(recent) {
+            if RUN_RHYTHM.contains(&(span as f32 / med)) {
+                return (Verdict::Accept, llr);
+            }
+        }
+    }
+    (Verdict::Pending, llr)
+}
+
 fn accept(c: &Cycle, span: u32, recent: &VecDeque<f32>, p: &Params) -> (bool, f32) {
     let llr = if c.act > 0 { c.llr_sum / c.act as f32 } else { -1.0 };
     let mut worst = f32::MAX;
@@ -186,7 +303,10 @@ fn accept(c: &Cycle, span: u32, recent: &VecDeque<f32>, p: &Params) -> (bool, f3
         // Must fit the rhythm of the Daimoku just counted.
         Some(med) => {
             let r = span as f32 / med;
-            ((0.6..=1.7).contains(&r), llr)
+            // or a clear phrase at a new tempo (e.g. the three slow
+            // Daimoku that close a fast recitation)
+            let fits = (0.6..=1.7).contains(&r);
+            (fits || (pos >= N_SYL - 2 && worst >= -1.0), llr)
         }
         // Nothing to compare with yet (first phrase of a session, typical
         // of a new voice or a very slow recitation): most syllables must
@@ -355,6 +475,19 @@ impl Engine {
     /// best path running through it).
     fn commit(&mut self, u: u64, s: usize) {
         let m = self.node_model[s];
+        // committed path leaves the phrase right after "ge": maybe a slow
+        // Daimoku whose held "kyo" the model does not recognise
+        if m == NODE_GAR || m == NODE_SIL {
+            if let Some((pu, ps)) = self.ev.last_chain.take() {
+                if pu + 1 == u && self.node_model[ps] / K == N_SYL - 2 {
+                    self.evaluate_ex(pu, ps, true);
+                }
+            }
+        } else if m < N_CHAIN {
+            self.ev.last_chain = Some((u, s));
+        } else {
+            self.ev.last_chain = None;
+        }
         let in_kyo = m < N_CHAIN && m / K == N_SYL - 1;
         if !in_kyo {
             // A short "kyo" that is already over: judge it now.
@@ -377,6 +510,11 @@ impl Engine {
     /// Traces the phrase ending in (`u`, `s`) back to its "Nam" along the
     /// current best path and decides whether it counts.
     fn evaluate(&mut self, u: u64, s: usize) {
+        self.evaluate_ex(u, s, false);
+    }
+
+    /// `ge_end`: the phrase was traced back from "ge" (see `watch_exit`).
+    fn evaluate_ex(&mut self, u: u64, s: usize, ge_end: bool) {
         let mut c = Cycle::default();
         let mut node = s;
         let mut t = u;
@@ -437,17 +575,183 @@ impl Engine {
             }
         }
         let span = (u - c.start + 1) as u32;
-        let (ok, llr) = accept(&c, span, &self.ev.recent_spans, &self.params);
-        if ok {
+        if ge_end {
+            // slow Daimoku whose long final "kyo" did not match the model:
+            // everything up to "ge" must be clearly there, at a slow pace
+            let llr = if c.act > 0 { c.llr_sum / c.act as f32 } else { -1.0 };
+            if span >= SLOW_MIN_SPAN && plausible(&c, span, &self.params) && llr >= SLOW_GE_LLR * self.params.llr_lo {
+                self.ev.pending.clear();
+                self.record(u, llr, span);
+            }
+            return;
+        }
+        let in_run = self
+            .ev
+            .last_count_frame
+            .is_some_and(|last| c.start <= last + RUN_BREATH_FRAMES);
+        let (verdict, llr) = judge(&c, span, &self.ev.recent_spans, in_run, &self.params);
+        match verdict {
+            Verdict::Accept => {
+                // earlier "almost" phrases that chain into this one count too
+                let mut confirmed: Vec<PendingCycle> = Vec::new();
+                let mut next_start = c.start;
+                while let Some(pc) = self.ev.pending.pop() {
+                    let joins = pc.end + RUN_JOIN_FRAMES >= next_start && pc.end < next_start + 5;
+                    let r = pc.span as f32 / span as f32;
+                    if joins && (0.6..=1.6).contains(&r) {
+                        next_start = pc.start;
+                        confirmed.push(pc);
+                    } else {
+                        break;
+                    }
+                }
+                self.ev.pending.clear();
+                if self.ev.events.is_empty() {
+                    let first_start = confirmed.last().map(|p| p.start).unwrap_or(c.start);
+                    let first_span = confirmed.last().map(|p| p.span).unwrap_or(span);
+                    if let Some(w) = self.first_opening(first_start, first_span) {
+                        self.record_event(w, 0.0, 0, true);
+                    }
+                }
+                for pc in confirmed.into_iter().rev() {
+                    self.record(pc.end, pc.llr, pc.span);
+                }
+                self.record(u, llr, span);
+            }
+            Verdict::Pending => {
+                self.ev.rejected += 1;
+                let pc = PendingCycle { start: c.start, end: u, span, llr };
+                match self.ev.pending.last() {
+                    // same phrase judged again (other route or revision)
+                    Some(last) if last.start == pc.start => {
+                        *self.ev.pending.last_mut().unwrap() = pc;
+                    }
+                    Some(last) if last.end + RUN_JOIN_FRAMES >= pc.start && last.end < pc.start + 5 => {
+                        self.ev.pending.push(pc);
+                    }
+                    _ => {
+                        self.ev.pending.clear();
+                        self.ev.pending.push(pc);
+                    }
+                }
+                if self.ev.pending.len() > MAX_PENDING {
+                    self.ev.pending.remove(0);
+                }
+            }
+            Verdict::Reject => {
+                self.ev.rejected += 1;
+                self.ev.pending.clear();
+                if self.ev.events.is_empty() {
+                    self.ev.first_weak = Some(u);
+                }
+            }
+        }
+    }
+
+    /// The very first Daimoku of a session is the hardest (no rhythm yet,
+    /// and the voice average is still being learned). If a refused phrase
+    /// reached "kyo" right before the first counted one, and the voice
+    /// before that first one lasted about one Daimoku, count it too.
+    fn first_opening(&self, start: u64, span: u32) -> Option<u64> {
+        let w = self.ev.first_weak?;
+        let first_voice = self.ev.first_voice?;
+        let horizon = (RING - self.params.lag - 2) as u64;
+        if w >= start || w + RUN_JOIN_FRAMES < start || start <= first_voice {
+            return None;
+        }
+        // voiced time just before the first counted phrase, back to the
+        // last real silence (words said earlier do not matter)
+        let mut voiced = 0u32;
+        let mut quiet = 0u32;
+        let mut t = start;
+        while t > first_voice && start - t < horizon {
+            t -= 1;
+            if self.act[(t as usize) % RING] {
+                voiced += 1 + if quiet < FILL_SILENCE_FRAMES { quiet } else { 0 };
+                quiet = 0;
+            } else {
+                quiet += 1;
+                if quiet >= FILL_SILENCE_FRAMES && voiced > 0 && t <= w.saturating_sub(span as u64 / 2) {
+                    break;
+                }
+            }
+        }
+        let r = voiced as f32 / span as f32;
+        (0.6..=1.5).contains(&r).then_some(w)
+    }
+
+    /// Daimoku that were chanted but not recognised between two counted
+    /// ones (see `FILL_*`).
+    fn missed_between(&self, prev: u64, u: u64) -> u32 {
+        let Some(period) = median_of(&self.ev.recent_gaps) else { return 0 };
+        if self.ev.recent_gaps.len() < 3 || u <= prev || u - prev >= (RING - self.params.lag - 2) as u64 {
+            return 0;
+        }
+        let mut voiced = 0u32;
+        let mut quiet = 0u32;
+        for t in prev + 1..=u {
+            if self.act[(t as usize) % RING] {
+                if quiet < FILL_SILENCE_FRAMES {
+                    voiced += quiet;
+                }
+                quiet = 0;
+                voiced += 1;
+            } else {
+                quiet += 1;
+                if quiet > FILL_MAX_SILENCE {
+                    return 0;
+                }
+            }
+        }
+        // continuous chanting is voiced most of the time
+        if (voiced as f32) < 0.7 * (u - prev) as f32 {
+            return 0;
+        }
+        let k = voiced as f32 / period;
+        let n = k.round();
+        if n < 2.0 || (k - n).abs() > FILL_TOLERANCE * n.sqrt() {
+            return 0;
+        }
+        let missed = (n as u32) - 1;
+        if missed > FILL_MAX_MISSED {
+            // too long to be a few unrecognised Daimoku
+            return 0;
+        }
+        missed
+    }
+
+    fn record(&mut self, u: u64, llr: f32, span: u32) {
+        self.record_event(u, llr, span, false);
+    }
+
+    fn record_event(&mut self, u: u64, llr: f32, span: u32, inferred: bool) {
+        // only at the run's own tempo (not e.g. the slow closing Daimoku)
+        let fits = |x: u32| median_of(&self.ev.recent_spans).is_some_and(|m| (0.7..=1.45).contains(&(x as f32 / m)));
+        // both this phrase and the previous one at the run's tempo
+        let prev_heard = self.ev.events.last().is_some_and(|e| !e.inferred && fits(e.span));
+        let same_tempo = fits(span) && prev_heard;
+        if let Some(prev) = self.ev.events.last().map(|e| e.frame) {
+            let missed = if same_tempo { self.missed_between(prev, u) } else { 0 };
+            for i in 1..=missed {
+                let f = prev + (u - prev) * i as u64 / (missed as u64 + 1);
+                self.ev.events.push(CountEvent { frame: f, llr: 0.0, span: 0, inferred: true });
+            }
+            let gap = (u - prev) as f32;
+            if missed == 0 && median_of(&self.ev.recent_spans).is_some_and(|m| gap < 1.5 * m) {
+                self.ev.recent_gaps.push_back(gap);
+                if self.ev.recent_gaps.len() > 7 {
+                    self.ev.recent_gaps.pop_front();
+                }
+            }
+        }
+        if !inferred {
             self.ev.recent_spans.push_back(span as f32);
             if self.ev.recent_spans.len() > 5 {
                 self.ev.recent_spans.pop_front();
             }
-            self.ev.last_count_frame = Some(u);
-            self.ev.events.push(CountEvent { frame: u, llr, span });
-        } else {
-            self.ev.rejected += 1;
         }
+        self.ev.last_count_frame = Some(u);
+        self.ev.events.push(CountEvent { frame: u, llr, span, inferred });
     }
 
     /// Second route to a count, with more hindsight than the fixed lag.
@@ -478,6 +782,13 @@ impl Engine {
             if m < N_CHAIN {
                 if m / K == N_SYL - 1 {
                     self.evaluate(t, node);
+                } else if m / K == N_SYL - 2 {
+                    // left the phrase right after "ge" while still voiced:
+                    // possibly the held "kyo" of a slow Daimoku
+                    let held = (t + 1..self.t).filter(|&x| self.act[(x as usize) % RING]).count() as u64;
+                    if held * 3 >= (self.t - t) * 2 {
+                        self.evaluate_ex(t, node, true);
+                    }
                 }
                 return;
             }
@@ -563,6 +874,9 @@ impl Engine {
         if raw.active {
             self.last_active = self.t;
             self.active_frames += 1;
+            if self.ev.first_voice.is_none() {
+                self.ev.first_voice = Some(self.t);
+            }
         }
 
         let nn = self.nn;
@@ -652,11 +966,11 @@ impl Engine {
 
     /// Mean LLR of the accepted cycles (0 if none).
     pub fn mean_llr(&self) -> f32 {
-        let e = &self.ev.events;
-        if e.is_empty() {
+        let heard: Vec<f32> = self.ev.events.iter().filter(|x| !x.inferred).map(|x| x.llr).collect();
+        if heard.is_empty() {
             0.0
         } else {
-            e.iter().map(|x| x.llr).sum::<f32>() / e.len() as f32
+            heard.iter().sum::<f32>() / heard.len() as f32
         }
     }
 
@@ -664,7 +978,7 @@ impl Engine {
     pub fn period_ms(&self) -> Option<f32> {
         let e = &self.ev.events;
         if e.len() < 2 {
-            return e.first().map(|x| x.span as f32 * HOP_SECS * 1000.0);
+            return e.iter().find(|x| !x.inferred).map(|x| x.span as f32 * HOP_SECS * 1000.0);
         }
         let mut gaps: Vec<f32> = e
             .windows(2)

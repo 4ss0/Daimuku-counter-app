@@ -169,6 +169,8 @@ mod tests {
 
     #[test]
     fn adapter_counts_a_base_clip() {
+        // other tests point the data folder elsewhere while they run
+        let _guard = crate::profile::ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let ps = ProfileState::new();
         let snap = ps.snapshot();
         let (samples, sr) = crate::base::decode_wav(crate::base::BASE_CLIPS[3].wav).unwrap();

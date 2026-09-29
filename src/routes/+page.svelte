@@ -17,8 +17,13 @@
   let corrected = 0;
   let errorText = '';
   let savedPath = '';
-  let pulse = false;
+  // count animation: re-created on every increment, stronger at milestones
+  let pulseKey = 0;
+  let pulseTier: '' | 'p1' | 'p10' | 'p100' | 'p1000' = '';
   let lastCount = 0;
+  // "goal reached" screen
+  let celebrate = false;
+  let celebrateTimer: ReturnType<typeof setTimeout> | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -54,16 +59,46 @@
   async function poll() {
     try {
       const v = await api.liveView();
-      if (v.count > lastCount) {
-        pulse = false;
-        requestAnimationFrame(() => (pulse = true));
-        if (navigator.vibrate) navigator.vibrate(12);
-      }
+      if (v.count > lastCount) onIncrement(lastCount, v.count);
       lastCount = v.count;
       view = v;
     } catch (e) {
       errorText = errText(e);
     }
+  }
+
+  /** Highest milestone (1000, 100, 10) crossed going from `a` to `b`. */
+  function milestone(a: number, b: number): number {
+    for (const m of [1000, 100, 10]) if (Math.floor(b / m) > Math.floor(a / m)) return m;
+    return 1;
+  }
+
+  function onIncrement(from: number, to: number) {
+    const m = milestone(from, to);
+    pulseTier = m === 1000 ? 'p1000' : m === 100 ? 'p100' : m === 10 ? 'p10' : 'p1';
+    pulseKey += 1;
+    if (navigator.vibrate) {
+      navigator.vibrate(m === 1000 ? [40, 60, 40, 60, 90] : m === 100 ? [30, 60, 30] : m === 10 ? 25 : 12);
+    }
+    // daily goal crossed during this session
+    const before = baseToday + from;
+    const after = baseToday + to;
+    if (before < goal && after >= goal) showCelebration(after);
+  }
+
+  let celebrateCount = 0;
+  function showCelebration(n: number) {
+    celebrateCount = n;
+    celebrate = true;
+    if (navigator.vibrate) navigator.vibrate([60, 80, 60, 80, 120]);
+    if (celebrateTimer) clearTimeout(celebrateTimer);
+    celebrateTimer = setTimeout(() => (celebrate = false), 4000);
+  }
+
+  function closeCelebration() {
+    celebrate = false;
+    if (celebrateTimer) clearTimeout(celebrateTimer);
+    celebrateTimer = null;
   }
 
   async function start() {
@@ -165,6 +200,7 @@
   onDestroy(() => {
     window.removeEventListener('keydown', onKey);
     if (timer) clearInterval(timer);
+    if (celebrateTimer) clearTimeout(celebrateTimer);
     if (running) {
       stopCounting();
       api.stopLive().catch(() => {});
@@ -182,6 +218,21 @@
   </header>
 
   <div class="ring-wrap" class:speaking={running && view?.speaking}>
+    {#key pulseKey}
+      {#if pulseTier === 'p10' || pulseTier === 'p100' || pulseTier === 'p1000'}
+        <div class="halo {pulseTier}" aria-hidden="true"></div>
+      {/if}
+      {#if pulseTier === 'p100' || pulseTier === 'p1000'}
+        <div class="ripple {pulseTier}" aria-hidden="true"></div>
+      {/if}
+      {#if pulseTier === 'p1000'}
+        <div class="burst" aria-hidden="true">
+          {#each Array(12) as _, i}
+            <span style="--a:{i * 30}deg"></span>
+          {/each}
+        </div>
+      {/if}
+    {/key}
     <div class="ring-glass"></div>
     <svg class="ring" viewBox="0 0 280 280" aria-hidden="true">
       <circle class="track" cx="140" cy="140" r={R} />
@@ -196,9 +247,11 @@
       />
     </svg>
     <div class="center">
-      <div class="count" class:pulse on:animationend={() => (pulse = false)} aria-live="polite">
-        {liveCount}
-      </div>
+      {#key pulseKey}
+        <div class="count {pulseTier}" class:d4={liveCount >= 1000} class:d5={liveCount >= 10000} aria-live="polite">
+          {liveCount}
+        </div>
+      {/key}
       <div class="unit">{$t('count.unit')}</div>
     </div>
   </div>
@@ -265,6 +318,19 @@
     <p class="error">{errorText}</p>
   {/if}
 </div>
+
+{#if celebrate}
+  <button class="celebrate" on:click={closeCelebration} aria-live="assertive">
+    <div class="celebrate-card glass">
+      <svg class="lotus" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M32 10c5 6 7.5 12 7.5 18 0 1.6-.2 3.1-.5 4.6 4-3.4 9.2-5.4 15-5.9-.9 7.3-4 13.3-9.1 17.5 4.9.6 9.4 2.6 13.1 6-5.4 5.4-12.8 8.4-21 8.4H32h-5c-8.2 0-15.6-3-21-8.4 3.7-3.4 8.2-5.4 13.1-6-5.1-4.2-8.2-10.2-9.1-17.5 5.8.5 11 2.5 15 5.9-.3-1.5-.5-3-.5-4.6C24.5 22 27 16 32 10z" />
+      </svg>
+      <div class="celebrate-title">{$t('count.goalTitle')}</div>
+      <div class="celebrate-text">{$t('count.goalText', { n: fmtNum(celebrateCount, $locale) })}</div>
+      <div class="celebrate-hint">{$t('count.goalTap')}</div>
+    </div>
+  </button>
+{/if}
 
 <style>
   .page {
@@ -367,16 +433,238 @@
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.03em;
   }
-  .count.pulse {
-    animation: pulse 0.45s ease-out;
+  .count.d4 {
+    font-size: clamp(3.4rem, 18vw, 5.6rem);
   }
-  @keyframes pulse {
+  .count.d5 {
+    font-size: clamp(2.8rem, 15vw, 4.6rem);
+  }
+  /* one pulse per Daimoku; stronger at every 10, 100 and 1000 */
+  .count.p1 {
+    animation: pulse1 0.45s ease-out;
+  }
+  .count.p10 {
+    animation: pulse10 0.65s ease-out;
+  }
+  .count.p100 {
+    animation: pulse100 0.9s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  }
+  .count.p1000 {
+    animation: pulse1000 1.4s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  }
+  @keyframes pulse1 {
     0% {
       transform: scale(1.1);
       color: var(--accent);
     }
     100% {
       transform: scale(1);
+    }
+  }
+  @keyframes pulse10 {
+    0% {
+      transform: scale(1.22);
+      color: var(--accent);
+    }
+    60% {
+      color: var(--accent);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+  @keyframes pulse100 {
+    0% {
+      transform: scale(0.9);
+      color: var(--accent);
+    }
+    35% {
+      transform: scale(1.35);
+      color: var(--accent);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+  @keyframes pulse1000 {
+    0% {
+      transform: scale(0.85) rotate(-4deg);
+      color: var(--accent);
+    }
+    30% {
+      transform: scale(1.3) rotate(3deg);
+      color: var(--accent);
+    }
+    55% {
+      transform: scale(1.15) rotate(0);
+      color: var(--accent);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+  .halo {
+    position: absolute;
+    inset: 2%;
+    border-radius: 50%;
+    pointer-events: none;
+    box-shadow: 0 0 0 0 var(--accent);
+    animation: halo 0.7s ease-out forwards;
+  }
+  .halo.p100 {
+    animation-duration: 1.1s;
+  }
+  .halo.p1000 {
+    animation-duration: 1.6s;
+  }
+  @keyframes halo {
+    0% {
+      box-shadow: 0 0 0 0 var(--accent-soft), inset 0 0 0 0 var(--accent-soft);
+    }
+    30% {
+      box-shadow: 0 0 50px 14px var(--accent-soft), inset 0 0 40px 6px var(--accent-soft);
+    }
+    100% {
+      box-shadow: 0 0 0 0 transparent, inset 0 0 0 0 transparent;
+    }
+  }
+  .ripple {
+    position: absolute;
+    inset: 4%;
+    border-radius: 50%;
+    border: 3px solid var(--accent);
+    pointer-events: none;
+    animation: ripple 1s ease-out forwards;
+  }
+  .ripple.p1000 {
+    border-width: 4px;
+    animation-duration: 1.5s;
+  }
+  @keyframes ripple {
+    0% {
+      transform: scale(0.9);
+      opacity: 0.9;
+    }
+    100% {
+      transform: scale(1.35);
+      opacity: 0;
+    }
+  }
+  .burst {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .burst span {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 12px;
+    height: 22px;
+    margin: -11px 0 0 -6px;
+    border-radius: 50% 50% 50% 50% / 70% 70% 30% 30%;
+    background: var(--accent);
+    opacity: 0;
+    transform: rotate(var(--a)) translateY(-60px);
+    animation: petal 1.5s ease-out forwards;
+  }
+  @keyframes petal {
+    0% {
+      opacity: 0;
+      transform: rotate(var(--a)) translateY(-70px) scale(0.4);
+    }
+    20% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+      transform: rotate(var(--a)) translateY(-190px) scale(1);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .count.p10,
+    .count.p100,
+    .count.p1000 {
+      animation: pulse1 0.45s ease-out;
+    }
+    .ripple,
+    .burst {
+      display: none;
+    }
+  }
+
+  /* daily goal reached */
+  .celebrate {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    border: 0;
+    background: rgba(0, 0, 0, 0.35);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    cursor: pointer;
+    animation: fade-in 0.3s ease-out;
+  }
+  .celebrate-card {
+    width: min(100%, 340px);
+    padding: 30px 24px 22px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    text-align: center;
+    animation: pop-in 0.55s cubic-bezier(0.2, 0.9, 0.3, 1.25);
+  }
+  .lotus {
+    width: 76px;
+    height: 76px;
+    fill: var(--accent);
+    margin-bottom: 6px;
+    animation: bloom 1.2s ease-out;
+  }
+  .celebrate-title {
+    font-size: 1.45rem;
+    font-weight: 700;
+  }
+  .celebrate-text {
+    color: var(--muted);
+    font-size: 1rem;
+  }
+  .celebrate-hint {
+    margin-top: 10px;
+    color: var(--faint);
+    font-size: 0.78rem;
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes pop-in {
+    0% {
+      transform: scale(0.8);
+      opacity: 0;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+  @keyframes bloom {
+    0% {
+      transform: scale(0.3) rotate(-20deg);
+      opacity: 0;
+    }
+    60% {
+      transform: scale(1.12) rotate(4deg);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1) rotate(0);
     }
   }
   .unit {

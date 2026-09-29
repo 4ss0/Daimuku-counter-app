@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn full_roundtrip() {
-        let _guard = crate::profile::ENV_TEST_LOCK.lock().unwrap();
+        let _guard = crate::profile::ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = std::env::temp_dir().join(format!("daimuku-test-bk-{}", std::process::id()));
         std::env::set_var("XDG_DATA_HOME", &tmp);
         let _ = std::fs::remove_dir_all(&tmp);

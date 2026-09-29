@@ -17,9 +17,85 @@
         document.documentElement.dataset.accent = c.accent || 'lotus';
       } catch (e) {}
     </script>
+    <style>
+      /* splash shown while the app and the voice model load */
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: #0c0d0f;
+        color: #eeeeec;
+        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        transition: opacity 0.35s ease;
+      }
+      :root[data-theme='light'] #splash {
+        background: #eef2ea;
+        color: #172117;
+      }
+      #splash img {
+        width: 112px;
+        height: 112px;
+        border-radius: 26px;
+        box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25);
+        animation: splash-breathe 2.4s ease-in-out infinite;
+      }
+      #splash .name {
+        font-size: 1.25rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      #splash .dots {
+        display: flex;
+        gap: 6px;
+      }
+      #splash .dots span {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: currentColor;
+        opacity: 0.25;
+        animation: splash-dot 1.2s ease-in-out infinite;
+      }
+      #splash .dots span:nth-child(2) {
+        animation-delay: 0.2s;
+      }
+      #splash .dots span:nth-child(3) {
+        animation-delay: 0.4s;
+      }
+      #splash.hide {
+        opacity: 0;
+        pointer-events: none;
+      }
+      @keyframes splash-breathe {
+        50% {
+          transform: scale(1.05);
+        }
+      }
+      @keyframes splash-dot {
+        50% {
+          opacity: 0.8;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #splash img,
+        #splash .dots span {
+          animation: none;
+        }
+      }
+    </style>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">
+    <div id="splash" aria-hidden="true">
+      <img src="%sveltekit.assets%/app-icon.png" alt="" />
+      <div class="name">Daimoku Counter</div>
+      <div class="dots"><span></span><span></span><span></span></div>
+    </div>
     <div style="display: contents">%sveltekit.body%</div>
   </body>
 </html>
