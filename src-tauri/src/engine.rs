@@ -54,6 +54,12 @@ const RUN_RHYTHM: std::ops::RangeInclusive<f32> = 0.7..=1.45;
 /// counted too, when they chain into it (typically the first Daimoku of a
 /// session or after a breath, heard before the voice/rhythm was known).
 const MAX_PENDING: usize = 3;
+/// Syllable-proportion check (see `Engine::evaluate_ex`): only once this
+/// many Daimoku of the session have been measured.
+const SHAPE_MIN_PHRASES: u32 = 3;
+/// Largest accepted difference (sum over syllables of the share of the
+/// phrase) from the session's usual proportions.
+const SHAPE_MAX: f32 = 0.45;
 /// Gap filling: between two counted Daimoku of the same run, voiced time
 /// worth `k` phrases (at the rhythm of the run) means `k - 1` were missed.
 /// Silences at least `FILL_SILENCE_FRAMES` long (breaths) are not counted
@@ -175,6 +181,12 @@ struct Counter {
     first_voice: Option<u64>,
     /// Last committed frame inside the phrase, and its node.
     last_chain: Option<(u64, usize)>,
+    /// Frames at which the decoder reached the end of a phrase.
+    kyo_seen: VecDeque<u64>,
+    /// Typical share of each syllable (before "kyo") in the Daimoku of this
+    /// session, and how many phrases it is based on.
+    shape: [f32; N_SYL - 1],
+    shape_n: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -244,6 +256,20 @@ fn plausible(c: &Cycle, span: u32, p: &Params) -> bool {
         && c.gap_act as f32 <= RUN_GAP_SHARE * (c.act + c.gap_act) as f32
         && span >= lo_span
         && span <= p.cycle_max
+}
+
+/// Share of each syllable (before "kyo") in the phrase.
+fn syllable_shape(c: &Cycle) -> [f32; N_SYL - 1] {
+    let tot: u32 = c.syl_frames[..N_SYL - 1].iter().sum();
+    let mut out = [0.0f32; N_SYL - 1];
+    for i in 0..N_SYL - 1 {
+        out[i] = c.syl_frames[i] as f32 / tot.max(1) as f32;
+    }
+    out
+}
+
+fn shape_distance(a: &[f32; N_SYL - 1], b: &[f32; N_SYL - 1]) -> f32 {
+    a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum()
 }
 
 fn judge(c: &Cycle, span: u32, recent: &VecDeque<f32>, in_run: bool, p: &Params) -> (Verdict, f32) {
@@ -515,6 +541,14 @@ impl Engine {
 
     /// `ge_end`: the phrase was traced back from "ge" (see `watch_exit`).
     fn evaluate_ex(&mut self, u: u64, s: usize, ge_end: bool) {
+        // every time the decoder reaches the end of a phrase, even if it is
+        // then refused, is evidence for gap filling (see `missed_between`)
+        if self.ev.kyo_seen.back().is_none_or(|&b| u > b + 30) {
+            self.ev.kyo_seen.push_back(u);
+            if self.ev.kyo_seen.len() > 64 {
+                self.ev.kyo_seen.pop_front();
+            }
+        }
         let mut c = Cycle::default();
         let mut node = s;
         let mut t = u;
@@ -589,7 +623,25 @@ impl Engine {
             .ev
             .last_count_frame
             .is_some_and(|last| c.start <= last + RUN_BREATH_FRAMES);
-        let (verdict, llr) = judge(&c, span, &self.ev.recent_spans, in_run, &self.params);
+        let (mut verdict, llr) = judge(&c, span, &self.ev.recent_spans, in_run, &self.params);
+        // Extra check on phrases accepted without strong evidence: at the
+        // session's usual tempo the syllables must keep their usual
+        // proportions (pieces of other words glued together rarely do).
+        let shape = syllable_shape(&c);
+        let at_tempo = median_of(&self.ev.recent_spans).is_some_and(|m| (0.7..=1.45).contains(&(span as f32 / m)));
+        if verdict != Verdict::Reject && llr < self.params.llr_hi && at_tempo && self.ev.shape_n >= SHAPE_MIN_PHRASES {
+            let d = shape_distance(&shape, &self.ev.shape);
+            if d > SHAPE_MAX {
+                verdict = Verdict::Reject;
+            }
+        }
+        if verdict == Verdict::Accept && at_tempo {
+            let a = if self.ev.shape_n == 0 { 1.0 } else { 0.2 };
+            for i in 0..N_SYL - 1 {
+                self.ev.shape[i] += a * (shape[i] - self.ev.shape[i]);
+            }
+            self.ev.shape_n += 1;
+        }
         match verdict {
             Verdict::Accept => {
                 // earlier "almost" phrases that chain into this one count too
@@ -713,6 +765,12 @@ impl Engine {
             return 0;
         }
         let missed = (n as u32) - 1;
+        // each missed Daimoku must have left a trace: the decoder reached
+        // the end of a phrase there, even if it then refused it
+        let traces = self.ev.kyo_seen.iter().filter(|&&f| f > prev + 30 && f + 30 < u).count() as u32;
+        if traces < missed {
+            return 0;
+        }
         if missed > FILL_MAX_MISSED {
             // too long to be a few unrecognised Daimoku
             return 0;

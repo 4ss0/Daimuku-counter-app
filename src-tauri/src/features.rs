@@ -294,6 +294,7 @@ impl FrontEnd {
         }
         self.fft.transform(&mut self.re, &mut self.im);
 
+
         let mut logmel = [0.0f32; N_MEL];
         for (m, (first, w)) in self.mel.bands.iter().enumerate() {
             let mut acc = 0.0f64;
@@ -402,7 +403,8 @@ pub struct OnlineCmn {
 }
 
 const CMN_PRIOR_WEIGHT: f32 = 120.0;
-const CMN_MAX_WINDOW: f32 = 600.0;
+/// About 3 s of voice: recovers quickly after a loud noise (a bell).
+const CMN_MAX_WINDOW: f32 = 300.0;
 
 impl OnlineCmn {
     pub fn new(prior: &[f32]) -> Self {
