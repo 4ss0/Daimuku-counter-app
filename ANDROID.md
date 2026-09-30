@@ -1,62 +1,76 @@
-# Prima build Android (emulatore su Windows 11)
+# Android build
 
-## 1. Una volta sola: strumenti
+## One-time setup
 
-1. Installa **Android Studio**. Da *More Actions → SDK Manager*:
-   - *SDK Platforms*: Android 14 (API 34) o più recente
-   - *SDK Tools*: **Android SDK Build-Tools**, **Android SDK Command-line Tools**,
-     **Android SDK Platform-Tools**, **NDK (Side by side)**
-2. Variabili d'ambiente (Impostazioni → Sistema → Informazioni → Impostazioni di sistema
-   avanzate → Variabili d'ambiente), come *variabili utente*:
-   - `JAVA_HOME` = `C:\Program Files\Android\Android Studio\jbr`
-   - `ANDROID_HOME` = `%LOCALAPPDATA%\Android\Sdk`
-   - `NDK_HOME` = `%LOCALAPPDATA%\Android\Sdk\ndk\<versione>` (la cartella che c'è dentro `ndk`)
-3. Attiva la **Modalità sviluppatore** di Windows (Impostazioni → Sistema → Per sviluppatori):
-   Tauri ne ha bisogno per creare i collegamenti alle librerie.
-4. Nuovo terminale, poi:
+1. **Android SDK and NDK** (e.g. installed with Android Studio, *SDK Manager*):
+   Android SDK Platform 36, Build-Tools, Command-line Tools, Platform-Tools and
+   NDK (Side by side).
+2. **Environment variables** (user variables): `ANDROID_HOME` pointing to the
+   SDK folder and `NDK_HOME` pointing to `<sdk>\ndk\<version>`.
+3. **JDK 21**: Gradle 8.14 does not run on Java 25 (the JBR bundled with recent
+   Android Studio). Install Temurin JDK 21 and point Gradle at it in
+   `src-tauri/gen/android/gradle.properties`:
    ```
-   rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+   org.gradle.java.home=C:/Program Files/Eclipse Adoptium/jdk-21...
+   ```
+4. **Rust targets**:
+   ```
+   rustup target add aarch64-linux-android armv7-linux-androideabi
+   ```
+5. **Windows Developer Mode** on (Settings → System → For developers): Tauri
+   needs it to create symbolic links to the native libraries.
+
+## Project settings already in place
+
+- `minSdkVersion` 26 (`tauri.conf.json` and `app/build.gradle.kts`): needed by
+  cpal's AAudio backend.
+- `AndroidManifest.xml`: microphone, foreground service (microphone type),
+  wake lock and notification permissions, and the `CountingService` that keeps
+  counting with the screen off.
+- `MainActivity.kt`: asks for the microphone and notification permissions and
+  exposes `window.DaimokuAndroid` to the web page (counting service, keep
+  screen on, save/share files).
+- `proguard-rules.pro`: keeps the methods called from the web page in release
+  builds.
+
+## Signing (release builds)
+
+1. Create an upload key once:
+   ```
+   keytool -genkey -v -keystore C:/Users/<you>/daimoku-upload.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+   ```
+   Keep the `.jks` file and its password safe: without them the app cannot be
+   updated.
+2. `src-tauri/gen/android/keystore.properties` (ignored by git):
+   ```
+   password=...
+   keyAlias=upload
+   storeFile=C:/Users/<you>/daimoku-upload.jks
    ```
 
-## 2. Progetto
+## Icons
 
-1. In `src-tauri/Cargo.toml` usa **cpal 0.16** (la 0.15 su Android richiede librerie C++):
-   ```toml
-   cpal = "0.16"
-   ```
-2. Genera il progetto Android:
-   ```
-   npm run tauri android init
-   ```
-3. **Permesso microfono** — in `src-tauri/gen/android/app/src/main/AndroidManifest.xml`,
-   sotto le altre righe `<uses-permission ...>`, aggiungi:
-   ```xml
-   <uses-permission android:name="android.permission.RECORD_AUDIO" />
-   ```
-4. **MainActivity** — apri `src-tauri/gen/android/app/src/main/java/.../MainActivity.kt`,
-   lascia la prima riga `package ...` e sostituisci il resto con `android/MainActivity.kt`
-   di questo zip.
-
-## 3. Emulatore
-
-1. Android Studio → *Device Manager* → crea un dispositivo (es. Pixel 7, immagine
-   **x86_64**, API 34) e avvialo.
-2. Microfono: nella barra dell'emulatore **⋯ (Extended controls) → Microphone** →
-   attiva **"Virtual microphone uses host audio input"**. Va riattivato a ogni avvio
-   dell'emulatore.
-
-## 4. Build e installazione
-
-APK di debug per l'emulatore (non serve il server di sviluppo):
 ```
-npm run tauri -- android build --apk --target x86_64 --debug
+npm run tauri icon icon/icon-1024.png
 ```
-L'APK è in
-`src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`:
-trascinalo sulla finestra dell'emulatore per installarlo.
 
-In alternativa, con l'emulatore acceso: `npm run tauri android dev`
-(ricarica automatica; richiede che `vite.config` usi `TAURI_DEV_HOST`, come nel
-template di create-tauri-app).
+## Build
 
-Al primo avvio l'app chiede il permesso del microfono: consenti.
+Release APK for a phone (installs over the previous version, data kept):
+```
+npm run tauri android build -- --apk --target aarch64
+```
+The APK is in `src-tauri/gen/android/app/build/outputs/apk/universal/release/`.
+
+Debug APK:
+```
+npm run tauri android build -- --apk --target aarch64 --debug
+```
+
+Play Store bundle:
+```
+npm run tauri android build -- --aab --target aarch64 --target armv7
+```
+
+Every upload needs a higher version (`version` in `tauri.conf.json`,
+`package.json` and `src-tauri/Cargo.toml`).

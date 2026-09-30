@@ -9,7 +9,7 @@
   const tabs = [
     { href: '/', key: 'tab.count', icon: 'count' },
     { href: '/stats', key: 'tab.stats', icon: 'stats' },
-    { href: '/voce', key: 'tab.voice', icon: 'voice' },
+    { href: '/voice', key: 'tab.voice', icon: 'voice' },
     { href: '/settings', key: 'tab.settings', icon: 'settings' },
   ] as const;
 
@@ -36,7 +36,7 @@
     // app learns the user's voice before counting.
     try {
       const profile = await api.profile();
-      if (profile.takes.length === 0 && path === '/') await goto('/voce', { replaceState: true });
+      if (profile.takes.length === 0 && path === '/') await goto('/voice', { replaceState: true });
     } catch {
       /* keep the counter page */
     }

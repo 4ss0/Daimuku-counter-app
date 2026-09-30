@@ -60,6 +60,9 @@ pub struct PersonalProfile {
     pub min_cycle_ms: f32,
     pub max_cycle_ms: f32,
     pub model: Model,
+    /// For the slow controller (not sent to the app's screens).
+    #[serde(skip)]
+    pub slow_model: Option<Model>,
 }
 
 impl PersonalProfile {
@@ -150,6 +153,8 @@ struct ProfileInner {
     /// Same order as `index.takes`.
     user_items: Vec<TrainItem>,
     model: Model,
+    /// Model trained only on slow Daimoku, for the slow controller.
+    slow_model: Option<Model>,
 }
 
 /// Holds the trained model. Loading it means re-analysing the base clips
@@ -185,11 +190,13 @@ fn load_inner() -> ProfileInner {
         takes: kept_takes,
     };
     let model = retrain(&base_items, &user_items).unwrap_or_else(base_only_fallback);
+    let slow_model = retrain_slow(&base_items, &user_items, &index.takes);
     let mut inner = ProfileInner {
         index,
         base_items,
         user_items,
         model,
+        slow_model,
     };
     recompute_take_periods(&mut inner);
     inner
@@ -241,6 +248,7 @@ impl ProfileState {
             min_cycle_ms: g.model.min_cycle_frames as f32 * 10.0,
             max_cycle_ms: g.model.max_cycle_frames as f32 * 10.0,
             model: g.model.clone(),
+            slow_model: g.slow_model.clone(),
         }
     }
 
@@ -277,6 +285,7 @@ impl ProfileState {
         });
         g.user_items.push(item);
         g.model = retrain(&g.base_items, &g.user_items).unwrap_or_else(|| g.model.clone());
+        g.slow_model = retrain_slow(&g.base_items, &g.user_items, &g.index.takes);
         recompute_take_periods(g);
         write_index(&g.index)?;
         Ok(id)
@@ -298,6 +307,7 @@ impl ProfileState {
             let _ = fs::remove_file(path);
         }
         g.model = retrain(&g.base_items, &g.user_items).unwrap_or_else(base_only_fallback);
+        g.slow_model = retrain_slow(&g.base_items, &g.user_items, &g.index.takes);
         recompute_take_periods(g);
         write_index(&g.index)
     }
@@ -352,6 +362,7 @@ impl ProfileState {
         g.index = index;
         g.user_items = user_items;
         g.model = retrain(&g.base_items, &g.user_items).unwrap_or_else(base_only_fallback);
+        g.slow_model = retrain_slow(&g.base_items, &g.user_items, &g.index.takes);
         recompute_take_periods(g);
         write_index(&g.index)?;
         Ok(g.index.takes.len())
@@ -366,6 +377,7 @@ impl ProfileState {
         g.index = ProfileIndex { version: 1, takes: Vec::new() };
         g.user_items.clear();
         g.model = retrain(&g.base_items, &g.user_items).unwrap_or_else(base_only_fallback);
+        g.slow_model = retrain_slow(&g.base_items, &g.user_items, &g.index.takes);
         write_index(&g.index)
     }
 }
@@ -396,6 +408,24 @@ fn load_base_items() -> Vec<TrainItem> {
         }
     }
     items
+}
+
+/// A take counts as slow from this many seconds per Daimoku.
+const SLOW_TAKE_SECS: f32 = 2.5;
+
+/// Model for the slow controller: the slowest built-in example plus the
+/// user's slow takes only (mixing them with fast ones dilutes them).
+fn retrain_slow(base: &[TrainItem], user: &[TrainItem], takes: &[TakeRecord]) -> Option<Model> {
+    let mut items: Vec<TrainItem> = Vec::new();
+    if let Some(b) = base.iter().max_by_key(|b| b.feats.len() / b.n_cycles.max(1)) {
+        items.push(b.clone());
+    }
+    for (item, take) in user.iter().zip(takes) {
+        if take.duration_secs / take.n_daimoku.max(1) as f32 >= SLOW_TAKE_SECS {
+            items.push(item.clone());
+        }
+    }
+    train_model(&items, &[], None, 8).map(|t| t.model)
 }
 
 fn retrain(base: &[TrainItem], user: &[TrainItem]) -> Option<Model> {
@@ -459,6 +489,13 @@ pub(crate) static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slow_model_is_always_available() {
+        let s = ProfileState::new();
+        // built from the slowest built-in example even without user takes
+        assert!(s.snapshot().slow_model.is_some());
+    }
 
     #[test]
     fn starts_usable_from_base_clips_alone() {

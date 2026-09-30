@@ -103,6 +103,8 @@ struct LiveInner {
     /// model it was built with - swapping models mid-recording would
     /// invalidate everything decoded so far).
     pending_model: crate::model::Model,
+    /// Slow-only model for the slow controller (see `Engine::with_slow`).
+    pending_slow: Option<crate::model::Model>,
     /// Cached result of the one authoritative `finish()` call, if the
     /// recording has actually stopped.
     finished_result: Option<DaimokuCountResult>,
@@ -116,6 +118,7 @@ impl LiveCounter {
                 sample_rate: initial_sample_rate,
                 // replaced by the real model as soon as it is loaded
                 pending_model: placeholder_model(),
+                pending_slow: None,
                 finished_result: None,
             }),
         }
@@ -126,7 +129,11 @@ impl LiveCounter {
     pub fn reset(&self, sample_rate: u32) {
         let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         g.sample_rate = sample_rate;
-        g.engine = Some(Engine::new(&g.pending_model, sample_rate));
+        let mut engine = Engine::new(&g.pending_model, sample_rate);
+        if let Some(slow) = g.pending_slow.as_ref() {
+            engine = engine.with_slow(slow, sample_rate);
+        }
+        g.engine = Some(engine);
         g.finished_result = None;
     }
 
@@ -134,7 +141,16 @@ impl LiveCounter {
     /// affect a recording already in progress.
     pub fn set_profile(&self, profile: Option<PersonalProfile>) {
         let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        g.pending_model = profile.map(|p| p.model).unwrap_or_else(base_only_model);
+        match profile {
+            Some(p) => {
+                g.pending_model = p.model;
+                g.pending_slow = p.slow_model;
+            }
+            None => {
+                g.pending_model = base_only_model();
+                g.pending_slow = None;
+            }
+        }
     }
 
     pub fn push(&self, samples: &[f32]) {

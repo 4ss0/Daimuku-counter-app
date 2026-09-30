@@ -49,6 +49,13 @@ pub struct RawFrame {
     /// ln(mean power) of the frame.
     pub energy: f32,
     pub active: bool,
+    /// ln(power above 4 kHz / power 100-2000 Hz): jumps when broadband
+    /// noise (beads rubbed together, rustling) covers the voice.
+    pub hf: f32,
+    /// Periodicity of the band below 1 kHz, 0..1 (normalised
+    /// autocorrelation peak in the 80-400 Hz pitch range): high while a
+    /// voice is sounding, low for clicks and rustle alone.
+    pub voiced: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +129,8 @@ fn mel_to_hz(m: f64) -> f64 {
 struct MelBank {
     /// (first FFT bin, weights) per mel band.
     bands: Vec<(usize, Vec<f32>)>,
+    /// Centre frequency of each band (Hz).
+    centres: Vec<f64>,
 }
 
 impl MelBank {
@@ -152,7 +161,8 @@ impl MelBank {
             }
             bands.push((first, w));
         }
-        Self { bands }
+        let centres = (0..N_MEL).map(|m| pts[m + 1]).collect();
+        Self { bands, centres }
     }
 }
 
@@ -173,6 +183,9 @@ fn dct_matrix() -> Vec<f32> {
 // Streaming front-end
 // ---------------------------------------------------------------------------
 
+/// One frame after analysis, before deltas: energy, cepstrum, active, hf, voiced.
+type Analysed = (f32, [f32; N_CEP], bool, f32, f32);
+
 pub struct FrontEnd {
     /// Integer decimation factor applied first (box filter), so the FFT
     /// always works near 16-22 kHz whatever the device sample rate is.
@@ -192,8 +205,19 @@ pub struct FrontEnd {
     re: Vec<f64>,
     im: Vec<f64>,
 
+    /// Autocorrelation of the analysis window, to undo its taper.
+    win_ac: Vec<f64>,
+    /// Pitch lag range in samples (400 Hz .. 80 Hz).
+    lag_lo: usize,
+    lag_hi: usize,
+    /// Highest FFT bin kept for the voicing measure (1 kHz).
+    voice_bin: usize,
+    voice_lo: usize,
+    ac_re: Vec<f64>,
+    ac_im: Vec<f64>,
+
     /// Frames waiting for their +-2 neighbours so deltas can be computed.
-    hist: VecDeque<(f32, [f32; N_CEP], bool)>,
+    hist: VecDeque<Analysed>,
     started: bool,
 
     peak: f32,
@@ -210,6 +234,15 @@ impl FrontEnd {
         let win = ((eff * WIN_SECS as f64).round() as usize).max(32);
         let hop = ((eff * HOP_SECS as f64).round() as usize).max(8);
         let nfft = win.next_power_of_two();
+        let window: Vec<f64> = (0..win)
+            .map(|i| 0.54 - 0.46 * (2.0 * PI * i as f64 / (win - 1) as f64).cos())
+            .collect();
+        let lag_lo = (eff / 400.0).round() as usize;
+        let lag_hi = ((eff / 80.0).round() as usize).min(win * 3 / 5);
+        let win_ac = (0..=lag_hi)
+            .map(|l| (0..win - l).map(|i| window[i] * window[i + l]).sum::<f64>())
+            .collect();
+        let voice_bin = ((1000.0 * nfft as f64 / eff) as usize).min(nfft / 2);
         Self {
             decim,
             dec_acc: 0.0,
@@ -218,9 +251,14 @@ impl FrontEnd {
             hop,
             nfft,
             fft: Fft::new(nfft),
-            window: (0..win)
-                .map(|i| 0.54 - 0.46 * (2.0 * PI * i as f64 / (win - 1) as f64).cos())
-                .collect(),
+            window,
+            win_ac,
+            lag_lo,
+            lag_hi,
+            voice_bin,
+            voice_lo: ((150.0 * nfft as f64 / eff) as usize).max(1),
+            ac_re: vec![0.0; nfft],
+            ac_im: vec![0.0; nfft],
             mel: MelBank::new(eff, nfft),
             dct: dct_matrix(),
             buf: Vec::new(),
@@ -251,8 +289,8 @@ impl FrontEnd {
         }
         let mut pos = 0;
         while self.buf.len() - pos >= self.win {
-            let (energy, cep) = self.analyse(pos);
-            self.push_frame(energy, cep, out);
+            let (energy, cep, hf, voiced) = self.analyse(pos);
+            self.push_frame(energy, cep, hf, voiced, out);
             pos += self.hop;
         }
         if pos > 0 {
@@ -273,7 +311,7 @@ impl FrontEnd {
         }
     }
 
-    fn analyse(&mut self, pos: usize) -> (f32, [f32; N_CEP]) {
+    fn analyse(&mut self, pos: usize) -> (f32, [f32; N_CEP], f32, f32) {
         let frame = &self.buf[pos..pos + self.win];
         let mut pw = 0.0f64;
         for &x in frame {
@@ -295,7 +333,9 @@ impl FrontEnd {
         self.fft.transform(&mut self.re, &mut self.im);
 
 
+        let voiced = self.voicing();
         let mut logmel = [0.0f32; N_MEL];
+        let (mut lo_pw, mut hi_pw) = (0.0f64, 0.0f64);
         for (m, (first, w)) in self.mel.bands.iter().enumerate() {
             let mut acc = 0.0f64;
             for (j, &wt) in w.iter().enumerate() {
@@ -305,7 +345,14 @@ impl FrontEnd {
                 }
             }
             logmel[m] = (acc + 1e-10).ln() as f32;
+            let c = self.mel.centres[m];
+            if c < 2000.0 {
+                lo_pw += acc;
+            } else if c > 4000.0 {
+                hi_pw += acc;
+            }
         }
+        let hf = ((hi_pw + 1e-10) / (lo_pw + 1e-10)).ln() as f32;
         let mut cep = [0.0f32; N_CEP];
         for k in 0..N_CEP {
             let row = &self.dct[k * N_MEL..(k + 1) * N_MEL];
@@ -315,10 +362,47 @@ impl FrontEnd {
             }
             cep[k] = s;
         }
-        (energy, cep)
+        (energy, cep, hf, voiced)
     }
 
-    fn push_frame(&mut self, energy: f32, cep: [f32; N_CEP], out: &mut Vec<RawFrame>) {
+    /// Normalised autocorrelation peak of the spectrum below 1 kHz, from
+    /// the FFT just computed (Wiener-Khinchin), corrected for the window.
+    fn voicing(&mut self) -> f32 {
+        let n = self.nfft;
+        for k in 0..n {
+            let kk = if k <= n / 2 { k } else { n - k };
+            self.ac_re[k] = if kk >= self.voice_lo && kk <= self.voice_bin {
+                self.re[k] * self.re[k] + self.im[k] * self.im[k]
+            } else {
+                0.0
+            };
+            self.ac_im[k] = 0.0;
+        }
+        self.fft.transform(&mut self.ac_re, &mut self.ac_im);
+        let r0 = self.ac_re[0];
+        if r0 <= 1e-12 {
+            return 0.0;
+        }
+        // the peak must come after the autocorrelation has dipped: a smooth
+        // low-passed noise decays slowly from lag 0 without any real peak
+        let norm = |l: usize| (self.ac_re[l] / r0) * (self.win_ac[0] / self.win_ac[l]);
+        let mut l = 1;
+        while l < self.lag_hi && norm(l + 1) < norm(l) {
+            l += 1;
+        }
+        let dip = norm(l);
+        let mut best = 0.0f64;
+        for l in l.max(self.lag_lo)..=self.lag_hi {
+            let v = norm(l);
+            if v > best {
+                best = v;
+            }
+        }
+        let _ = dip;
+        best.min(1.0) as f32
+    }
+
+    fn push_frame(&mut self, energy: f32, cep: [f32; N_CEP], hf: f32, voiced: f32, out: &mut Vec<RawFrame>) {
         // Activity gate.
         self.peak = if self.peak == f32::MIN {
             energy
@@ -340,7 +424,7 @@ impl FrontEnd {
             && energy > self.peak - GATE_NATS
             && energy > self.noise_energy + NOISE_MARGIN_NATS;
 
-        let item = (energy, cep, active);
+        let item = (energy, cep, active, hf, voiced);
         if !self.started {
             self.started = true;
             self.hist.push_back(item);
@@ -372,6 +456,8 @@ impl FrontEnd {
             delta,
             energy: h[2].0,
             active: h[2].2,
+            hf: h[2].3,
+            voiced: h[2].4,
         });
         self.hist.pop_front();
     }

@@ -170,7 +170,7 @@ pub fn live_view(state: State<'_, AudioState>) -> LiveView {
 pub fn export_live_session_wav(state: State<'_, AudioState>) -> Result<ExportedFile, String> {
     let audio = state
         .last_live()
-        .ok_or_else(|| "nessuna sessione live registrata".to_string())?;
+        .ok_or_else(|| "no live session recorded".to_string())?;
     let dir = crate::paths::export_dir()
         .ok_or_else(|| "cannot determine output directory".to_string())?;
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
@@ -250,7 +250,7 @@ pub fn validate_training_take(
     let snap = profile_state.snapshot();
     let analysis = count_daimoku_with_profile(&audio.samples, audio.sample_rate, Some(&snap))
         .ok_or_else(|| {
-            "Nessun audio utilizzabile nella registrazione (troppo breve o silenziosa).".to_string()
+            "No usable audio in the recording (too short or silent).".to_string()
         })?;
 
     let ok = analysis.count == expected as usize;

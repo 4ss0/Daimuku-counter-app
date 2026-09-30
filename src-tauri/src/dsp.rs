@@ -2,7 +2,7 @@
 //! shape (used by the rest of the app) on top of the new phrase-based
 //! `engine` module. Also re-exports `StreamingState` under its old name.
 
-use crate::engine::{count_samples, EngineState};
+use crate::engine::{count_samples_with, EngineState};
 use crate::profile::PersonalProfile;
 use serde::Serialize;
 
@@ -40,7 +40,8 @@ pub fn count_daimoku_with_profile(
         }
     };
 
-    let r = count_samples(model, samples, sample_rate);
+    let slow = profile.and_then(|p| p.slow_model.as_ref());
+    let r = count_samples_with(model, slow, samples, sample_rate);
     let duration_secs = samples.len() as f32 / sample_rate as f32;
 
     let (phrase_count, active_duration_secs) = active_segment_stats(samples, sample_rate);
@@ -175,7 +176,9 @@ mod tests {
         let snap = ps.snapshot();
         let (samples, sr) = crate::base::decode_wav(crate::base::BASE_CLIPS[3].wav).unwrap();
         let r = count_daimoku_with_profile(&samples, sr, Some(&snap)).expect("result");
-        assert_eq!(r.count, 7);
+        // the clip stops 40 ms into the 7th "kyo": without a real "kyo" the
+        // 7th phrase must not count
+        assert_eq!(r.count, 6);
         assert!(r.confidence > 0.5);
         assert!(r.period_ms > 500.0 && r.period_ms < 2000.0);
     }

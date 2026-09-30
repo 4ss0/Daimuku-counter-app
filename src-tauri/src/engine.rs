@@ -54,7 +54,7 @@ const RUN_RHYTHM: std::ops::RangeInclusive<f32> = 0.7..=1.45;
 /// counted too, when they chain into it (typically the first Daimoku of a
 /// session or after a breath, heard before the voice/rhythm was known).
 const MAX_PENDING: usize = 3;
-/// Syllable-proportion check (see `Engine::evaluate_ex`): only once this
+/// Syllable-proportion check (see `Engine::evaluate`): only once this
 /// many Daimoku of the session have been measured.
 const SHAPE_MIN_PHRASES: u32 = 3;
 /// Largest accepted difference (sum over syllables of the share of the
@@ -68,11 +68,66 @@ const FILL_SILENCE_FRAMES: u32 = 25;
 const FILL_MAX_SILENCE: u32 = 150;
 const FILL_MAX_MISSED: u32 = 4;
 const FILL_TOLERANCE: f32 = 0.25;
-/// Slow Daimoku ending on a held "kyo" the model does not recognise: they
-/// may be judged up to "ge" if at least this long (2.5 s) ...
-const SLOW_MIN_SPAN: u32 = 250;
-/// ... and with this share of the normal minimum evidence.
-const SLOW_GE_LLR: f32 = 0.8;
+/// Segment review (second pass, see `Engine::review_segment`): a stretch of
+/// voice closed by a pause of at least this many quiet frames is analysed
+/// again with full hindsight.
+const REVIEW_QUIET: u32 = 40;
+/// Longest stretch reviewed (must fit in the history ring).
+const REVIEW_MAX_FRAMES: u64 = 1800;
+/// At most this many Daimoku are added to one stretch.
+const REVIEW_MAX_ADD: usize = 3;
+/// Cost per voiced frame spent outside a phrase inside a reviewed stretch.
+const REVIEW_GAR_PEN: f32 = 0.5;
+/// Weight of the rhythm prior (every phrase near the session's usual
+/// length) against the acoustic score.
+const REVIEW_PRIOR_W: f32 = 4.0;
+const REVIEW_PRIOR_SIGMA: f32 = 0.25;
+/// The hypothesis with more Daimoku must win by at least this much.
+const REVIEW_MARGIN: f32 = 6.0;
+/// Every phrase of the winning hypothesis needs this much evidence (share
+/// of the model's typical score per frame).
+const REVIEW_LLR_FACTOR: f32 = 0.10;
+/// "kyo" must really be there: at least this many voiced frames of it
+/// (it is judged 8 frames in), with evidence for "kyo" not clearly below
+/// that for anything else. A phrase that stops at "renge" is never a
+/// Daimoku.
+const KYO_MIN_ACT: u32 = 5;
+const KYO_MIN_LLR: f32 = -1.0;
+
+/// Long check (see `Engine::verify_window`): how often it runs, how far
+/// back it looks (it must fit in the history ring, ~20 s), how old a
+/// Daimoku must be before it is judged final, and which gaps are suspect.
+const VERIFY_EVERY: u64 = 300;
+const VERIFY_WINDOW: u64 = 1950;
+const VERIFY_SETTLE: u64 = 80;
+const VERIFY_MIN_EVENTS: usize = 6;
+const VERIFY_GAP: f32 = 1.8;
+/// Slow controller (see `Engine::with_slow`): only its phrases at least
+/// this long (2.5 s) are used.
+/// Noise bridge (part of the long check): a gap inside a steady run that
+/// is covered by loud broadband noise (beads rubbed, rustle) while the voice
+/// keeps sounding is filled at the run's tempo. Anchors: this many regular
+/// intervals before the gap and after it...
+const BRIDGE_ANCHORS_BEFORE: usize = 2;
+const BRIDGE_ANCHORS_AFTER: usize = 1;
+/// ... each within this share of the tempo;
+const BRIDGE_ANCHOR_TOL: f32 = 0.2;
+/// the gap must be a whole number of periods (this far at most) and at most
+/// this many periods long;
+const BRIDGE_FIT: f32 = 0.35;
+const BRIDGE_MAX_PERIODS: u32 = 9;
+/// voiced all along (share of active frames, share of frames with a pitch),
+const BRIDGE_ACTIVE: f32 = 0.9;
+const BRIDGE_VOICED_LEVEL: f32 = 0.7;
+const BRIDGE_VOICED: f32 = 0.45;
+/// and a good part of it covered by noise: frames whose high/low band ratio
+/// is this far (nats) above the one of the surrounding Daimoku.
+const BRIDGE_NOISE_NATS: f32 = 3.0;
+const BRIDGE_NOISY: f32 = 0.25;
+
+const SLOW_CTRL_MIN_SPAN: u32 = 250;
+/// ... and only in groups: another slow phrase within 12 s.
+const SLOW_GROUP_FRAMES: u64 = 1200;
 /// Frames after leaving the phrase at which it is traced back and judged
 /// (see `Engine::watch_exit`).
 const EXIT_EVAL_FRAMES: u32 = 30;
@@ -136,6 +191,8 @@ struct Cycle {
     gap_act: u32,
     /// Longest such stretch.
     max_gap: u32,
+    /// The decoder went straight from this phrase's "kyo" into "Nam".
+    next_nam: bool,
 }
 
 /// One accepted Daimoku.
@@ -179,14 +236,29 @@ struct Counter {
     first_weak: Option<u64>,
     /// First voiced frame of the session.
     first_voice: Option<u64>,
-    /// Last committed frame inside the phrase, and its node.
-    last_chain: Option<(u64, usize)>,
     /// Frames at which the decoder reached the end of a phrase.
     kyo_seen: VecDeque<u64>,
+    /// Set while judging a phrase whose "kyo" led straight into "Nam".
+    next_nam: bool,
     /// Typical share of each syllable (before "kyo") in the Daimoku of this
     /// session, and how many phrases it is based on.
     shape: [f32; N_SYL - 1],
     shape_n: u32,
+    /// Current stretch of voice (for the segment review) and the quiet
+    /// frames after it.
+    seg_start: Option<u64>,
+    seg_quiet: u32,
+    /// Daimoku added by the segment review (for diagnostics).
+    reviewed_added: u32,
+    /// Long check: last Daimoku already examined, and additions.
+    verified_upto: u64,
+    verify_added: u32,
+    /// Noise bridge: last gap end already examined.
+    bridged_upto: u64,
+    /// Phrases (start, end) counted on the word of the slow controller.
+    slow_added: Vec<(u64, u64)>,
+    /// Slow controller phrases waiting for a partner (see `merge_slow`).
+    slow_wait: Vec<CountEvent>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -215,6 +287,16 @@ fn median_of(v: &VecDeque<f32>) -> Option<f32> {
 ///   minimum length (3 frames) or one that the acoustics flatly deny;
 /// - real phrases have every syllable at least ~7 frames long and at most
 ///   one syllable mildly below the garbage model.
+fn has_kyo(c: &Cycle) -> bool {
+    let k = N_SYL - 1;
+    if c.next_nam {
+        // fast chanting: "kyo" runs straight into the next "Nam" and is
+        // often clipped; the next phrase starting is proof enough
+        return c.syl_act[k] >= 3;
+    }
+    c.syl_act[k] >= KYO_MIN_ACT && c.syl_llr[k] / c.syl_act[k].max(1) as f32 >= KYO_MIN_LLR
+}
+
 /// How a phrase that failed `accept` could still count.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Verdict {
@@ -258,6 +340,15 @@ fn plausible(c: &Cycle, span: u32, p: &Params) -> bool {
         && span <= p.cycle_max
 }
 
+/// Two phrases (start, end) are the same Daimoku if they share at least
+/// a third of the shorter one.
+fn overlaps(a: (u64, u64), b: (u64, u64)) -> bool {
+    let lo = a.0.max(b.0);
+    let hi = a.1.min(b.1);
+    let shorter = (a.1 - a.0).min(b.1 - b.0).max(1);
+    hi > lo && (hi - lo) * 3 >= shorter
+}
+
 /// Share of each syllable (before "kyo") in the phrase.
 fn syllable_shape(c: &Cycle) -> [f32; N_SYL - 1] {
     let tot: u32 = c.syl_frames[..N_SYL - 1].iter().sum();
@@ -273,6 +364,10 @@ fn shape_distance(a: &[f32; N_SYL - 1], b: &[f32; N_SYL - 1]) -> f32 {
 }
 
 fn judge(c: &Cycle, span: u32, recent: &VecDeque<f32>, in_run: bool, p: &Params) -> (Verdict, f32) {
+    if !has_kyo(c) {
+        let llr = if c.act > 0 { c.llr_sum / c.act as f32 } else { -1.0 };
+        return (Verdict::Reject, llr);
+    }
     let (ok, llr) = accept(c, span, recent, p);
     if ok {
         return (Verdict::Accept, llr);
@@ -379,6 +474,9 @@ pub struct Engine {
     bp: Vec<u8>,
     emit: Vec<[f32; N_NODES]>,
     act: Vec<bool>,
+    /// Per-frame noise and voicing measures (see `RawFrame`).
+    hf: Vec<f32>,
+    voiced: Vec<f32>,
     next_commit: u64,
 
     ev: Counter,
@@ -392,6 +490,13 @@ pub struct Engine {
     /// [`Engine::rewarm`]. `None` once done.
     warm: Option<Vec<RawFrame>>,
     warm_active: usize,
+
+    /// Slow controller: a second engine with a model trained only on slow
+    /// Daimoku, fed the same frames (see `with_slow`).
+    slow: Option<Box<Engine>>,
+    slow_seen: usize,
+    /// This engine is the slow controller of another one.
+    is_child: bool,
 }
 
 /// Voiced frames (1 s) after which the session's own voice/microphone
@@ -426,12 +531,77 @@ impl Engine {
             bp: vec![0u8; RING * nn],
             emit: vec![[0.0; N_NODES]; RING],
             act: vec![false; RING],
+            hf: vec![0.0; RING],
+            voiced: vec![0.0; RING],
             next_commit: 0,
             ev: Counter::default(),
             last_active: 0,
             active_frames: 0,
             finished: false,
+            slow: None,
+            slow_seen: 0,
+            is_child: false,
         }
+    }
+
+    /// Adds the slow controller: a model trained only on slow Daimoku,
+    /// run in parallel. Its long phrases (>= 2.5 s) are counted when the
+    /// main engine has nothing at that point, never twice.
+    pub fn with_slow(mut self, slow_model: &Model, sample_rate: u32) -> Self {
+        let mut child = Engine::new(slow_model, sample_rate);
+        child.is_child = true;
+        self.slow = Some(Box::new(child));
+        self
+    }
+
+    /// Takes over the slow controller's new long phrases. Slow Daimoku come
+    /// in groups (the three at the start or end of a practice), so a phrase
+    /// is only used once another slow one (from either engine) lies within
+    /// `SLOW_GROUP_FRAMES` at a similar pace; until then it waits.
+    fn merge_slow(&mut self) {
+        let Some(child) = self.slow.as_ref() else { return };
+        let n = child.ev.events.len();
+        if n < self.slow_seen {
+            // the child restarted (warm-up replay)
+            self.slow_seen = 0;
+            self.ev.slow_wait.clear();
+        }
+        let new: Vec<CountEvent> = child.ev.events[self.slow_seen..].to_vec();
+        self.slow_seen = n;
+        for e in new {
+            if e.inferred || e.span < SLOW_CTRL_MIN_SPAN {
+                continue;
+            }
+            let start = e.frame.saturating_sub(e.span as u64);
+            let taken = self.ev.events.iter().any(|m| overlaps((m.frame.saturating_sub(m.span.max(30) as u64), m.frame), (start, e.frame)));
+            if !taken && !self.ev.slow_wait.iter().any(|w| w.frame == e.frame) {
+                self.ev.slow_wait.push(e);
+            }
+        }
+        // confirm waiting phrases that have a slow partner
+        let mut keep = Vec::new();
+        let waiting = std::mem::take(&mut self.ev.slow_wait);
+        for w in &waiting {
+            let similar = |f: u64, sp: u32| {
+                let near = f.abs_diff(w.frame) <= SLOW_GROUP_FRAMES && f != w.frame;
+                let r = sp as f32 / w.span as f32;
+                near && (0.7..=1.4).contains(&r)
+            };
+            let partner = self.ev.events.iter().any(|m| m.span >= SLOW_CTRL_MIN_SPAN && similar(m.frame, m.span))
+                || waiting.iter().any(|o| similar(o.frame, o.span));
+            if partner {
+                let start = w.frame.saturating_sub(w.span as u64);
+                let taken = self.ev.events.iter().any(|m| overlaps((m.frame.saturating_sub(m.span.max(30) as u64), m.frame), (start, w.frame)));
+                if !taken {
+                    let pos = self.ev.events.partition_point(|m| m.frame < w.frame);
+                    self.ev.events.insert(pos, CountEvent { frame: w.frame, llr: w.llr, span: w.span, inferred: true });
+                    self.ev.slow_added.push((start, w.frame));
+                }
+            } else if self.t.saturating_sub(w.frame) < 2 * SLOW_GROUP_FRAMES {
+                keep.push(w.clone());
+            }
+        }
+        self.ev.slow_wait = keep;
     }
 
     pub fn params(&self) -> &Params {
@@ -495,25 +665,23 @@ impl Engine {
             }
         }
         self.ev.kyo_run = 0;
+        if let Some(child) = self.slow.as_mut() {
+            child.finish();
+        }
+        self.merge_slow();
+        if let Some(a) = self.ev.seg_start.take() {
+            let b = self.last_active;
+            if b > a {
+                self.review_segment(a, b);
+            }
+        }
+        self.verify_window(true);
     }
 
     /// Frame `u` has been decided to be in node `s` (with the current
     /// best path running through it).
     fn commit(&mut self, u: u64, s: usize) {
         let m = self.node_model[s];
-        // committed path leaves the phrase right after "ge": maybe a slow
-        // Daimoku whose held "kyo" the model does not recognise
-        if m == NODE_GAR || m == NODE_SIL {
-            if let Some((pu, ps)) = self.ev.last_chain.take() {
-                if pu + 1 == u && self.node_model[ps] / K == N_SYL - 2 {
-                    self.evaluate_ex(pu, ps, true);
-                }
-            }
-        } else if m < N_CHAIN {
-            self.ev.last_chain = Some((u, s));
-        } else {
-            self.ev.last_chain = None;
-        }
         let in_kyo = m < N_CHAIN && m / K == N_SYL - 1;
         if !in_kyo {
             // A short "kyo" that is already over: judge it now.
@@ -521,7 +689,9 @@ impl Engine {
             self.ev.kyo_run = 0;
             if run >= self.params.kyo_min && run < self.params.kyo_eval && u > 0 {
                 if let Some(k) = self.ev.last_kyo {
+                    self.ev.next_nam = m < N_CHAIN && m / K == 0;
                     self.evaluate(u - 1, k);
+                    self.ev.next_nam = false;
                 }
             }
             return;
@@ -536,20 +706,7 @@ impl Engine {
     /// Traces the phrase ending in (`u`, `s`) back to its "Nam" along the
     /// current best path and decides whether it counts.
     fn evaluate(&mut self, u: u64, s: usize) {
-        self.evaluate_ex(u, s, false);
-    }
-
-    /// `ge_end`: the phrase was traced back from "ge" (see `watch_exit`).
-    fn evaluate_ex(&mut self, u: u64, s: usize, ge_end: bool) {
-        // every time the decoder reaches the end of a phrase, even if it is
-        // then refused, is evidence for gap filling (see `missed_between`)
-        if self.ev.kyo_seen.back().is_none_or(|&b| u > b + 30) {
-            self.ev.kyo_seen.push_back(u);
-            if self.ev.kyo_seen.len() > 64 {
-                self.ev.kyo_seen.pop_front();
-            }
-        }
-        let mut c = Cycle::default();
+        let mut c = Cycle { next_nam: self.ev.next_nam, ..Default::default() };
         let mut node = s;
         let mut t = u;
         let limit = (RING - self.params.lag - 2) as u64;
@@ -609,15 +766,13 @@ impl Engine {
             }
         }
         let span = (u - c.start + 1) as u32;
-        if ge_end {
-            // slow Daimoku whose long final "kyo" did not match the model:
-            // everything up to "ge" must be clearly there, at a slow pace
-            let llr = if c.act > 0 { c.llr_sum / c.act as f32 } else { -1.0 };
-            if span >= SLOW_MIN_SPAN && plausible(&c, span, &self.params) && llr >= SLOW_GE_LLR * self.params.llr_lo {
-                self.ev.pending.clear();
-                self.record(u, llr, span);
+        // every phrase that really reached "kyo", even if it is then
+        // refused, is evidence for gap filling (see `missed_between`)
+        if has_kyo(&c) && self.ev.kyo_seen.back().is_none_or(|&b| u > b + 30) {
+            self.ev.kyo_seen.push_back(u);
+            if self.ev.kyo_seen.len() > 64 {
+                self.ev.kyo_seen.pop_front();
             }
-            return;
         }
         let in_run = self
             .ev
@@ -693,7 +848,7 @@ impl Engine {
             Verdict::Reject => {
                 self.ev.rejected += 1;
                 self.ev.pending.clear();
-                if self.ev.events.is_empty() {
+                if self.ev.events.is_empty() && has_kyo(&c) {
                     self.ev.first_weak = Some(u);
                 }
             }
@@ -783,6 +938,11 @@ impl Engine {
     }
 
     fn record_event(&mut self, u: u64, llr: f32, span: u32, inferred: bool) {
+        let my_start = u.saturating_sub(span.max(30) as u64);
+        if self.ev.slow_added.iter().any(|&(st, en)| overlaps((my_start, u), (st, en))) {
+            // already counted on the word of the slow controller
+            return;
+        }
         // only at the run's own tempo (not e.g. the slow closing Daimoku)
         let fits = |x: u32| median_of(&self.ev.recent_spans).is_some_and(|m| (0.7..=1.45).contains(&(x as f32 / m)));
         // both this phrase and the previous one at the run's tempo
@@ -840,13 +1000,6 @@ impl Engine {
             if m < N_CHAIN {
                 if m / K == N_SYL - 1 {
                     self.evaluate(t, node);
-                } else if m / K == N_SYL - 2 {
-                    // left the phrase right after "ge" while still voiced:
-                    // possibly the held "kyo" of a slow Daimoku
-                    let held = (t + 1..self.t).filter(|&x| self.act[(x as usize) % RING]).count() as u64;
-                    if held * 3 >= (self.t - t) * 2 {
-                        self.evaluate_ex(t, node, true);
-                    }
                 }
                 return;
             }
@@ -880,6 +1033,10 @@ impl Engine {
             }
         }
         self.step_inner(raw);
+        if let Some(child) = self.slow.as_mut() {
+            child.step(raw);
+            self.merge_slow();
+        }
     }
 
     /// The online mean normalisation starts from the training average,
@@ -929,6 +1086,8 @@ impl Engine {
         self.scorer.emissions(&feat, &mut e);
         self.emit[idx] = e;
         self.act[idx] = raw.active;
+        self.hf[idx] = raw.hf;
+        self.voiced[idx] = raw.voiced;
         if raw.active {
             self.last_active = self.t;
             self.active_frames += 1;
@@ -984,6 +1143,10 @@ impl Engine {
             let u = self.t - lag;
             self.commit(u, s);
             self.next_commit = u + 1;
+        }
+        self.track_segment(raw.active);
+        if self.t > 0 && self.t % VERIFY_EVERY == 0 {
+            self.verify_window(false);
         }
         self.t += 1;
     }
@@ -1083,7 +1246,16 @@ pub struct BatchResult {
 }
 
 pub fn count_samples(model: &Model, samples: &[f32], sample_rate: u32) -> BatchResult {
+    count_samples_with(model, None, samples, sample_rate)
+}
+
+/// Like [`count_samples`], with the slow controller when a slow model is
+/// given.
+pub fn count_samples_with(model: &Model, slow: Option<&Model>, samples: &[f32], sample_rate: u32) -> BatchResult {
     let mut e = Engine::new(model, sample_rate);
+    if let Some(sm) = slow {
+        e = e.with_slow(sm, sample_rate);
+    }
     for chunk in samples.chunks(2048) {
         e.push(chunk);
     }
@@ -1096,5 +1268,394 @@ pub fn count_samples(model: &Model, samples: &[f32], sample_rate: u32) -> BatchR
         rejected: e.rejected(),
         aborted: e.aborted(),
         frames: e.frames_seen(),
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// Segment review (second pass)
+// ---------------------------------------------------------------------------
+
+/// One phrase of a reviewed alignment.
+struct AlignedCycle {
+    start: u64,
+    end: u64,
+    llr_sum: f32,
+    act: u32,
+    /// Voiced frames of "kyo" and their evidence.
+    kyo_act: u32,
+    kyo_llr: f32,
+}
+
+impl Engine {
+    /// Follows stretches of voice; when one ends with a pause (a breath),
+    /// it is reviewed.
+    fn track_segment(&mut self, active: bool) {
+        let t = self.t;
+        if active {
+            if self.ev.seg_start.is_none() {
+                self.ev.seg_start = Some(t);
+            }
+            self.ev.seg_quiet = 0;
+            return;
+        }
+        let Some(a) = self.ev.seg_start else { return };
+        self.ev.seg_quiet += 1;
+        if self.ev.seg_quiet == REVIEW_QUIET {
+            self.ev.seg_start = None;
+            let b = t - REVIEW_QUIET as u64;
+            self.review_segment(a, b);
+        }
+    }
+
+    /// Second pass over the stretch of voice `a..=b` (between two
+    /// breaths), with full hindsight. Finds how many complete Daimoku best
+    /// explain it (acoustics plus the session's rhythm); if that is more
+    /// than were counted, the missing ones are added.
+    fn review_segment(&mut self, a: u64, b: u64) {
+        if self.is_child {
+            return;
+        }
+        let len = b.saturating_sub(a) + 1;
+        if len < 60 || len > REVIEW_MAX_FRAMES || self.t.saturating_sub(a) + 2 >= RING as u64 {
+            return;
+        }
+        let Some(span_med) = median_of(&self.ev.recent_spans) else { return };
+        if self.ev.recent_gaps.len() < 3 {
+            return;
+        }
+        let counted: Vec<u64> = self.ev.events.iter().map(|e| e.frame).filter(|&f| f >= a && f <= b + 10).collect();
+        if counted.is_empty() {
+            // not a stretch of Daimoku as far as the counter can tell
+            return;
+        }
+        self.review_range(a, b, &counted, span_med);
+    }
+
+    /// Core of both reviews: if `a..=b` is best explained by more complete
+    /// Daimoku than the `counted` ones, adds the missing ones.
+    fn review_range(&mut self, a: u64, b: u64, counted: &[u64], span_med: f32) -> usize {
+        let c = counted.len();
+        let kmax = c + REVIEW_MAX_ADD;
+        let Some(results) = self.count_alignments(a, b, kmax, span_med) else { return 0 };
+        // results[k] = (score with prior, cycles)
+        let score_c = results.get(c).and_then(|r| r.as_ref()).map(|r| r.0).unwrap_or(f32::MIN);
+        let mut best_k = c;
+        let mut best = score_c;
+        for (k, r) in results.iter().enumerate().skip(c + 1) {
+            if let Some((sc, _)) = r {
+                if *sc > best {
+                    best = *sc;
+                    best_k = k;
+                }
+            }
+        }
+        if best_k <= c || best - score_c < REVIEW_MARGIN {
+            return 0;
+        }
+        let cycles = &results[best_k].as_ref().unwrap().1;
+        let min_llr = (REVIEW_LLR_FACTOR * self.params.ref_llr).max(0.2);
+        for cy in cycles {
+            let d = (cy.end - cy.start + 1) as f32 / span_med;
+            let kyo_ok = cy.kyo_act >= KYO_MIN_ACT && cy.kyo_llr / cy.kyo_act as f32 >= KYO_MIN_LLR;
+            if !kyo_ok || !(0.65..=1.5).contains(&d) || cy.act < 15 || cy.llr_sum / (cy.act as f32) < min_llr {
+                return 0;
+            }
+        }
+        // phrases of the alignment not matched by a counted Daimoku
+        let tol = (span_med * 0.5) as u64;
+        let mut added = Vec::new();
+        for cy in cycles {
+            let hit = counted.iter().any(|&f| f + tol >= cy.end && f <= cy.end + tol)
+                || self.ev.events.iter().any(|e| e.frame + tol >= cy.end && e.frame <= cy.end + tol);
+            if !hit {
+                added.push(cy.end);
+            }
+        }
+        let n_add = (best_k - c).min(added.len());
+        for &f in added.iter().take(n_add) {
+            let pos = self.ev.events.partition_point(|e| e.frame < f);
+            self.ev.events.insert(pos, CountEvent { frame: f, llr: 0.0, span: 0, inferred: true });
+            self.ev.reviewed_added += 1;
+        }
+        n_add
+    }
+
+    /// Long check (every `VERIFY_EVERY` frames, over the last ~20 s): with
+    /// the tempo measured on all the Daimoku of the window, every interval
+    /// between two counted Daimoku that is too long for the tempo (a stall,
+    /// or a miss across a breath) is aligned again.
+    fn verify_window(&mut self, at_end: bool) {
+        if self.is_child {
+            return;
+        }
+        let lo = self.t.saturating_sub(VERIFY_WINDOW);
+        let hi = if at_end { self.t } else { self.t.saturating_sub(VERIFY_SETTLE) };
+        let evs: Vec<(u64, u32, bool)> = self
+            .ev
+            .events
+            .iter()
+            .filter(|e| e.frame > lo && e.frame <= hi)
+            .map(|e| (e.frame, e.span, e.inferred))
+            .collect();
+        if evs.len() < VERIFY_MIN_EVENTS {
+            return;
+        }
+        // tempo of the window
+        let mut gaps: Vec<f32> = evs.windows(2).map(|w| (w[1].0 - w[0].0) as f32).collect();
+        gaps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let period = gaps[gaps.len() / 2];
+        let mut spans: Vec<f32> = evs.iter().filter(|e| !e.2 && e.1 > 0).map(|e| e.1 as f32).collect();
+        if spans.len() < 3 {
+            return;
+        }
+        spans.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let span_med = spans[spans.len() / 2];
+        for w in evs.windows(2) {
+            let (e0, e1) = (w[0].0, w[1].0);
+            if e1 <= self.ev.verified_upto {
+                continue;
+            }
+            self.ev.verified_upto = e1;
+            if ((e1 - e0) as f32) < VERIFY_GAP * period {
+                continue;
+            }
+            let a = e0 + 5;
+            if e1 <= a + 60 || self.t.saturating_sub(a) + 2 >= RING as u64 {
+                continue;
+            }
+            let n = self.review_range(a, e1, &[e1], span_med);
+            self.ev.verify_added += n as u32;
+        }
+        self.bridge_noise(lo, hi, period, at_end);
+    }
+
+    /// Noise bridge: see `BRIDGE_*`.
+    fn bridge_noise(&mut self, lo: u64, hi: u64, period: f32, at_end: bool) {
+        let evs: Vec<u64> = self.ev.events.iter().map(|e| e.frame).filter(|&f| f > lo && f <= hi).collect();
+        let (nb, na) = (BRIDGE_ANCHORS_BEFORE, BRIDGE_ANCHORS_AFTER);
+        if evs.len() < nb + na + 2 || period < 50.0 {
+            return;
+        }
+        let regular = |g: u64| ((g as f32 / period) - 1.0).abs() <= BRIDGE_ANCHOR_TOL;
+        for i in nb..evs.len() - 1 {
+            let (e0, e1) = (evs[i], evs[i + 1]);
+            if e1 <= self.ev.bridged_upto || ((e1 - e0) as f32) < VERIFY_GAP * period {
+                continue;
+            }
+            if i + 1 + na >= evs.len() {
+                // anchors after the gap not heard yet
+                if at_end {
+                    self.ev.bridged_upto = e1;
+                }
+                break;
+            }
+            self.ev.bridged_upto = e1;
+            if self.t.saturating_sub(evs[i - nb]) + 2 >= RING as u64 {
+                continue;
+            }
+            let before = (i - nb..i).all(|j| regular(evs[j + 1] - evs[j]));
+            let after = (i + 1..i + 1 + na).all(|j| regular(evs[j + 1] - evs[j]));
+            if !before || !after {
+                continue;
+            }
+            let x = (e1 - e0) as f32 / period;
+            let k = x.round();
+            if k < 2.0 || k > BRIDGE_MAX_PERIODS as f32 || (x - k).abs() > BRIDGE_FIT {
+                continue;
+            }
+            // noise level of the surrounding Daimoku
+            let mut base: Vec<f32> = (evs[i - nb]..=e0)
+                .chain(e1..=evs[i + 1 + na])
+                .map(|t| (t as usize) % RING)
+                .filter(|&ix| self.act[ix])
+                .map(|ix| self.hf[ix])
+                .collect();
+            if base.len() < 50 {
+                continue;
+            }
+            base.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let base = base[base.len() / 2];
+            let n = (e1 - e0 - 1) as f32;
+            let (mut act, mut voiced, mut noisy) = (0u32, 0u32, 0u32);
+            for t in e0 + 1..e1 {
+                let ix = (t as usize) % RING;
+                act += self.act[ix] as u32;
+                voiced += (self.voiced[ix] > BRIDGE_VOICED_LEVEL) as u32;
+                noisy += (self.hf[ix] > base + BRIDGE_NOISE_NATS) as u32;
+            }
+            if (act as f32) < BRIDGE_ACTIVE * n || (voiced as f32) < BRIDGE_VOICED * n || (noisy as f32) < BRIDGE_NOISY * n {
+                continue;
+            }
+            let k = k as u64;
+            for j in 1..k {
+                let f = e0 + (e1 - e0) * j / k;
+                let pos = self.ev.events.partition_point(|e| e.frame < f);
+                self.ev.events.insert(pos, CountEvent { frame: f, llr: 0.0, span: 0, inferred: true });
+                self.ev.verify_added += 1;
+            }
+        }
+    }
+
+    /// Viterbi over frames `a..=b` that also counts phrases: for every
+    /// number of complete Daimoku `k <= kmax`, the best alignment's score
+    /// (plus the rhythm prior) and its phrases.
+    #[allow(clippy::type_complexity)]
+    fn count_alignments(&self, a: u64, b: u64, kmax: usize, span_med: f32) -> Option<Vec<Option<(f32, Vec<AlignedCycle>)>>> {
+        let nn = self.nn;
+        let nk = kmax + 1;
+        let first = 0usize;
+        let kyo_end = (0..nn).filter(|&n| self.node_model[n] == N_CHAIN - 1).max()?;
+        let sil = (0..nn).find(|&n| self.node_model[n] == NODE_SIL)?;
+        let gar = (0..nn).find(|&n| self.node_model[n] == NODE_GAR)?;
+        let is_chain = |n: usize| self.node_model[n] < N_CHAIN;
+        let is_pause = |n: usize| (NODE_PAUSE0..NODE_SIL).contains(&self.node_model[n]);
+        let frames = (b - a + 1) as usize;
+        let emit = |t: u64, n: usize| -> f32 {
+            let idx = (t as usize) % RING;
+            let m = self.node_model[n];
+            let mut v = self.emit[idx][m];
+            if (m == NODE_GAR || m == NODE_SIL) && self.act[idx] {
+                v -= REVIEW_GAR_PEN;
+            }
+            v
+        };
+        // back-pointers: predecessor node, and whether k was incremented
+        let mut bp: Vec<u16> = vec![0; frames * nk * nn];
+        let mut d = vec![NEG; nk * nn];
+        let mut nd = vec![NEG; nk * nn];
+        for &(n, cst) in &self.graph.init {
+            let k = if n == first { 1 } else { 0 };
+            if k < nk {
+                d[k * nn + n] = cst + emit(a, n);
+            }
+        }
+        for (i, t) in (a + 1..=b).enumerate() {
+            let fi = i + 1;
+            for v in nd.iter_mut() {
+                *v = NEG;
+            }
+            for n in 0..nn {
+                let e = emit(t, n);
+                for &(p, cst) in &self.graph.preds[n] {
+                    // no leaving a phrase half-way inside a reviewed stretch
+                    if n == gar && (is_pause(p) || (is_chain(p) && p != kyo_end)) {
+                        continue;
+                    }
+                    let inc = n == first;
+                    for k in 0..nk {
+                        let kp = if inc {
+                            if k == 0 {
+                                continue;
+                            }
+                            k - 1
+                        } else {
+                            k
+                        };
+                        let v = d[kp * nn + p];
+                        if v <= NEG / 2.0 {
+                            continue;
+                        }
+                        let v = v + cst + e;
+                        if v > nd[k * nn + n] {
+                            nd[k * nn + n] = v;
+                            bp[(fi * nk + k) * nn + n] = p as u16 | if inc { 1 << 15 } else { 0 };
+                        }
+                    }
+                }
+            }
+            // keep numbers small
+            let m = nd.iter().cloned().fold(NEG, f32::max);
+            if m <= NEG / 2.0 {
+                return None;
+            }
+            std::mem::swap(&mut d, &mut nd);
+        }
+        let _ = sil;
+        let mut out = Vec::with_capacity(nk);
+        for k in 0..nk {
+            // end: after "kyo", or still inside it
+            let mut best = NEG;
+            let mut arg = usize::MAX;
+            for n in 0..nn {
+                let ok = n == kyo_end || n == sil || n == gar || (is_chain(n) && self.node_model[n] / K == N_SYL - 1);
+                if ok && k > 0 && d[k * nn + n] > best {
+                    best = d[k * nn + n];
+                    arg = n;
+                }
+            }
+            if arg == usize::MAX || best <= NEG / 2.0 {
+                out.push(None);
+                continue;
+            }
+            // trace back, collecting the phrases
+            let mut cycles: Vec<AlignedCycle> = Vec::new();
+            let mut cur_end: Option<u64> = None;
+            let mut llr = 0.0f32;
+            let mut act = 0u32;
+            let mut kyo_act = 0u32;
+            let mut kyo_llr = 0.0f32;
+            let mut n = arg;
+            let mut kk = k;
+            let mut fi = frames - 1;
+            loop {
+                let t = a + fi as u64;
+                let m = self.node_model[n];
+                let idx = (t as usize) % RING;
+                if m < N_CHAIN {
+                    if cur_end.is_none() {
+                        cur_end = Some(t);
+                    }
+                    if self.act[idx] {
+                        let v = self.emit[idx][m] - self.emit[idx][NODE_GAR];
+                        llr += v;
+                        act += 1;
+                        if m / K == N_SYL - 1 {
+                            kyo_llr += v;
+                            kyo_act += 1;
+                        }
+                    }
+                }
+                let entered = fi == 0 || (bp[(fi * nk + kk) * nn + n] >> 15) == 1;
+                if n == first && entered {
+                    if let Some(end) = cur_end.take() {
+                        cycles.push(AlignedCycle { start: t, end, llr_sum: llr, act, kyo_act, kyo_llr });
+                    }
+                    llr = 0.0;
+                    act = 0;
+                    kyo_act = 0;
+                    kyo_llr = 0.0;
+                }
+                if fi == 0 {
+                    break;
+                }
+                let v = bp[(fi * nk + kk) * nn + n];
+                if (v >> 15) == 1 {
+                    kk -= 1;
+                }
+                n = (v & 0x7fff) as usize;
+                fi -= 1;
+            }
+            cycles.reverse();
+            if cycles.len() != k {
+                out.push(None);
+                continue;
+            }
+            let prior: f32 = cycles
+                .iter()
+                .map(|c| {
+                    let r = ((c.end - c.start + 1) as f32 / span_med).ln() / REVIEW_PRIOR_SIGMA;
+                    -0.5 * r * r
+                })
+                .sum();
+            out.push(Some((best + REVIEW_PRIOR_W * prior, cycles)));
+        }
+        Some(out)
+    }
+
+    /// Daimoku added so far by the segment review, the long check and
+    /// the slow controller (diagnostics).
+    pub fn added_by_checks(&self) -> (u32, u32, usize) {
+        (self.ev.reviewed_added, self.ev.verify_added, self.ev.slow_added.len())
     }
 }

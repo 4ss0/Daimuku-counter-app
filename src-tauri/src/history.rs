@@ -95,7 +95,7 @@ impl History {
     /// Adds `count` Daimoku chanted without the counter, now.
     pub fn add_manual(&self, count: u32) -> Result<SessionRecord, String> {
         if count == 0 {
-            return Err("il numero deve essere almeno 1".to_string());
+            return Err("the count must be at least 1".to_string());
         }
         self.add(Utc::now(), 0.0, count, 0, true)
     }
@@ -106,7 +106,7 @@ impl History {
             .sessions
             .iter_mut()
             .find(|s| s.id == id)
-            .ok_or_else(|| format!("sessione {id} non trovata"))?;
+            .ok_or_else(|| format!("session {id} not found"))?;
         rec.count = count.min(MAX_COUNT);
         let out = rec.clone();
         self.persist(&g)?;
@@ -118,7 +118,7 @@ impl History {
         let before = g.sessions.len();
         g.sessions.retain(|s| s.id != id);
         if g.sessions.len() == before {
-            return Err(format!("sessione {id} non trovata"));
+            return Err(format!("session {id} not found"));
         }
         self.persist(&g)
     }

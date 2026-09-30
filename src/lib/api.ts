@@ -99,7 +99,7 @@ export const api = {
 export function errText(e: unknown): string {
   const s = String(e);
   const tr = get(t);
-  if (/permission|denied|autorizz|build input stream|start stream|input config|audio backend/i.test(s)) {
+  if (/permission|denied|build input stream|start stream|input config|audio backend/i.test(s)) {
     return `${tr('err.mic')} (${s})`;
   }
   if (/no default input device/i.test(s)) {

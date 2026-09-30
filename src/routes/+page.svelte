@@ -308,7 +308,7 @@
       {/if}
     </section>
   {:else if !running && userTakes === 0}
-    <a class="tip glass" href="/voce">
+    <a class="tip glass" href="/voice">
       <strong>{$t('count.tipTitle')}</strong>
       <span>{$t('count.tipText')}</span>
     </a>
