@@ -116,7 +116,9 @@ const BRIDGE_ANCHOR_TOL: f32 = 0.2;
 /// this many periods long;
 const BRIDGE_FIT: f32 = 0.35;
 const BRIDGE_MAX_PERIODS: u32 = 9;
-/// voiced all along (share of active frames, share of frames with a pitch),
+/// voiced all along (share of active frames, share of frames with a pitch,
+/// also among the noisy frames alone: noise with no voice under it is not
+/// bridged),
 const BRIDGE_ACTIVE: f32 = 0.9;
 const BRIDGE_VOICED_LEVEL: f32 = 0.7;
 const BRIDGE_VOICED: f32 = 0.45;
@@ -124,6 +126,17 @@ const BRIDGE_VOICED: f32 = 0.45;
 /// is this far (nats) above the one of the surrounding Daimoku.
 const BRIDGE_NOISE_NATS: f32 = 3.0;
 const BRIDGE_NOISY: f32 = 0.25;
+
+/// Channel-mean protection: a frame is "noise only" when its high/low band
+/// ratio is this far (nats) above the voice's usual one and it has no pitch
+/// (voicing below this); the mean is not updated while at least this share
+/// of the last `NOISE_SUSTAIN_FRAMES` frames were noise only (a consonant or
+/// a breath is far shorter).
+const NOISE_HF_NATS: f32 = 3.0;
+const NOISE_VOICED_MAX: f32 = 0.7;
+const NOISE_SUSTAIN_FRAMES: u32 = 30;
+const NOISE_SUSTAIN_SHARE: f32 = 0.8;
+const HF_BASE_RATE: f32 = 0.005;
 
 const SLOW_CTRL_MIN_SPAN: u32 = 250;
 /// ... and only in groups: another slow phrase within 12 s.
@@ -477,6 +490,12 @@ pub struct Engine {
     /// Per-frame noise and voicing measures (see `RawFrame`).
     hf: Vec<f32>,
     voiced: Vec<f32>,
+    /// Usual high/low band ratio of the voice (tracked on voiced frames)
+    /// and how many frames it has seen.
+    hf_base: f32,
+    hf_n: u32,
+    /// Last 64 frames: bit set = noise with no voice (see `step_inner`).
+    nz_hist: u64,
     next_commit: u64,
 
     ev: Counter,
@@ -533,6 +552,9 @@ impl Engine {
             act: vec![false; RING],
             hf: vec![0.0; RING],
             voiced: vec![0.0; RING],
+            hf_base: -2.0,
+            hf_n: 0,
+            nz_hist: 0,
             next_commit: 0,
             ev: Counter::default(),
             last_active: 0,
@@ -1076,7 +1098,21 @@ impl Engine {
     }
 
     fn step_inner(&mut self, raw: &RawFrame) {
-        self.cmn.update(&raw.cep, raw.active);
+        // Sustained noise with no voice in it (beads rubbed while pausing)
+        // must not drag the channel mean away from the voice: after it the
+        // counter would stay deaf until the mean has recovered (~3 s).
+        if raw.active && raw.voiced > NOISE_VOICED_MAX {
+            let rate = if self.hf_n < 100 { 0.05 } else { HF_BASE_RATE };
+            self.hf_base += rate * (raw.hf - self.hf_base);
+            self.hf_n += 1;
+        }
+        let noise_only = raw.active && raw.hf > self.hf_base + NOISE_HF_NATS && raw.voiced < NOISE_VOICED_MAX;
+        self.nz_hist = (self.nz_hist << 1) | noise_only as u64;
+        let recent = (self.nz_hist & ((1u64 << NOISE_SUSTAIN_FRAMES) - 1)).count_ones();
+        let sustained = recent as f32 >= NOISE_SUSTAIN_SHARE * NOISE_SUSTAIN_FRAMES as f32;
+        if !(noise_only && sustained) {
+            self.cmn.update(&raw.cep, raw.active);
+        }
         let feat = Feat {
             x: self.cmn.normalise(raw),
             active: raw.active,
@@ -1477,14 +1513,22 @@ impl Engine {
             base.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             let base = base[base.len() / 2];
             let n = (e1 - e0 - 1) as f32;
-            let (mut act, mut voiced, mut noisy) = (0u32, 0u32, 0u32);
+            let (mut act, mut voiced, mut noisy, mut noisy_voiced) = (0u32, 0u32, 0u32, 0u32);
             for t in e0 + 1..e1 {
                 let ix = (t as usize) % RING;
+                let v = self.voiced[ix] > BRIDGE_VOICED_LEVEL;
                 act += self.act[ix] as u32;
-                voiced += (self.voiced[ix] > BRIDGE_VOICED_LEVEL) as u32;
-                noisy += (self.hf[ix] > base + BRIDGE_NOISE_NATS) as u32;
+                voiced += v as u32;
+                if self.hf[ix] > base + BRIDGE_NOISE_NATS {
+                    noisy += 1;
+                    noisy_voiced += v as u32;
+                }
             }
-            if (act as f32) < BRIDGE_ACTIVE * n || (voiced as f32) < BRIDGE_VOICED * n || (noisy as f32) < BRIDGE_NOISY * n {
+            if (act as f32) < BRIDGE_ACTIVE * n
+                || (voiced as f32) < BRIDGE_VOICED * n
+                || (noisy as f32) < BRIDGE_NOISY * n
+                || (noisy_voiced as f32) < BRIDGE_VOICED * noisy as f32
+            {
                 continue;
             }
             let k = k as u64;
