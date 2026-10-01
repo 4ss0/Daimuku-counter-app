@@ -365,6 +365,31 @@ pub fn restore_backup(
     Ok(summary)
 }
 
+/// Writes the voice profile alone to a file, to share it.
+#[tauri::command(async)]
+pub fn export_voice_profile(
+    app: tauri::AppHandle,
+    profile_state: State<'_, ProfileState>,
+) -> Result<ExportedFile, String> {
+    let version = app.package_info().version.to_string();
+    let json = crate::backup::build_voice(&profile_state, &version)?;
+    let stamp = chrono::Local::now().format("%Y-%m-%d_%H%M");
+    let path = crate::backup::write_export(&format!("daimoku-voice-{stamp}.json"), json.as_bytes())?;
+    Ok(exported(&path))
+}
+
+/// Replaces the voice recordings with those of a voice file (its text).
+#[tauri::command(async)]
+pub fn import_voice_profile(
+    profile_state: State<'_, ProfileState>,
+    audio_state: State<'_, AudioState>,
+    content: String,
+) -> Result<crate::backup::RestoreSummary, String> {
+    let summary = crate::backup::restore_voice(&content, &profile_state)?;
+    audio_state.live_set_profile(Some(profile_state.snapshot()));
+    Ok(summary)
+}
+
 /// Writes a text export prepared by the app (e.g. sessions as CSV).
 #[tauri::command]
 pub fn write_text_export(name: String, content: String) -> Result<ExportedFile, String> {

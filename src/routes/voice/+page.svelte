@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { api, errText, fmtClock, type PersonalProfile, type ValidationResult } from '$lib/api';
   import { t, type Key } from '$lib/i18n';
+  import { hasNative, shareFile } from '$lib/native';
 
   type Speed = 'slow' | 'medium' | 'fast';
   const SPEEDS: { id: Speed; label: Key; n: number; how: Key }[] = [
@@ -26,6 +27,54 @@
   let confirmReset = false;
   let confirmDelete: number | null = null;
   let errorText = '';
+  let voiceMsg = '';
+  let voiceFile: HTMLInputElement;
+  let pendingVoice: { content: string; n: number } | null = null;
+
+  async function shareVoice() {
+    errorText = '';
+    voiceMsg = '';
+    try {
+      const f = await api.exportVoice();
+      if (hasNative()) await shareFile(f, 'application/json', $t('voice.share'));
+      else voiceMsg = $t('set.fileSavedIn', { p: f.path });
+    } catch (e) {
+      errorText = errText(e);
+    }
+  }
+
+  async function pickVoice() {
+    errorText = '';
+    voiceMsg = '';
+    const file = voiceFile.files?.[0];
+    voiceFile.value = '';
+    if (!file) return;
+    try {
+      const content = await file.text();
+      const head = JSON.parse(content);
+      const ok = head?.format === 'daimoku-counter-voice' || head?.format === 'daimoku-counter-backup';
+      const n = Array.isArray(head?.takes) ? head.takes.length : 0;
+      if (!ok || n === 0) throw new Error('invalid');
+      pendingVoice = { content, n };
+    } catch {
+      errorText = $t('voice.importInvalid');
+    }
+  }
+
+  async function confirmImport() {
+    if (!pendingVoice || busy) return;
+    busy = true;
+    try {
+      const r = await api.importVoice(pendingVoice.content);
+      voiceMsg = $t('voice.imported', { n: r.takes });
+      await loadProfile();
+    } catch (e) {
+      errorText = String(e).includes('voice-invalid') ? $t('voice.importInvalid') : errText(e);
+    } finally {
+      pendingVoice = null;
+      busy = false;
+    }
+  }
 
   $: sp = SPEEDS.find((s) => s.id === speed)!;
   $: done = coverage(profile);
@@ -268,6 +317,22 @@
     {:else}
       <p class="muted small-text">{$t('voice.none')}</p>
     {/if}
+    {#if pendingVoice}
+      <div class="confirm">
+        <span>{$t('voice.importConfirm', { n: pendingVoice.n })}</span>
+        <button class="btn ghost small" on:click={() => (pendingVoice = null)}>{$t('common.no')}</button>
+        <button class="btn primary small" on:click={confirmImport} disabled={busy}>{$t('common.yes')}</button>
+      </div>
+    {:else}
+      <div class="voice-io">
+        {#if profile && profile.takes.length > 0}
+          <button class="btn ghost small" on:click={shareVoice} disabled={busy}>{$t('voice.share')}</button>
+        {/if}
+        <button class="btn ghost small" on:click={() => voiceFile.click()} disabled={busy}>{$t('voice.import')}</button>
+      </div>
+    {/if}
+    {#if voiceMsg}<p class="muted small-text">{voiceMsg}</p>{/if}
+    <input class="hidden-file" type="file" accept=".json,application/json" bind:this={voiceFile} on:change={pickVoice} />
   </section>
 
   {#if errorText}<p class="error">{errorText}</p>{/if}
@@ -601,6 +666,14 @@
   .small-text {
     font-size: 0.85rem;
     margin: 8px 0 0;
+  }
+  .voice-io {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .hidden-file {
+    display: none;
   }
   .reset {
     margin-top: 10px;

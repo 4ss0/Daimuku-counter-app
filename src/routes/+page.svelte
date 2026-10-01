@@ -3,7 +3,8 @@
   import { api, errText, fmtClock, fmtNum, type LiveSessionSummary, type LiveView, type SessionRecord } from '$lib/api';
   import { locale, t } from '$lib/i18n';
   import { todayTotal } from '$lib/stats';
-  import { hasNative, shareFile, startCounting, stopCounting } from '$lib/native';
+  import { hasNative, shareFile, startCounting, stopCounting, updateCounting } from '$lib/native';
+  import { share, sessionText } from '$lib/share';
   import { prefs } from '$lib/prefs';
 
   const POLL_MS = 150;
@@ -69,13 +70,25 @@
     try {
       const v = await api.liveView();
       const fresh = (v.recovered ?? 0) - lastRecovered;
-      if (fresh > 0 && running) launchCoins(fresh);
+      // with the app hidden (screen off) animations do not run: recovered
+      // Daimoku go straight into the counter instead of queuing as coins
+      if (fresh > 0 && running && !document.hidden) launchCoins(fresh);
       lastRecovered = v.recovered ?? 0;
       view = v;
       sync();
+      if (running) updateCounting($t('notif.count', { n: fmtNum(liveCountOf(v), $locale) }));
     } catch (e) {
       errorText = errText(e);
     }
+  }
+
+  function liveCountOf(v: LiveView) {
+    return Math.max(0, (v.count ?? 0) - pending);
+  }
+
+  // coins still in flight when the app is hidden would all land on return
+  function onVisibility() {
+    if (document.hidden) clearCoins();
   }
 
   /** Pulses for every Daimoku that reaches the counter. */
@@ -149,6 +162,7 @@
     errorText = '';
     savedPath = '';
     summary = null;
+    shareMsg = '';
     lastCount = 0;
     lastRecovered = 0;
     clearCoins();
@@ -215,6 +229,12 @@
     }
   }
 
+  let shareMsg = '';
+  async function shareSession() {
+    if (!summary?.session) return;
+    shareMsg = await share(sessionText({ ...summary.session, count: corrected }));
+  }
+
   async function saveWav() {
     try {
       const f = await api.exportLiveWav();
@@ -234,6 +254,7 @@
 
   onMount(async () => {
     window.addEventListener('keydown', onKey);
+    document.addEventListener('visibilitychange', onVisibility);
     await refresh();
     try {
       userTakes = (await api.profile()).takes.length;
@@ -244,6 +265,7 @@
 
   onDestroy(() => {
     window.removeEventListener('keydown', onKey);
+    document.removeEventListener('visibilitychange', onVisibility);
     if (timer) clearInterval(timer);
     if (celebrateTimer) clearTimeout(celebrateTimer);
     if (running) {
@@ -356,10 +378,12 @@
         </div>
         <p class="hint">{$t('count.correctHint')}</p>
         <div class="sheet-actions">
+          <button class="link" on:click={shareSession}>{$t('share.button')}</button>
           <button class="link" on:click={saveWav}>{$t('count.saveAudio')}</button>
           <button class="link danger" on:click={discard}>{$t('count.deleteSession')}</button>
         </div>
         {#if savedPath}<p class="saved">{$t('count.savedIn', { p: savedPath })}</p>{/if}
+        {#if shareMsg}<p class="saved">{shareMsg}</p>{/if}
       {:else}
         <div class="sheet-title">{$t('count.noneTitle')}</div>
         <p class="hint">{$t('count.noneHint')}</p>

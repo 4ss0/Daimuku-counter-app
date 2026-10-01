@@ -3,6 +3,7 @@
   import BarChart from '$lib/BarChart.svelte';
   import { api, errText, fmtDuration, fmtNum, type SessionRecord } from '$lib/api';
   import { locale, t, type Key } from '$lib/i18n';
+  import { share, sessionText, statsText } from '$lib/share';
   import { bestDay, fmtWhen, goalDaysThisMonth, periodStats, sessionsIn, streak, type Period } from '$lib/stats';
 
   const PERIODS: { id: Period; label: Key; prev: Key | null; title: Key | null }[] = [
@@ -93,6 +94,16 @@
     }
   }
 
+  let shareMsg = '';
+  async function shareStats() {
+    shareMsg = await share(
+      statsText({ title: heroTitle, total: st.total, sessions: st.sessions, seconds: st.seconds, streak: days }),
+    );
+  }
+  async function shareSession(s: SessionRecord) {
+    shareMsg = await share(sessionText(s));
+  }
+
   onMount(load);
 </script>
 
@@ -108,7 +119,12 @@
   </div>
 
   <section class="hero glass">
-    <div class="hero-label">{heroTitle}</div>
+    <div class="hero-top">
+      <div class="hero-label">{heroTitle}</div>
+      <button class="share-btn" on:click={shareStats} aria-label={$t('share.button')} title={$t('share.button')}>
+        <svg viewBox="0 0 24 24"><path d="M12 4v11M8 8l4-4 4 4M6 13v5a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-5" /></svg>
+      </button>
+    </div>
     <div class="hero-num">{fmtNum(st.total, $locale)}</div>
     <div class="hero-sub">
       {$t('count.unit')}
@@ -196,6 +212,7 @@
               {#if !s.manual && s.detected !== s.count}
                 <span class="det">{$t('count.detected', { n: s.detected })}</span>
               {/if}
+              <button class="link" on:click={() => shareSession(s)}>{$t('share.button')}</button>
               <button class="link danger" on:click={() => remove(s)}>{$t('common.delete')}</button>
             </div>
           {/if}
@@ -207,6 +224,7 @@
     {/if}
   </section>
 
+  {#if shareMsg}<p class="note-ok">{shareMsg}</p>{/if}
   {#if errorText}<p class="error">{errorText}</p>{/if}
 </div>
 
@@ -250,6 +268,34 @@
 
   .hero {
     padding: 14px 16px;
+  }
+  .hero-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .share-btn {
+    background: none;
+    border: none;
+    padding: 4px;
+    color: var(--muted);
+    cursor: pointer;
+    line-height: 0;
+  }
+  .share-btn svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .note-ok {
+    color: var(--green);
+    font-size: 0.8rem;
+    text-align: center;
+    margin: 0;
   }
   .hero-label {
     color: var(--muted);
@@ -457,6 +503,7 @@
   }
   .link.danger {
     color: var(--red);
+    margin-left: 4px;
   }
   .more {
     width: 100%;

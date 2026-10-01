@@ -17,6 +17,9 @@ pub const FORMAT: &str = "daimoku-counter-backup";
 pub const VERSION: u32 = 1;
 /// Refuse anything bigger: a normal backup is a few MB.
 pub const MAX_BACKUP_BYTES: usize = 200 * 1024 * 1024;
+/// A voice profile on its own (the user's recordings), to share or move
+/// to another device without touching sessions and preferences.
+pub const VOICE_FORMAT: &str = "daimoku-counter-voice";
 
 #[derive(Serialize, Deserialize)]
 struct BackupTake {
@@ -109,6 +112,82 @@ pub fn build(history: &History, profile: &ProfileState, app_version: &str) -> Re
 
 /// Restores a backup, replacing the current data. Everything is validated
 /// before anything is overwritten.
+#[derive(Serialize, Deserialize)]
+struct VoiceFile {
+    format: String,
+    version: u32,
+    app_version: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    takes: Vec<BackupTake>,
+}
+
+fn encode_takes(profile: &ProfileState) -> Result<Vec<BackupTake>, String> {
+    let mut takes = Vec::new();
+    for (record, samples, sr) in profile.export_takes() {
+        takes.push(BackupTake {
+            record,
+            wav_base64: b64().encode(wav16_bytes(&samples, sr)?),
+        });
+    }
+    Ok(takes)
+}
+
+fn decode_takes(takes: Vec<BackupTake>) -> (Vec<(TakeRecord, Vec<f32>, u32)>, usize) {
+    let mut out = Vec::new();
+    let mut skipped = 0;
+    for t in takes {
+        match b64()
+            .decode(t.wav_base64.as_bytes())
+            .ok()
+            .and_then(|b| crate::base::decode_wav(&b).ok())
+        {
+            Some((samples, sr)) => out.push((t.record, samples, sr)),
+            None => skipped += 1,
+        }
+    }
+    (out, skipped)
+}
+
+/// The voice profile alone, as JSON.
+pub fn build_voice(profile: &ProfileState, app_version: &str) -> Result<String, String> {
+    let file = VoiceFile {
+        format: VOICE_FORMAT.to_string(),
+        version: VERSION,
+        app_version: app_version.to_string(),
+        created_at: chrono::Utc::now(),
+        takes: encode_takes(profile)?,
+    };
+    serde_json::to_string(&file).map_err(|e| format!("serialize: {e}"))
+}
+
+/// Replaces the voice recordings with those of a voice file (or of a full
+/// backup); sessions and preferences are left alone.
+pub fn restore_voice(content: &str, profile: &ProfileState) -> Result<RestoreSummary, String> {
+    if content.len() > MAX_BACKUP_BYTES {
+        return Err("voice-invalid: file too large".to_string());
+    }
+    let v: serde_json::Value = serde_json::from_str(content.trim_start_matches('\u{feff}'))
+        .map_err(|e| format!("voice-invalid: {e}"))?;
+    let format = v.get("format").and_then(|f| f.as_str()).unwrap_or("");
+    if format != VOICE_FORMAT && format != FORMAT {
+        return Err("voice-invalid: not a Daimoku Counter voice".to_string());
+    }
+    if v.get("version").and_then(|x| x.as_u64()).unwrap_or(0) > VERSION as u64 {
+        return Err("backup-newer: made by a newer version of the app".to_string());
+    }
+    let takes: Vec<BackupTake> = match v.get("takes") {
+        Some(t) => serde_json::from_value(t.clone()).map_err(|e| format!("voice-invalid: {e}"))?,
+        None => Vec::new(),
+    };
+    if takes.is_empty() {
+        return Err("voice-invalid: no recordings".to_string());
+    }
+    let (takes, skipped) = decode_takes(takes);
+    let n_in = takes.len();
+    let kept = profile.replace_takes(takes)?;
+    Ok(RestoreSummary { sessions: 0, takes: kept, takes_skipped: skipped + (n_in - kept) })
+}
+
 pub fn restore(content: &str, history: &History, profile: &ProfileState) -> Result<RestoreSummary, String> {
     if content.len() > MAX_BACKUP_BYTES {
         return Err("backup-invalid: file too large".to_string());

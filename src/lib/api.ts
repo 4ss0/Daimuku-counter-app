@@ -95,6 +95,8 @@ export const api = {
 
   createBackup: () => invoke<ExportedFile>('create_backup'),
   restoreBackup: (content: string) => invoke<RestoreSummary>('restore_backup', { content }),
+  exportVoice: () => invoke<ExportedFile>('export_voice_profile'),
+  importVoice: (content: string) => invoke<RestoreSummary>('import_voice_profile', { content }),
   writeTextExport: (name: string, content: string) => invoke<ExportedFile>('write_text_export', { name, content }),
 };
 

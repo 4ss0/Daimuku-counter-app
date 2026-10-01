@@ -83,6 +83,8 @@ pub fn run() {
             // backup & exports
             commands::create_backup,
             commands::restore_backup,
+            commands::export_voice_profile,
+            commands::import_voice_profile,
             commands::write_text_export,
             commands::validate_training_take,
             // training store
