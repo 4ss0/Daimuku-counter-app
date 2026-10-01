@@ -1,0 +1,18 @@
+[package]
+name = "daimoku-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Evaluation tools for the counter. The library compiles the app's own
+# recognition sources (src-tauri/src) directly, so it always measures the
+# code that ships.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hound = "3"
+
+[profile.release]
+opt-level = 3
+
+[workspace]

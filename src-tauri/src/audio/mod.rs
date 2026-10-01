@@ -69,6 +69,9 @@ pub struct LiveSnapshot {
 #[derive(Debug, Clone, Serialize)]
 pub struct LiveView {
     pub count: usize,
+    /// Of `count`, the Daimoku added by the checkers after the fact (the UI
+    /// moves them into the counter like coins).
+    pub recovered: usize,
     /// "idle" | "warming" | "locked"
     pub state: String,
     /// Someone is producing sound right now.
@@ -194,6 +197,7 @@ impl LiveCounter {
     pub fn view(&self) -> LiveView {
         let empty = LiveView {
             count: 0,
+            recovered: 0,
             state: "idle".to_string(),
             speaking: false,
             elapsed_secs: 0.0,
@@ -213,6 +217,7 @@ impl LiveCounter {
         let from = ev.len().saturating_sub(LIVE_VIEW_EVENTS);
         LiveView {
             count: snap.count,
+            recovered: snap.recovered,
             state: state_str(snap.state).to_string(),
             speaking: engine.is_speaking() && !engine.is_finished(),
             elapsed_secs: engine.elapsed_secs(),

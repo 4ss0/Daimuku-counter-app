@@ -56,6 +56,9 @@ pub struct RawFrame {
     /// autocorrelation peak in the 80-400 Hz pitch range): high while a
     /// voice is sounding, low for clicks and rustle alone.
     pub voiced: f32,
+    /// ln(power 100-1000 Hz): the loudness of the voice's lower harmonics,
+    /// whose rise and fall follow the syllables even under broadband noise.
+    pub lf: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +187,7 @@ fn dct_matrix() -> Vec<f32> {
 // ---------------------------------------------------------------------------
 
 /// One frame after analysis, before deltas: energy, cepstrum, active, hf, voiced.
-type Analysed = (f32, [f32; N_CEP], bool, f32, f32);
+type Analysed = (f32, [f32; N_CEP], bool, f32, f32, f32);
 
 pub struct FrontEnd {
     /// Integer decimation factor applied first (box filter), so the FFT
@@ -289,8 +292,8 @@ impl FrontEnd {
         }
         let mut pos = 0;
         while self.buf.len() - pos >= self.win {
-            let (energy, cep, hf, voiced) = self.analyse(pos);
-            self.push_frame(energy, cep, hf, voiced, out);
+            let (energy, cep, hf, voiced, lf) = self.analyse(pos);
+            self.push_frame(energy, cep, hf, voiced, lf, out);
             pos += self.hop;
         }
         if pos > 0 {
@@ -311,7 +314,7 @@ impl FrontEnd {
         }
     }
 
-    fn analyse(&mut self, pos: usize) -> (f32, [f32; N_CEP], f32, f32) {
+    fn analyse(&mut self, pos: usize) -> (f32, [f32; N_CEP], f32, f32, f32) {
         let frame = &self.buf[pos..pos + self.win];
         let mut pw = 0.0f64;
         for &x in frame {
@@ -335,7 +338,7 @@ impl FrontEnd {
 
         let voiced = self.voicing();
         let mut logmel = [0.0f32; N_MEL];
-        let (mut lo_pw, mut hi_pw) = (0.0f64, 0.0f64);
+        let (mut lo_pw, mut hi_pw, mut lf_pw) = (0.0f64, 0.0f64, 0.0f64);
         for (m, (first, w)) in self.mel.bands.iter().enumerate() {
             let mut acc = 0.0f64;
             for (j, &wt) in w.iter().enumerate() {
@@ -348,6 +351,9 @@ impl FrontEnd {
             let c = self.mel.centres[m];
             if c < 2000.0 {
                 lo_pw += acc;
+                if c < 1000.0 {
+                    lf_pw += acc;
+                }
             } else if c > 4000.0 {
                 hi_pw += acc;
             }
@@ -362,7 +368,7 @@ impl FrontEnd {
             }
             cep[k] = s;
         }
-        (energy, cep, hf, voiced)
+        (energy, cep, hf, voiced, (lf_pw + 1e-10).ln() as f32)
     }
 
     /// Normalised autocorrelation peak of the spectrum below 1 kHz, from
@@ -402,7 +408,7 @@ impl FrontEnd {
         best.min(1.0) as f32
     }
 
-    fn push_frame(&mut self, energy: f32, cep: [f32; N_CEP], hf: f32, voiced: f32, out: &mut Vec<RawFrame>) {
+    fn push_frame(&mut self, energy: f32, cep: [f32; N_CEP], hf: f32, voiced: f32, lf: f32, out: &mut Vec<RawFrame>) {
         // Activity gate.
         self.peak = if self.peak == f32::MIN {
             energy
@@ -424,7 +430,7 @@ impl FrontEnd {
             && energy > self.peak - GATE_NATS
             && energy > self.noise_energy + NOISE_MARGIN_NATS;
 
-        let item = (energy, cep, active, hf, voiced);
+        let item = (energy, cep, active, hf, voiced, lf);
         if !self.started {
             self.started = true;
             self.hist.push_back(item);
@@ -458,6 +464,7 @@ impl FrontEnd {
             active: h[2].2,
             hf: h[2].3,
             voiced: h[2].4,
+            lf: h[2].5,
         });
         self.hist.pop_front();
     }

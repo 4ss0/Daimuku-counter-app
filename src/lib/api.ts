@@ -12,6 +12,8 @@ export interface RestoreSummary {
 
 export interface LiveView {
   count: number;
+  /** Of `count`, the Daimoku added later by the checks (shown as coins). */
+  recovered: number;
   state: 'idle' | 'warming' | 'locked';
   speaking: boolean;
   elapsed_secs: number;

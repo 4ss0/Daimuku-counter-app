@@ -1,0 +1,5 @@
+# test recordings stay local (personal audio, large files)
+data/**/*.wav
+data/**/*.aac
+# build output
+target/

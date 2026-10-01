@@ -410,22 +410,15 @@ fn load_base_items() -> Vec<TrainItem> {
     items
 }
 
-/// A take counts as slow from this many seconds per Daimoku.
-const SLOW_TAKE_SECS: f32 = 2.5;
-
-/// Model for the slow controller: the slowest built-in example plus the
-/// user's slow takes only (mixing them with fast ones dilutes them).
+/// Model for the slow checker (see `engine::build_slow_model`): the slow
+/// built-in examples and the user's slow takes.
 fn retrain_slow(base: &[TrainItem], user: &[TrainItem], takes: &[TakeRecord]) -> Option<Model> {
-    let mut items: Vec<TrainItem> = Vec::new();
-    if let Some(b) = base.iter().max_by_key(|b| b.feats.len() / b.n_cycles.max(1)) {
-        items.push(b.clone());
-    }
-    for (item, take) in user.iter().zip(takes) {
-        if take.duration_secs / take.n_daimoku.max(1) as f32 >= SLOW_TAKE_SECS {
-            items.push(item.clone());
-        }
-    }
-    train_model(&items, &[], None, 8).map(|t| t.model)
+    let user: Vec<(TrainItem, f32)> = user
+        .iter()
+        .zip(takes)
+        .map(|(item, take)| (item.clone(), take.duration_secs / take.n_daimoku.max(1) as f32))
+        .collect();
+    crate::engine::build_slow_model(base, &user)
 }
 
 fn retrain(base: &[TrainItem], user: &[TrainItem]) -> Option<Model> {
@@ -493,7 +486,7 @@ mod tests {
     #[test]
     fn slow_model_is_always_available() {
         let s = ProfileState::new();
-        // built from the slowest built-in example even without user takes
+        // built from the slow built-in examples even without user takes
         assert!(s.snapshot().slow_model.is_some());
     }
 
@@ -502,7 +495,7 @@ mod tests {
         let s = ProfileState::new();
         let snap = s.snapshot();
         assert!(snap.is_usable());
-        assert_eq!(snap.base_clip_count, 4);
+        assert_eq!(snap.base_clip_count, crate::base::BASE_CLIPS.len());
         assert_eq!(snap.n_takes_helper(), 0);
         assert!(snap.ref_llr > 1.0);
     }
@@ -570,7 +563,7 @@ mod tests {
         let h = std::thread::spawn(move || s2.snapshot().base_clip_count);
         std::thread::sleep(std::time::Duration::from_millis(50));
         s.load();
-        assert_eq!(h.join().unwrap(), 4);
+        assert_eq!(h.join().unwrap(), crate::base::BASE_CLIPS.len());
     }
 
     #[test]

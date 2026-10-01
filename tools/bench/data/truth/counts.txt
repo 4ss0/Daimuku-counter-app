@@ -1,0 +1,18 @@
+# file truth_count  (whole file)
+c28 13
+r29 13
+r36 13
+j13 10
+j14 10
+wa0929 148
+live51 55
+pc0929 13
+noisy1 17
+fp13 9
+t3 10
+t4 10
+t5 3
+user_slow3 3
+u_fast10 10
+u_med5 5
+u_slow3b 3

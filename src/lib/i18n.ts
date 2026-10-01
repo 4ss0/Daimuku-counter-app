@@ -16,6 +16,8 @@ const it = {
 
   'count.today': 'Oggi',
   'count.unit': 'daimoku',
+  'count.recovered': 'ritrovati',
+  'count.recoveredHint': 'Daimoku ritrovati dai controlli: passano nel contatore',
   'count.ready': 'Pronto',
   'count.saved': 'Sessione salvata',
   'count.counting': 'Sto contando',
@@ -167,6 +169,8 @@ const en: Dict = {
 
   'count.today': 'Today',
   'count.unit': 'daimoku',
+  'count.recovered': 'recovered',
+  'count.recoveredHint': 'Daimoku found by the checks: they move into the counter',
   'count.ready': 'Ready',
   'count.saved': 'Session saved',
   'count.counting': 'Counting',
@@ -315,6 +319,8 @@ const ja: Dict = {
 
   'count.today': '今日',
   'count.unit': '遍',
+  'count.recovered': '再確認で追加',
+  'count.recoveredHint': '確認で見つかった題目:カウンターに移ります',
   'count.ready': '準備完了',
   'count.saved': '保存しました',
   'count.counting': 'カウント中',

@@ -27,11 +27,20 @@
   let timer: ReturnType<typeof setInterval> | null = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Daimoku found later by the checks wait in a small box under the ring
+  // and fly into the counter one by one, like coins
+  const COIN_GAP_MS = 320;
+  const COIN_SPREAD_MS = 2400;
+  let pending = 0;
+  let lastRecovered = 0;
+  let coins: { id: number; delay: number }[] = [];
+  let coinSeq = 0;
+
   let sessions: SessionRecord[] = [];
   let goal = 100;
   let userTakes = -1;
 
-  $: liveCount = running ? view?.count ?? 0 : summary ? corrected : 0;
+  $: liveCount = running ? Math.max(0, (view?.count ?? 0) - pending) : summary ? corrected : 0;
   $: baseToday = todayTotal(sessions);
   $: today = running ? baseToday + liveCount : baseToday;
   $: progress = Math.min(1, today / Math.max(1, goal));
@@ -59,12 +68,45 @@
   async function poll() {
     try {
       const v = await api.liveView();
-      if (v.count > lastCount) onIncrement(lastCount, v.count);
-      lastCount = v.count;
+      const fresh = (v.recovered ?? 0) - lastRecovered;
+      if (fresh > 0 && running) launchCoins(fresh);
+      lastRecovered = v.recovered ?? 0;
       view = v;
+      sync();
     } catch (e) {
       errorText = errText(e);
     }
+  }
+
+  /** Pulses for every Daimoku that reaches the counter. */
+  function sync() {
+    const shown = Math.max(0, (view?.count ?? 0) - pending);
+    if (shown > lastCount) onIncrement(lastCount, shown);
+    lastCount = shown;
+  }
+
+  // coins leave the box one after the other, also across batches
+  let nextCoinAt = 0;
+  function launchCoins(n: number) {
+    pending += n;
+    const gap = Math.min(COIN_GAP_MS, COIN_SPREAD_MS / n);
+    const now = performance.now();
+    const first = Math.max(now, nextCoinAt);
+    for (let i = 0; i < n; i++) coins.push({ id: coinSeq++, delay: Math.round(first - now + i * gap) });
+    nextCoinAt = first + n * gap;
+    coins = coins;
+  }
+
+  function land(id: number) {
+    coins = coins.filter((c) => c.id !== id);
+    pending = Math.max(0, pending - 1);
+    sync();
+  }
+
+  function clearCoins() {
+    coins = [];
+    pending = 0;
+    nextCoinAt = 0;
   }
 
   /** Highest milestone (1000, 100, 10) crossed going from `a` to `b`. */
@@ -108,6 +150,8 @@
     savedPath = '';
     summary = null;
     lastCount = 0;
+    lastRecovered = 0;
+    clearCoins();
     view = null;
     try {
       await api.startLive();
@@ -133,6 +177,7 @@
     try {
       summary = await api.stopLive();
       corrected = summary.count;
+      clearCoins();
       await poll();
       await refresh();
     } catch (e) {
@@ -234,6 +279,11 @@
       {/if}
     {/key}
     <div class="ring-glass"></div>
+    <div class="coins" aria-hidden="true">
+      {#each coins as c (c.id)}
+        <span class="coin" style="animation-delay:{c.delay}ms" on:animationend={() => land(c.id)}></span>
+      {/each}
+    </div>
     <svg class="ring" viewBox="0 0 280 280" aria-hidden="true">
       <circle class="track" cx="140" cy="140" r={R} />
       <circle
@@ -255,6 +305,14 @@
       <div class="unit">{$t('count.unit')}</div>
     </div>
   </div>
+
+  {#if running && (pending > 0 || lastRecovered > 0)}
+    <div class="coinbox" class:empty={pending === 0} title={$t('count.recoveredHint')} aria-label={$t('count.recoveredHint')}>
+      <span class="coin-icon" aria-hidden="true"></span>
+      <span class="coin-n">{pending}</span>
+      <span class="coin-label">{$t('count.recovered')}</span>
+    </div>
+  {/if}
 
   <div class="status">
     <span class="dot" class:on={running && view?.speaking} class:live={running}></span>
@@ -393,6 +451,78 @@
     background: var(--surface);
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
+  }
+  .coins {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 3;
+  }
+  .coin {
+    position: absolute;
+    left: 50%;
+    top: calc(100% + 30px);
+    width: 22px;
+    height: 22px;
+    margin: -11px 0 0 -11px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #fff7cf, #f2c94c 45%, #b9861a 100%);
+    box-shadow: 0 0 12px rgba(242, 201, 76, 0.75);
+    opacity: 0;
+    animation: coin-fly 0.75s cubic-bezier(0.3, 0.7, 0.4, 1) both;
+  }
+  @keyframes coin-fly {
+    0% {
+      top: calc(100% + 30px);
+      transform: scale(0.6);
+      opacity: 0;
+    }
+    15% {
+      transform: scale(1.05);
+      opacity: 1;
+    }
+    80% {
+      opacity: 1;
+    }
+    100% {
+      top: 50%;
+      transform: scale(0.35);
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .coin {
+      animation-duration: 0.01s;
+    }
+  }
+  .coinbox {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: -2px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 0.85rem;
+    transition: opacity 0.4s;
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
+  .coinbox.empty {
+    opacity: 0.5;
+  }
+  .coin-icon {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #fff7cf, #f2c94c 45%, #b9861a 100%);
+  }
+  .coin-n {
+    color: var(--text);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
   }
   .ring-wrap.speaking {
     box-shadow: 0 0 60px var(--accent-soft);
