@@ -90,7 +90,7 @@ fn index_path() -> Option<PathBuf> {
 fn takes_dir() -> Option<PathBuf> {
     Some(profile_dir()?.join("takes"))
 }
-fn take_wav_path(id: usize) -> Option<PathBuf> {
+pub(crate) fn take_wav_path(id: usize) -> Option<PathBuf> {
     Some(takes_dir()?.join(format!("take-{id}.wav")))
 }
 

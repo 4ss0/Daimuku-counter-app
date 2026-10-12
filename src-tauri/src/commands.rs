@@ -390,6 +390,27 @@ pub fn import_voice_profile(
     Ok(summary)
 }
 
+/// Writes a binary export prepared by the app (e.g. a PNG card), given
+/// as base64.
+#[tauri::command]
+pub fn write_binary_export(name: String, base64: String) -> Result<ExportedFile, String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64.as_bytes())
+        .map_err(|e| format!("base64: {e}"))?;
+    let path = crate::backup::write_export(&name, &bytes)?;
+    Ok(exported(&path))
+}
+
+/// Copies one of the user's voice recordings to the export folder.
+#[tauri::command]
+pub fn export_profile_take(id: usize) -> Result<ExportedFile, String> {
+    let src = crate::profile::take_wav_path(id).ok_or_else(|| "no data directory".to_string())?;
+    let bytes = std::fs::read(&src).map_err(|e| format!("read {}: {e}", src.display()))?;
+    let path = crate::backup::write_export(&format!("daimoku-voice-take-{id}.wav"), &bytes)?;
+    Ok(exported(&path))
+}
+
 /// Writes a text export prepared by the app (e.g. sessions as CSV).
 #[tauri::command]
 pub fn write_text_export(name: String, content: String) -> Result<ExportedFile, String> {

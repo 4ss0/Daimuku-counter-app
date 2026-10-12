@@ -98,6 +98,8 @@ export const api = {
   exportVoice: () => invoke<ExportedFile>('export_voice_profile'),
   importVoice: (content: string) => invoke<RestoreSummary>('import_voice_profile', { content }),
   writeTextExport: (name: string, content: string) => invoke<ExportedFile>('write_text_export', { name, content }),
+  writeBinaryExport: (name: string, base64: string) => invoke<ExportedFile>('write_binary_export', { name, base64 }),
+  exportTake: (id: number) => invoke<ExportedFile>('export_profile_take', { id }),
 };
 
 export function errText(e: unknown): string {

@@ -86,6 +86,8 @@ pub fn run() {
             commands::export_voice_profile,
             commands::import_voice_profile,
             commands::write_text_export,
+            commands::write_binary_export,
+            commands::export_profile_take,
             commands::validate_training_take,
             // training store
             commands::list_training_takes,

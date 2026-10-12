@@ -43,6 +43,18 @@
     }
   }
 
+  async function shareTake(id: number) {
+    errorText = '';
+    voiceMsg = '';
+    try {
+      const f = await api.exportTake(id);
+      if (hasNative()) await shareFile(f, 'audio/wav', $t('share.button'));
+      else voiceMsg = $t('set.fileSavedIn', { p: f.path });
+    } catch (e) {
+      errorText = errText(e);
+    }
+  }
+
   async function pickVoice() {
     errorText = '';
     voiceMsg = '';
@@ -298,6 +310,9 @@
                 <button class="mini danger" on:click={() => removeTake(tk.id)} disabled={busy}>{$t('common.delete')}</button>
               </span>
             {:else}
+              <button class="icon-btn share" on:click={() => shareTake(tk.id)} aria-label={$t('share.button')}>
+                <svg class="share-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="2.6" /><circle cx="6" cy="12" r="2.6" /><circle cx="18" cy="19" r="2.6" /><path d="M8.3 10.8l7.4-4.3M8.3 13.2l7.4 4.3" /></svg>
+              </button>
               <button class="icon-btn" on:click={() => (confirmDelete = tk.id)} aria-label={$t('voice.deleteConfirm')}>
                 <svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" /></svg>
               </button>
@@ -643,6 +658,19 @@
   }
   .icon-btn:active {
     color: var(--red);
+  }
+  :global(.share-ico) {
+    width: 1.15em;
+    height: 1.15em;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex: none;
+  }
+  .icon-btn.share:active {
+    color: var(--accent);
   }
   .tk-confirm {
     display: flex;

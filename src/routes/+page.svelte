@@ -5,6 +5,7 @@
   import { todayTotal } from '$lib/stats';
   import { hasNative, shareFile, startCounting, stopCounting, updateCounting } from '$lib/native';
   import { share, sessionText } from '$lib/share';
+  import { shareCard } from '$lib/card';
   import { prefs } from '$lib/prefs';
 
   const POLL_MS = 150;
@@ -47,13 +48,18 @@
   $: progress = Math.min(1, today / Math.max(1, goal));
   $: goalReached = today >= goal;
   $: elapsed = view?.elapsed_secs ?? 0;
+  // "listening" stays on through short pauses (breath, between syllables)
+  const SPEAK_HOLD_MS = 2000;
+  let lastSpokeAt = 0;
+  let heard = false;
+
   $: statusLabel = !running
     ? summary
       ? $t('count.saved')
       : $t('count.ready')
     : view?.state === 'locked'
       ? $t('count.counting')
-      : view?.speaking
+      : heard
         ? $t('count.listening')
         : $t('count.waiting');
   $: dateLabel = new Date().toLocaleDateString($locale, { weekday: 'long', day: 'numeric', month: 'long' });
@@ -75,6 +81,9 @@
       if (fresh > 0 && running && !document.hidden) launchCoins(fresh);
       lastRecovered = v.recovered ?? 0;
       view = v;
+      const now = performance.now();
+      if (v.speaking) lastSpokeAt = now;
+      heard = running && (v.speaking || now - lastSpokeAt < SPEAK_HOLD_MS);
       sync();
       if (running) updateCounting($t('notif.count', { n: fmtNum(liveCountOf(v), $locale) }));
     } catch (e) {
@@ -147,7 +156,7 @@
     celebrate = true;
     if (navigator.vibrate) navigator.vibrate([60, 80, 60, 80, 120]);
     if (celebrateTimer) clearTimeout(celebrateTimer);
-    celebrateTimer = setTimeout(() => (celebrate = false), 4000);
+    celebrateTimer = setTimeout(() => (celebrate = false), 8000);
   }
 
   function closeCelebration() {
@@ -163,6 +172,8 @@
     savedPath = '';
     summary = null;
     shareMsg = '';
+    heard = false;
+    lastSpokeAt = 0;
     lastCount = 0;
     lastRecovered = 0;
     clearCoins();
@@ -230,6 +241,22 @@
   }
 
   let shareMsg = '';
+  async function shareGoal() {
+    try {
+      shareMsg = await shareCard(
+        {
+          kicker: $t('count.goalTitle'),
+          big: fmtNum(celebrateCount, $locale),
+          unit: $t('count.unit'),
+          lines: [$t('share.goalLine', { n: fmtNum(goal, $locale) })],
+          progress: 1,
+        },
+        'daimoku-goal',
+      );
+    } catch (e) {
+      errorText = errText(e);
+    }
+  }
   async function shareSession() {
     if (!summary?.session) return;
     shareMsg = await share(sessionText({ ...summary.session, count: corrected }));
@@ -284,7 +311,7 @@
     </div>
   </header>
 
-  <div class="ring-wrap" class:speaking={running && view?.speaking}>
+  <div class="ring-wrap" class:speaking={running && heard}>
     {#key pulseKey}
       {#if pulseTier === 'p10' || pulseTier === 'p100' || pulseTier === 'p1000'}
         <div class="halo {pulseTier}" aria-hidden="true"></div>
@@ -337,7 +364,7 @@
   {/if}
 
   <div class="status">
-    <span class="dot" class:on={running && view?.speaking} class:live={running}></span>
+    <span class="dot" class:on={running && heard} class:live={running}></span>
     <span>{statusLabel}</span>
     {#if running || summary}
       <span class="clock">{fmtClock(running ? elapsed : summary?.duration_secs ?? 0)}</span>
@@ -378,7 +405,7 @@
         </div>
         <p class="hint">{$t('count.correctHint')}</p>
         <div class="sheet-actions">
-          <button class="link" on:click={shareSession}>{$t('share.button')}</button>
+          <button class="link share-link" on:click={shareSession}><svg class="share-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="2.6" /><circle cx="6" cy="12" r="2.6" /><circle cx="18" cy="19" r="2.6" /><path d="M8.3 10.8l7.4-4.3M8.3 13.2l7.4 4.3" /></svg>{$t('share.button')}</button>
           <button class="link" on:click={saveWav}>{$t('count.saveAudio')}</button>
           <button class="link danger" on:click={discard}>{$t('count.deleteSession')}</button>
         </div>
@@ -402,16 +429,18 @@
 </div>
 
 {#if celebrate}
-  <button class="celebrate" on:click={closeCelebration} aria-live="assertive">
+  <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+  <div class="celebrate" on:click={closeCelebration} aria-live="assertive">
     <div class="celebrate-card glass">
       <svg class="lotus" viewBox="0 0 64 64" aria-hidden="true">
         <path d="M32 10c5 6 7.5 12 7.5 18 0 1.6-.2 3.1-.5 4.6 4-3.4 9.2-5.4 15-5.9-.9 7.3-4 13.3-9.1 17.5 4.9.6 9.4 2.6 13.1 6-5.4 5.4-12.8 8.4-21 8.4H32h-5c-8.2 0-15.6-3-21-8.4 3.7-3.4 8.2-5.4 13.1-6-5.1-4.2-8.2-10.2-9.1-17.5 5.8.5 11 2.5 15 5.9-.3-1.5-.5-3-.5-4.6C24.5 22 27 16 32 10z" />
       </svg>
       <div class="celebrate-title">{$t('count.goalTitle')}</div>
       <div class="celebrate-text">{$t('count.goalText', { n: fmtNum(celebrateCount, $locale) })}</div>
+      <button class="celebrate-share" on:click|stopPropagation={shareGoal}><svg class="share-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="2.6" /><circle cx="6" cy="12" r="2.6" /><circle cx="18" cy="19" r="2.6" /><path d="M8.3 10.8l7.4-4.3M8.3 13.2l7.4 4.3" /></svg>{$t('share.button')}</button>
       <div class="celebrate-hint">{$t('count.goalTap')}</div>
     </div>
-  </button>
+  </div>
 {/if}
 
 <style>
@@ -787,6 +816,35 @@
   .celebrate-text {
     color: var(--muted);
     font-size: 1rem;
+  }
+  .share-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  :global(.share-ico) {
+    width: 1.15em;
+    height: 1.15em;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex: none;
+  }
+  .celebrate-share {
+    margin: 14px auto 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: none;
+    border-radius: 999px;
+    padding: 10px 22px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
   }
   .celebrate-hint {
     margin-top: 10px;

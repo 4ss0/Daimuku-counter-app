@@ -3,7 +3,8 @@
   import BarChart from '$lib/BarChart.svelte';
   import { api, errText, fmtDuration, fmtNum, type SessionRecord } from '$lib/api';
   import { locale, t, type Key } from '$lib/i18n';
-  import { share, sessionText, statsText } from '$lib/share';
+  import { share, sessionText } from '$lib/share';
+  import { shareCard } from '$lib/card';
   import { bestDay, fmtWhen, goalDaysThisMonth, periodStats, sessionsIn, streak, type Period } from '$lib/stats';
 
   const PERIODS: { id: Period; label: Key; prev: Key | null; title: Key | null }[] = [
@@ -95,9 +96,50 @@
   }
 
   let shareMsg = '';
-  async function shareStats() {
-    shareMsg = await share(
-      statsText({ title: heroTitle, total: st.total, sessions: st.sessions, seconds: st.seconds, streak: days }),
+  let sharing = false;
+  async function withCard(fn: () => Promise<string>) {
+    if (sharing) return;
+    sharing = true;
+    shareMsg = '';
+    try {
+      shareMsg = await fn();
+    } catch (e) {
+      errorText = errText(e);
+    } finally {
+      sharing = false;
+    }
+  }
+
+  // the period shown, with its bar chart
+  function shareStats() {
+    const lines: string[] = [];
+    if (st.sessions > 0) lines.push($t('share.statsSessions', { n: fmtNum(st.sessions, $locale), d: fmtDuration(st.seconds, $t) }));
+    if (st.perDay !== null && period !== 'day') lines.push($t('share.perDay', { n: fmtNum(Math.round(st.perDay), $locale) }));
+    if (days > 1) lines.push($t('share.statsStreak', { n: days }));
+    return withCard(() =>
+      shareCard(
+        { kicker: heroTitle, big: fmtNum(st.total, $locale), unit: $t('count.unit'), lines, bars: st.buckets },
+        `daimoku-${period}`,
+      ),
+    );
+  }
+
+  // today's progress towards the daily goal
+  function shareGoal() {
+    const today = periodStats(sessions, 'day', new Date(), $locale).total;
+    const lines = [$t('share.goalLine', { n: fmtNum(goal, $locale) }), $t('stats.goalMet', { met: goalMonth.met, n: goalMonth.elapsed })];
+    if (days > 1) lines.push($t('share.statsStreak', { n: days }));
+    return withCard(() =>
+      shareCard(
+        {
+          kicker: today >= goal ? $t('count.goalTitle') : $t('stats.titleDay'),
+          big: fmtNum(today, $locale),
+          unit: $t('count.unit'),
+          lines,
+          progress: today / Math.max(1, goal),
+        },
+        'daimoku-goal',
+      ),
     );
   }
   async function shareSession(s: SessionRecord) {
@@ -121,8 +163,8 @@
   <section class="hero glass">
     <div class="hero-top">
       <div class="hero-label">{heroTitle}</div>
-      <button class="share-btn" on:click={shareStats} aria-label={$t('share.button')} title={$t('share.button')}>
-        <svg viewBox="0 0 24 24"><path d="M12 4v11M8 8l4-4 4 4M6 13v5a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-5" /></svg>
+      <button class="share-btn" on:click={shareStats} disabled={sharing} aria-label={$t('share.button')} title={$t('share.button')}>
+        <svg class="share-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="2.6" /><circle cx="6" cy="12" r="2.6" /><circle cx="18" cy="19" r="2.6" /><path d="M8.3 10.8l7.4-4.3M8.3 13.2l7.4 4.3" /></svg>
       </button>
     </div>
     <div class="hero-num">{fmtNum(st.total, $locale)}</div>
@@ -175,7 +217,12 @@
           <button class="small primary" type="submit">{$t('common.ok')}</button>
         </form>
       {:else}
-        <button class="pill" on:click={() => { goalInput = String(goal); editingGoal = true; }}>{fmtNum(goal, $locale)} ✎</button>
+        <span class="goal-actions">
+          <button class="share-btn" on:click={shareGoal} disabled={sharing} aria-label={$t('share.button')} title={$t('share.button')}>
+            <svg class="share-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="2.6" /><circle cx="6" cy="12" r="2.6" /><circle cx="18" cy="19" r="2.6" /><path d="M8.3 10.8l7.4-4.3M8.3 13.2l7.4 4.3" /></svg>
+          </button>
+          <button class="pill" on:click={() => { goalInput = String(goal); editingGoal = true; }}>{fmtNum(goal, $locale)} ✎</button>
+        </span>
       {/if}
     </div>
   </section>
@@ -212,7 +259,7 @@
               {#if !s.manual && s.detected !== s.count}
                 <span class="det">{$t('count.detected', { n: s.detected })}</span>
               {/if}
-              <button class="link" on:click={() => shareSession(s)}>{$t('share.button')}</button>
+              <button class="link share-link" on:click={() => shareSession(s)}><svg class="share-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="2.6" /><circle cx="6" cy="12" r="2.6" /><circle cx="18" cy="19" r="2.6" /><path d="M8.3 10.8l7.4-4.3M8.3 13.2l7.4 4.3" /></svg>{$t('share.button')}</button>
               <button class="link danger" on:click={() => remove(s)}>{$t('common.delete')}</button>
             </div>
           {/if}
@@ -281,6 +328,26 @@
     color: var(--muted);
     cursor: pointer;
     line-height: 0;
+  }
+  .share-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  :global(.share-ico) {
+    width: 1.15em;
+    height: 1.15em;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex: none;
+  }
+  .goal-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
   .share-btn svg {
     width: 22px;
