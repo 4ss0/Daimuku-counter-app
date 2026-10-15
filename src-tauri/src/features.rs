@@ -28,7 +28,7 @@ const TARGET_SR: u32 = 16_000;
 /// -54 dBFS RMS): microphone hiss, digital silence.
 const ABS_ENERGY_FLOOR: f32 = -15.0; // ln(3e-7), about -65 dBFS
 /// ... and at least this far (about 5 dB) above the background noise.
-const NOISE_MARGIN_NATS: f32 = 1.2;
+const NOISE_MARGIN_NATS: f32 = 0.2;
 /// Background noise level tracking: follows drops quickly (10% of the way
 /// per frame) and rises slowly (0.2 nats/s), so it stays on the floor
 /// between words instead of climbing onto the voice.

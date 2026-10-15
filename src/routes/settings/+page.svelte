@@ -266,6 +266,11 @@
     <p class="muted small">{$t('set.beta')}</p>
   </section>
 
+  <section class="card glass">
+    <div class="label">{$t('set.privacy')}</div>
+    <p class="muted small privacy">{$t('set.privacyText')}</p>
+  </section>
+
   {#if errorText}<p class="error">{errorText}</p>{/if}
 </div>
 
@@ -410,6 +415,9 @@
     font-size: 0.8rem;
     line-height: 1.4;
     margin: 10px 0 0;
+  }
+  .privacy {
+    margin: 0;
   }
   .error {
     color: var(--red);
