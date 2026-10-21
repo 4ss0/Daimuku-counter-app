@@ -5,6 +5,9 @@
   import { LANGS, locale, t, type Key } from '$lib/i18n';
   import { ACCENTS, initPrefs, prefs, updatePrefs, type Accent, type ThemePref } from '$lib/prefs';
   import { hasNative, saveFile, shareFile, type ExportedFile } from '$lib/native';
+  import { openUrl } from '@tauri-apps/plugin-opener';
+
+  const PRIVACY_URL = 'https://4ss0.github.io/Daimuku-counter-app/privacy-policy.html';
 
   const THEMES: { id: ThemePref; label: Key }[] = [
     { id: 'system', label: 'set.themeSystem' },
@@ -45,6 +48,14 @@
       errorText = errText(e);
     }
   });
+
+  async function openPrivacy() {
+    try {
+      await openUrl(PRIVACY_URL);
+    } catch (e) {
+      errorText = errText(e);
+    }
+  }
 
   async function saveGoal() {
     const v = parseInt(goalInput, 10);
@@ -269,6 +280,9 @@
   <section class="card glass">
     <div class="label">{$t('set.privacy')}</div>
     <p class="muted small privacy">{$t('set.privacyText')}</p>
+    <div class="options data-actions">
+      <button class="wide" on:click={openPrivacy}>{$t('set.privacyLink')}</button>
+    </div>
   </section>
 
   {#if errorText}<p class="error">{errorText}</p>{/if}
@@ -417,7 +431,7 @@
     margin: 10px 0 0;
   }
   .privacy {
-    margin: 0;
+    margin: 0 0 12px;
   }
   .error {
     color: var(--red);

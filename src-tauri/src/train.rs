@@ -21,6 +21,26 @@ pub struct TrainItem {
     pub raw_mean: [f32; N_CEP],
 }
 
+/// The user's own recordings together weigh this much in training (each
+/// built-in clip weighs 1)...
+pub const USER_TOTAL_WEIGHT: f32 = 2.5;
+/// ...but never less than this each, so a profile with many recordings
+/// still learns the voice and the microphone.
+pub const USER_MIN_WEIGHT: f32 = 0.5;
+
+/// Training weight of each of the user's recordings when there are
+/// `n_takes` of them.
+///
+/// They used to weigh 2.5 each, so every new recording pulled the model
+/// further towards the user's takes: a profile of five phone takes ended
+/// up with a "kyo" loose enough to be found in phrases stopped at "renge"
+/// (the end of "ge" and the start of the next "Nam" were taken for it).
+/// Sharing the weight keeps the built-in clips' sharp "kyo" in the model
+/// while still adapting it to the user (tools/bench/DEVELOPMENT.md).
+pub fn user_take_weight(n_takes: usize) -> f32 {
+    (USER_TOTAL_WEIGHT / n_takes.max(1) as f32).clamp(USER_MIN_WEIGHT, USER_TOTAL_WEIGHT)
+}
+
 /// Builds a training item from raw audio. `n_cycles` is 0 for material
 /// that is not a recitation (normal speech used for the garbage model).
 pub fn build_item(samples: &[f32], sr: u32, n_cycles: usize, weight: f32) -> Option<TrainItem> {

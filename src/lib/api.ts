@@ -45,6 +45,8 @@ export interface TakeRecord {
   duration_secs: number;
   period_ms: number | null;
   created_at: string;
+  /** Speed chosen when recording (missing on older takes). */
+  speed?: 'slow' | 'medium' | 'fast' | null;
 }
 
 export interface PersonalProfile {
@@ -90,7 +92,8 @@ export const api = {
   stopRecording: (expected: number) =>
     invoke<TrainingTakeMeta>('stop_recording', { expectedDaimokuCount: expected }),
   validateTake: (index: number) => invoke<ValidationResult>('validate_training_take', { index }),
-  addTakeToProfile: (index: number) => invoke<PersonalProfile>('add_take_to_profile', { index }),
+  addTakeToProfile: (index: number, speed?: string) =>
+    invoke<PersonalProfile>('add_take_to_profile', { index, speed: speed ?? null }),
   clearTrainingTakes: () => invoke<number>('clear_training_takes'),
 
   createBackup: () => invoke<ExportedFile>('create_backup'),

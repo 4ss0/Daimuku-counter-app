@@ -13,6 +13,8 @@
 
   let profile: PersonalProfile | null = null;
   let speed: Speed = 'medium';
+  // speed selected when the current take was recorded
+  let recordedSpeed: Speed = 'medium';
   let n = 5;
   let recording = false;
   let busy = false;
@@ -101,9 +103,14 @@
     return tk.period_ms ?? (tk.duration_secs * 1000) / Math.max(1, tk.n_daimoku);
   }
 
+  /** The speed chosen when recording; older takes: guessed from timing. */
+  function takeSpeed(tk: PersonalProfile['takes'][number]): Speed {
+    return tk.speed ?? speedOf(takeMs(tk));
+  }
+
   function coverage(p: PersonalProfile | null): Record<Speed, boolean> {
     const c = { slow: false, medium: false, fast: false };
-    for (const tk of p?.takes ?? []) c[speedOf(takeMs(tk))] = true;
+    for (const tk of p?.takes ?? []) c[takeSpeed(tk)] = true;
     return c;
   }
 
@@ -130,6 +137,7 @@
     added = false;
     try {
       await api.startRecording();
+      recordedSpeed = speed;
       recording = true;
       t0 = Date.now();
       secs = 0;
@@ -176,7 +184,7 @@
     if (takeIndex === null || busy) return;
     busy = true;
     try {
-      profile = await api.addTakeToProfile(takeIndex);
+      profile = await api.addTakeToProfile(takeIndex, recordedSpeed);
       added = true;
     } catch (e) {
       errorText = errText(e);
@@ -299,7 +307,7 @@
       <ul>
         {#each profile.takes as tk (tk.id)}
           <li>
-            <span class="tk-speed" data-speed={speedOf(takeMs(tk))}>{$t(SPEEDS.find((s) => s.id === speedOf(takeMs(tk)))!.label)}</span>
+            <span class="tk-speed" data-speed={takeSpeed(tk)}>{$t(SPEEDS.find((s) => s.id === takeSpeed(tk))!.label)}</span>
             <span class="tk-main">
               {$t('voice.takeLine', { n: tk.n_daimoku })}
               <span class="muted">· {$t('voice.each', { s: (takeMs(tk) / 1000).toFixed(1) })}</span>

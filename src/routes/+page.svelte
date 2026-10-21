@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { api, errText, fmtClock, fmtNum, type LiveSessionSummary, type LiveView, type SessionRecord } from '$lib/api';
   import { locale, t } from '$lib/i18n';
   import { todayTotal } from '$lib/stats';
@@ -7,6 +8,7 @@
   import { share, sessionText } from '$lib/share';
   import { shareCard } from '$lib/card';
   import { prefs } from '$lib/prefs';
+  import { liveRunning } from '$lib/live';
 
   const POLL_MS = 150;
   const R = 118;
@@ -181,6 +183,7 @@
     try {
       await api.startLive();
       running = true;
+      liveRunning.set(true);
       timer = setInterval(poll, POLL_MS);
       // Android: keeps counting with the screen off (shows a notification)
       startCounting($t('notif.title'), $t('notif.text'), $prefs.keepAwake);
@@ -194,6 +197,7 @@
   async function stop() {
     if (busy || !running) return;
     busy = true;
+    liveRunning.set(false);
     if (timer) {
       clearInterval(timer);
       timer = null;
@@ -283,6 +287,7 @@
     window.addEventListener('keydown', onKey);
     document.addEventListener('visibilitychange', onVisibility);
     await refresh();
+    await reattach();
     try {
       userTakes = (await api.profile()).takes.length;
     } catch {
@@ -290,15 +295,33 @@
     }
   });
 
+  /** Back on this page while a session is still running: pick it up again. */
+  async function reattach() {
+    if (!get(liveRunning) || running) return;
+    try {
+      const v = await api.liveView();
+      if (v.finished) {
+        liveRunning.set(false);
+        return;
+      }
+      view = v;
+      lastCount = v.count ?? 0;
+      lastRecovered = v.recovered ?? 0;
+      lastSpokeAt = 0;
+      heard = false;
+      running = true;
+      timer = setInterval(poll, POLL_MS);
+    } catch (e) {
+      errorText = errText(e);
+    }
+  }
+
   onDestroy(() => {
     window.removeEventListener('keydown', onKey);
     document.removeEventListener('visibilitychange', onVisibility);
     if (timer) clearInterval(timer);
     if (celebrateTimer) clearTimeout(celebrateTimer);
-    if (running) {
-      stopCounting();
-      api.stopLive().catch(() => {});
-    }
+    // a running session keeps going: it is stopped only with the Stop button
   });
 </script>
 

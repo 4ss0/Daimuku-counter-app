@@ -129,10 +129,13 @@ fn takes(prof: &str) -> Vec<(String, usize)> {
 fn build_models(kind: &str, prof: &str, enriched: bool) -> Models {
     let base = base_items(enriched);
     let mut user: Vec<(TrainItem, f32)> = Vec::new();
-    for (f, n) in takes(prof) {
+    let list = takes(prof);
+    // as the app's profile: the takes share the user's training weight
+    let w = if kind == "old" { 2.5 } else { user_take_weight(list.len()) };
+    for (f, n) in list {
         let (x, sr) = load(&f);
         let secs = x.len() as f32 / sr as f32;
-        user.push((build_item(&x, sr, n, 2.5).unwrap(), secs / n as f32));
+        user.push((build_item(&x, sr, n, w).unwrap(), secs / n as f32));
     }
     let mut all = base.clone();
     all.extend(user.iter().map(|u| u.0.clone()));
@@ -220,7 +223,7 @@ fn main() {
     }
     for e in std::fs::read_dir("neg").unwrap().flatten() {
         let n = e.file_name().to_string_lossy().to_string();
-        if n.starts_with("tts_") && !n.contains("daimoku") && n.ends_with(".wav") {
+        if ((n.starts_with("tts_") && !n.contains("daimoku")) || n.starts_with("cut_")) && n.ends_with(".wav") {
             let (x, sr) = load(&format!("neg/{n}"));
             strict.push((n, x, sr));
         }

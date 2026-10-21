@@ -63,6 +63,52 @@ Daimoku, so these are not all errors).
 | loose negatives FP | - | 27 | 84 |
 | counted at once by B | 85% | 55% | 69% |
 
+## Change log after v0.5.0
+
+- v0.5.2: `NOISE_MARGIN_NATS` 1.2 -> 0.2 (activity gate). Clean bench
+  unchanged; large gain in noise (white 30 dB: wa0929 75 -> 145 of 148).
+- After v0.5.2: the decoding graph (`hmm.rs`, `decode_loop_min`) lets a
+  phrase stop after "ge" and fall silent (`GE_STOP_PEN` = -30). Before, the
+  decoder had to stretch "kyo" over the end of "ge" and counted phrases broken
+  off before "kyo". Bench new A: TP 59/59, |err| 3, strict FP 0 -> 1
+  (live51.sh200.1, a 200 ms shuffle); new P3: unchanged (strict FP 3).
+  neg/cut_kyo_1017 at 48 kHz: female-take profile 17 -> 0, group-take
+  profile 17 -> 0, phone profile of 2026-10-17 6 -> 2. Long female/group
+  recordings (60 Daimoku each) unchanged. Not solved: profiles trained on
+  takes the model cannot learn (e.g. 0.7 s/Daimoku) still count truncated
+  phrases through the F/N checkers.
+- After v0.5.2: the user's recordings share a fixed training weight
+  (`train::user_take_weight`: 2.5 in total, at least 0.5 each; before, 2.5
+  each). With 2.5 each, a phone profile of five takes (2026-10-21) learned a
+  "kyo" loose enough to be found in phrases stopped at "renge": the end of
+  "ge" plus the start of the next "Nam" passed for a 6-frame "kyo" (the
+  decoder's minimum). Bench new A unchanged; new P3 (5 takes, now 0.5
+  each): TP 59/59, |err| 3, strict FP 3 -> 3 (other files), t1212 27 -> 33.
+  Phone profiles, measured in a review harness (personal recordings, not
+  in the bench):
+
+  | | before | after |
+  |---|---|---|
+  | profile 2026-10-21 pm (5 takes): truncated recording of 10-17 (48 kHz) | 15 | 0 |
+  | same: truncated recording of 10-21 (11 phrases stopped at "renge") | 11 | 0 |
+  | same: neg/cut_kyo_1017 | 15 | 0 |
+  | same: count error, 5 bench files / noisy1 | 35 / 0 of 17 | 12 / 8 of 17 |
+  | same: each take judged by the profile trained without it | 30/31 | 30/31 |
+  | profile 2026-10-21 am (8 takes): the two truncated recordings | 19 + 11 | 1 + 0 |
+  | same: strict FP | 64 | 12 |
+  | same: each take judged by the profile trained without it | 39/44 | 32/44 |
+
+  Measured and not adopted: a "kyo" verifier in front of every controller
+  (two Gaussian mixtures, "kyo" against what a phrase without "kyo" puts in
+  its place, trained on copies of the takes with "kyo" cut out): no gain on
+  the truncated recordings, noisy1 16 -> 14 on good profiles; trimming the
+  first "Nam" and last "kyo" of each take in training (noisy1 16 -> 8 on
+  P3); at least 8 frames of "kyo" before a "Nam" (2026-10-21 pm: TP 59 ->
+  10). Open: copies of the user's own takes with "kyo" cut out are still
+  counted about half the time by the profile trained without that take, and
+  a profile of many takes recognises fewer of its slow takes (39 -> 32 of
+  44 above).
+
 ## Known weaknesses / open questions
 
 - Tuned on few recordings, one voice; 59 hand-checked phrases only.

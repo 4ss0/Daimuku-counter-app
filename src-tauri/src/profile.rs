@@ -12,18 +12,18 @@
 
 use crate::base::{decode_wav, BASE_CLIPS};
 use crate::model::Model;
-use crate::train::{align_item, build_item, train_model, TrainItem};
+use crate::train::{align_item, build_item, train_model, user_take_weight, TrainItem};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex, MutexGuard};
 
-/// Base clips count for roughly as much as one ordinary take; the user's
-/// own recordings count for more, so the model leans towards their voice
-/// once they have provided some.
+/// Base clips weigh 1 each in training. The user's own recordings share a
+/// fixed total (`train::user_take_weight`): `retrain` sets their weight
+/// from how many there are, so they are analysed with a neutral one.
 const BASE_WEIGHT: f32 = 1.0;
-const USER_WEIGHT: f32 = 2.5;
+const TAKE_WEIGHT: f32 = 1.0;
 const MIN_TAKE_SECS: f32 = 0.5;
 
 // ===========================================================================
@@ -40,6 +40,10 @@ pub struct TakeRecord {
     /// successful retrain.
     pub period_ms: Option<f32>,
     pub created_at: DateTime<Utc>,
+    /// Speed the user chose when recording ("slow" | "medium" | "fast").
+    /// Shown as is; older takes without it are labelled from their timing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<String>,
 }
 
 /// What actually gets written to disk (audio lives in sibling .wav files).
@@ -175,7 +179,7 @@ fn load_inner() -> ProfileInner {
     for t in &index.takes {
         let Some(path) = take_wav_path(t.id) else { continue };
         match fs::read(&path).ok().and_then(|b| decode_wav(&b).ok()) {
-            Some((samples, sr)) => match build_item(&samples, sr, t.n_daimoku as usize, USER_WEIGHT) {
+            Some((samples, sr)) => match build_item(&samples, sr, t.n_daimoku as usize, TAKE_WEIGHT) {
                 Some(item) => {
                     user_items.push(item);
                     kept_takes.push(t.clone());
@@ -256,6 +260,18 @@ impl ProfileState {
     /// persists it, and retrains the model from base + all stored takes.
     /// Returns the new take's id.
     pub fn add_take(&self, samples: &[f32], sample_rate: u32, n_daimoku: u32) -> Result<usize, String> {
+        self.add_take_with_speed(samples, sample_rate, n_daimoku, None)
+    }
+
+    /// Like `add_take`, remembering the speed the user chose for it.
+    pub fn add_take_with_speed(
+        &self,
+        samples: &[f32],
+        sample_rate: u32,
+        n_daimoku: u32,
+        speed: Option<String>,
+    ) -> Result<usize, String> {
+        let speed = speed.filter(|s| matches!(s.as_str(), "slow" | "medium" | "fast"));
         if n_daimoku == 0 {
             return Err("n_daimoku must be >= 1".to_string());
         }
@@ -266,7 +282,7 @@ impl ProfileState {
         if duration_secs < MIN_TAKE_SECS {
             return Err(format!("take too short ({duration_secs:.2}s, minimum {MIN_TAKE_SECS}s)"));
         }
-        let item = build_item(samples, sample_rate, n_daimoku as usize, USER_WEIGHT)
+        let item = build_item(samples, sample_rate, n_daimoku as usize, TAKE_WEIGHT)
             .ok_or_else(|| "could not find enough voiced audio in this take".to_string())?;
 
         let mut guard = self.guard();
@@ -282,6 +298,7 @@ impl ProfileState {
             duration_secs,
             period_ms: None,
             created_at: Utc::now(),
+            speed,
         });
         g.user_items.push(item);
         g.model = retrain(&g.base_items, &g.user_items).unwrap_or_else(|| g.model.clone());
@@ -336,7 +353,7 @@ impl ProfileState {
             if sr == 0 || rec.n_daimoku == 0 || (samples.len() as f32 / sr as f32) < MIN_TAKE_SECS {
                 continue;
             }
-            if let Some(item) = build_item(&samples, sr, rec.n_daimoku as usize, USER_WEIGHT) {
+            if let Some(item) = build_item(&samples, sr, rec.n_daimoku as usize, TAKE_WEIGHT) {
                 kept.push((rec, samples, sr, item));
             }
         }
@@ -413,10 +430,10 @@ fn load_base_items() -> Vec<TrainItem> {
 /// Model for the slow checker (see `engine::build_slow_model`): the slow
 /// built-in examples and the user's slow takes.
 fn retrain_slow(base: &[TrainItem], user: &[TrainItem], takes: &[TakeRecord]) -> Option<Model> {
-    let user: Vec<(TrainItem, f32)> = user
-        .iter()
+    let user: Vec<(TrainItem, f32)> = weighted(user)
+        .into_iter()
         .zip(takes)
-        .map(|(item, take)| (item.clone(), take.duration_secs / take.n_daimoku.max(1) as f32))
+        .map(|(item, take)| (item, take.duration_secs / take.n_daimoku.max(1) as f32))
         .collect();
     crate::engine::build_slow_model(base, &user)
 }
@@ -424,8 +441,20 @@ fn retrain_slow(base: &[TrainItem], user: &[TrainItem], takes: &[TakeRecord]) ->
 fn retrain(base: &[TrainItem], user: &[TrainItem]) -> Option<Model> {
     let mut all: Vec<TrainItem> = Vec::with_capacity(base.len() + user.len());
     all.extend(base.iter().cloned());
-    all.extend(user.iter().cloned());
+    all.extend(weighted(user));
     train_model(&all, &[], None, 8).map(|t| t.model)
+}
+
+/// The user's takes with their share of the training weight.
+fn weighted(user: &[TrainItem]) -> Vec<TrainItem> {
+    let w = user_take_weight(user.len());
+    user.iter()
+        .cloned()
+        .map(|mut item| {
+            item.weight = w;
+            item
+        })
+        .collect()
 }
 
 /// Cheap model that never recognises anything: used by the live counter

@@ -25,6 +25,12 @@ pub const PAUSE_PEN: f32 = -1.5;
 pub const SWITCH_PEN: f32 = -2.0;
 /// Cost of leaving the phrase after "kyo".
 pub const EXIT_PEN: f32 = -1.0;
+/// Cost of a phrase that stops after "ge" and falls silent (no "kyo").
+/// Without this way out the decoder had to stretch "kyo" over the end of
+/// "ge" or the start of the pause, and a phrase broken off before "kyo"
+/// was counted. Tuned on tools/bench (neg/cut_kyo_1017): -30 removes those
+/// counts and leaves complete phrases, even fast ones, as they were.
+pub const GE_STOP_PEN: f32 = -30.0;
 
 pub struct Graph {
     /// Emission index (into `[f32; N_NODES]`) used by each node.
@@ -156,6 +162,9 @@ impl Graph {
         for i in 0..N_PAUSE {
             preds[gar].push((pause(i), ABORT_PEN));
         }
+        // a phrase may stop after "ge": it is then never counted
+        let ge_end = node((N_SYL - 1) * K - 1, dur - 1);
+        preds[sil].push((ge_end, GE_STOP_PEN));
         Graph {
             emit_idx,
             preds,

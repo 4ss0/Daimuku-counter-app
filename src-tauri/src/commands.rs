@@ -273,13 +273,14 @@ pub fn add_take_to_profile(
     profile_state: State<'_, ProfileState>,
     audio_state: State<'_, AudioState>,
     index: usize,
+    speed: Option<String>,
 ) -> Result<PersonalProfile, String> {
     let (audio, expected) = store.get_with_expected(index)?;
     if expected == 0 {
         return Err("take has no declared Daimoku count".to_string());
     }
 
-    profile_state.add_take(&audio.samples, audio.sample_rate, expected as u32)?;
+    profile_state.add_take_with_speed(&audio.samples, audio.sample_rate, expected as u32, speed)?;
     let new_profile = profile_state.snapshot();
     audio_state.live_set_profile(Some(new_profile.clone()));
 
