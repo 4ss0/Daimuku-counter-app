@@ -7,9 +7,9 @@ writes static/bells/{high,medium,deep}.mp3.
 
 Each partial is a pair of slightly detuned sines (the beating of a real
 bell, whose modes come in close pairs) with its own exponential decay; the
-strike adds a few milliseconds of filtered noise. The high bell follows a
-rin measured on a recording: partials at 1876, 3484, 5460 and 7782 Hz,
-the first fading by about 4 dB/s, the higher ones faster.
+strike adds a few milliseconds of filtered noise. Every bell lasts 6 s.
+The high bell follows a rin measured on a recording: partials at 1876,
+3484, 5460 and 7782 Hz, each higher one fading faster.
 """
 import os
 import subprocess
@@ -22,28 +22,29 @@ SR = 44_100
 OUT = os.path.join(os.path.dirname(__file__), "..", "..", "static", "bells")
 
 # (frequency Hz, relative amplitude, decay time constant s, beat Hz)
+# About 6 s each: the decays are shorter than a real bell's, and the last
+# 1.5 s fade out, so the sound ends while it is already soft.
+SECONDS = 6.0
+FADE = 1.5
 BELLS = {
     "high": dict(
-        seconds=8.0,
-        partials=[(1876, 1.0, 2.2, 1.6), (3484, 0.75, 1.3, 6.0), (5460, 0.3, 0.42, 4.0), (7782, 0.06, 0.25, 3.0)],
+        partials=[(1876, 1.0, 1.5, 1.6), (3484, 0.75, 0.9, 6.0), (5460, 0.3, 0.35, 4.0), (7782, 0.06, 0.2, 3.0)],
         strike=0.10,
         strike_hz=6000,
     ),
     "medium": dict(
-        seconds=11.0,
-        partials=[(523, 1.0, 4.6, 0.9), (1417, 0.55, 2.6, 2.2), (2678, 0.28, 1.3, 3.1), (4236, 0.10, 0.6, 2.0)],
+        partials=[(523, 1.0, 1.7, 0.9), (1417, 0.55, 1.1, 2.2), (2678, 0.28, 0.6, 3.1), (4236, 0.10, 0.3, 2.0)],
         strike=0.08,
         strike_hz=3500,
     ),
     "deep": dict(
-        seconds=15.0,
         partials=[
-            (146, 1.0, 7.5, 0.6),
-            (296, 0.7, 5.5, 0.9),
-            (351, 0.45, 4.0, 1.3),
-            (438, 0.35, 3.2, 1.1),
-            (604, 0.2, 2.0, 1.7),
-            (789, 0.1, 1.2, 2.3),
+            (146, 1.0, 1.9, 0.6),
+            (296, 0.7, 1.5, 0.9),
+            (351, 0.45, 1.2, 1.3),
+            (438, 0.35, 1.0, 1.1),
+            (604, 0.2, 0.7, 1.7),
+            (789, 0.1, 0.45, 2.3),
         ],
         strike=0.14,
         strike_hz=900,
@@ -62,7 +63,7 @@ def lowpass(x, hz):
     return y
 
 
-def bell(seconds, partials, strike, strike_hz, seed=1):
+def bell(partials, strike, strike_hz, seconds=SECONDS, seed=1):
     rng = np.random.default_rng(seed)
     t = np.arange(int(seconds * SR)) / SR
     x = np.zeros_like(t)
@@ -76,9 +77,9 @@ def bell(seconds, partials, strike, strike_hz, seed=1):
     n = int(0.03 * SR)
     burst = lowpass(rng.standard_normal(n), strike_hz) * np.exp(-np.arange(n) / (0.006 * SR))
     x[:n] += strike * burst / (np.abs(burst).max() + 1e-9)
-    # fade out the last half second, normalise to -1 dBFS
-    m = int(0.5 * SR)
-    x[-m:] *= np.linspace(1, 0, m)
+    # fade out the end (half a cosine), normalise to -1 dBFS
+    m = int(FADE * SR)
+    x[-m:] *= 0.5 + 0.5 * np.cos(np.linspace(0, np.pi, m))
     return x / np.abs(x).max() * 10 ** (-1 / 20)
 
 
