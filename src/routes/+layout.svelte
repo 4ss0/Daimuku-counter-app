@@ -6,7 +6,8 @@
   import { api, fmtNum } from '$lib/api';
   import { locale, t, type Key } from '$lib/i18n';
   import { liveCount, liveRunning } from '$lib/live';
-  import { initPrefs } from '$lib/prefs';
+  import { initPrefs, prefs } from '$lib/prefs';
+  import { syncReminders } from '$lib/reminders';
 
   const tabs = [
     { href: '/', key: 'tab.count', icon: 'count' },
@@ -18,6 +19,7 @@
   /** Sections of the side menu; the counter is the four tabs above. */
   const sections: { href: string; key: Key; icon: string; soon?: boolean }[] = [
     { href: '/', key: 'menu.counter', icon: 'count' },
+    { href: '/reminders', key: 'menu.reminders', icon: 'alarm' },
     { href: '/dictionary', key: 'menu.dictionary', icon: 'book' },
     { href: '/social', key: 'menu.social', icon: 'people', soon: true },
     { href: '/donate', key: 'menu.donate', icon: 'heart' },
@@ -30,6 +32,9 @@
   $: section = inCounter ? sections[0] : sections.find((s) => s.href === path);
 
   let version = '';
+  let prefsReady = false;
+  // the Android side keeps its own copy of the reminders (and their text)
+  $: if (prefsReady) syncReminders($prefs), $t;
 
   // ---------- side menu ----------
   // Opens with the button or with a swipe to the right that starts on the
@@ -120,6 +125,7 @@
     const safety = setTimeout(hideSplash, SPLASH_MAX_MS);
     getVersion().then((v) => (version = v), () => {});
     await initPrefs();
+    prefsReady = true;
     // First start (no voice recordings yet): open the voice page, so the
     // app learns the user's voice before counting.
     try {
@@ -232,6 +238,9 @@
             {#if s.icon === 'count'}
               <circle cx="12" cy="12" r="8.5" />
               <circle cx="12" cy="12" r="3" />
+            {:else if s.icon === 'alarm'}
+              <circle cx="12" cy="13" r="7.5" />
+              <path d="M12 9.5V13l2.5 2M5 4.5L3 6.5M19 4.5l2 2" />
             {:else if s.icon === 'book'}
               <path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v15H7.5A2.5 2.5 0 0 0 5 20.5zM5 20.5A2.5 2.5 0 0 0 7.5 23H19v-5" />
             {:else if s.icon === 'people'}
@@ -396,6 +405,45 @@
     -webkit-backdrop-filter: blur(16px) saturate(1.1);
     backdrop-filter: blur(16px) saturate(1.1);
     box-shadow: var(--shadow);
+  }
+
+  /* on/off switch: <input type="checkbox" role="switch" class="switch"> */
+  :global(input.switch) {
+    appearance: none;
+    -webkit-appearance: none;
+    flex-shrink: 0;
+    width: 46px;
+    height: 28px;
+    margin: 0;
+    border-radius: 999px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  :global(input.switch::after) {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: transform 0.2s, background 0.2s;
+  }
+  :global(input.switch:checked) {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  :global(input.switch:checked::after) {
+    transform: translateX(18px);
+    background: var(--accent-ink);
+  }
+  :global(input.switch:disabled) {
+    opacity: 0.5;
+    cursor: default;
   }
 
   .bg {

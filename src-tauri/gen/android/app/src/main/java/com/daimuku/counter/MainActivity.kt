@@ -18,8 +18,8 @@ import java.io.File
 
 /**
  * Exposes `window.DaimokuAndroid` to the web page (src/lib/native.ts):
- * counting service, keep-screen-on, "save as" and "share" screens and
- * donations. Replies go back through `window.__daimokuNative(event, ok, data)`.
+ * counting service, keep-screen-on, "save as" and "share" screens,
+ * reminders and donations. Replies go back through `window.__daimokuNative(event, ok, data)`.
  */
 class MainActivity : TauriActivity() {
   private var webView: WebView? = null
@@ -168,6 +168,12 @@ class MainActivity : TauriActivity() {
           notifyPage("shareText", false)
         }
       }
+    }
+
+    /** Daily reminder "morning" or "evening" at hour:minute (on = false cancels it). */
+    @JavascriptInterface
+    fun setReminder(kind: String, on: Boolean, hour: Int, minute: Int, title: String, text: String) {
+      Reminders.set(this@MainActivity, kind, on, hour, minute, title, text)
     }
 
     /** Comma-separated product ids; replies with event "products". */

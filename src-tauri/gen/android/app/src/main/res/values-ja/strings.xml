@@ -1,4 +1,6 @@
 <resources>
     <string name="channel_counting">カウント</string>
     <string name="channel_counting_text">カウンターが音声を聞いている間（画面オフ時も）表示されます。</string>
+    <string name="channel_reminders">リマインダー</string>
+    <string name="channel_reminders_text">朝と夜の唱題のお知らせ。</string>
 </resources>

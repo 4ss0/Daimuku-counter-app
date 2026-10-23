@@ -16,6 +16,8 @@ export interface Prefs {
   keepAwake: boolean;
   /** Goals beyond the daily one (kept with the history); 0 = none. */
   goals: { week: number; month: number; year: number };
+  /** Daily reminders of the two sessions (Android), time "HH:MM". */
+  reminders: Record<'morning' | 'evening', { on: boolean; time: string }>;
 }
 
 const DEFAULTS: Prefs = {
@@ -24,7 +26,16 @@ const DEFAULTS: Prefs = {
   accent: 'lotus',
   keepAwake: false,
   goals: { week: 0, month: 0, year: 0 },
+  reminders: { morning: { on: false, time: '07:00' }, evening: { on: false, time: '19:00' } },
 };
+
+function reminder(v: unknown, fallback: { on: boolean; time: string }) {
+  const r = (v && typeof v === 'object' ? v : {}) as { on?: unknown; time?: unknown };
+  return {
+    on: typeof r.on === 'boolean' ? r.on : fallback.on,
+    time: typeof r.time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(r.time) ? r.time : fallback.time,
+  };
+}
 
 /** A whole number in 0..max, or `fallback`. */
 function count(v: unknown, max: number, fallback: number): number {
@@ -84,6 +95,12 @@ function sanitize(p: Partial<Prefs> | null | undefined): Partial<Prefs> {
   if (p.goals && typeof p.goals === 'object') {
     const g = p.goals as Partial<Prefs['goals']>;
     out.goals = { week: count(g.week, 1e7, 0), month: count(g.month, 1e8, 0), year: count(g.year, 1e9, 0) };
+  }
+  if (p.reminders && typeof p.reminders === 'object') {
+    out.reminders = {
+      morning: reminder(p.reminders.morning, DEFAULTS.reminders.morning),
+      evening: reminder(p.reminders.evening, DEFAULTS.reminders.evening),
+    };
   }
   return out;
 }

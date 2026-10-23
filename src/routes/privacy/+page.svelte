@@ -11,6 +11,7 @@
     { name: 'priv.notifName', why: 'priv.notif' },
     { name: 'priv.fgsName', why: 'priv.fgs' },
     { name: 'priv.wakeName', why: 'priv.wake' },
+    { name: 'priv.bootName', why: 'priv.boot' },
     { name: 'priv.billingName', why: 'priv.billing' },
   ];
 

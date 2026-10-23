@@ -16,6 +16,7 @@ interface Bridge {
   saveFile(path: string, name: string, mime: string): void;
   shareFile(path: string, name: string, mime: string, title: string): void;
   shareText(text: string, title: string): void;
+  setReminder?(kind: string, on: boolean, hour: number, minute: number, title: string, text: string): void;
   donationProducts?(ids: string): void;
   donate?(productId: string): void;
 }
@@ -135,6 +136,19 @@ export function shareFile(f: ExportedFile, mime: string, title: string): Promise
     return Promise.resolve(false);
   }
   return p;
+}
+
+// ---------------------------------------------------------------- reminders
+
+/** True inside an Android app that can show reminders (older APKs cannot). */
+export function canRemind(): boolean {
+  return typeof bridge()?.setReminder === 'function';
+}
+
+/** Android: the daily reminder `kind` at `time` ("HH:MM"), or off. */
+export function setReminder(kind: 'morning' | 'evening', on: boolean, time: string, title: string, text: string) {
+  const [h, m] = time.split(':').map((x) => parseInt(x, 10));
+  safe((b) => b.setReminder?.(kind, on, Number.isFinite(h) ? h : 7, Number.isFinite(m) ? m : 0, title, text));
 }
 
 // ---------------------------------------------------------------- donations

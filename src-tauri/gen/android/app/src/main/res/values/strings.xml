@@ -3,4 +3,6 @@
     <string name="main_activity_title">Daimoku Counter</string>
     <string name="channel_counting">Counting</string>
     <string name="channel_counting_text">Shown while the counter listens, also with the screen off.</string>
+    <string name="channel_reminders">Reminders</string>
+    <string name="channel_reminders_text">Morning and evening reminders to chant.</string>
 </resources>

@@ -54,6 +54,9 @@ If `android-old` had changes of yours that are not below, compare its
   screen on, save/share files); see `src/lib/native.ts` for the other side.
 - `CountingService.kt`: the foreground service and its notification, whose
   title (the count) the page updates at most once a second.
+- `Reminders.kt`: the morning and evening reminders (AlarmManager, inexact
+  alarms allowed while idle), scheduled again after a reboot or a change of
+  time by `BootReceiver` (permission RECEIVE_BOOT_COMPLETED).
 - `app/build.gradle.kts`: signs release builds with the key in
   `keystore.properties`, when the file is there.
 - `proguard-rules.pro`: keeps the methods called from the web page in release
