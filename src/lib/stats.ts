@@ -278,3 +278,48 @@ export function fmtWhen(
   const day = fmt(loc, same ? { day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short', year: 'numeric' }, d);
   return `${day}, ${hm}`;
 }
+
+// ---------------------------------------------------------------- goals
+
+/** Sessions started from this hour on belong to the evening half of the day. */
+export const EVENING_FROM_HOUR = 14;
+
+export type Half = 'morning' | 'evening';
+
+export function halfOf(d: Date): Half {
+  return d.getHours() < EVENING_FROM_HOUR ? 'morning' : 'evening';
+}
+
+/** The daily goal split in two sessions (2000 -> 1000 + 1000). */
+export function splitGoal(goal: number): Record<Half, number> {
+  const morning = Math.ceil(goal / 2);
+  return { morning, evening: Math.max(0, goal - morning) };
+}
+
+/** Today's Daimoku of the morning and of the evening session. */
+export function todayHalves(sessions: SessionRecord[], now = new Date()): Record<Half, number> {
+  const from = startOfDay(now);
+  const to = addDays(from, 1);
+  const out = { morning: 0, evening: 0 };
+  for (const p of parse(sessions)) if (p.t >= from && p.t < to) out[halfOf(p.t)] += p.count;
+  return out;
+}
+
+export type GoalPeriod = 'week' | 'month' | 'year';
+
+/** Daimoku of the current week, month or year. */
+export function periodTotal(sessions: SessionRecord[], period: GoalPeriod, now = new Date()): number {
+  let from: Date;
+  let to: Date;
+  if (period === 'week') {
+    from = startOfWeek(now);
+    to = addDays(from, 7);
+  } else if (period === 'month') {
+    from = new Date(now.getFullYear(), now.getMonth(), 1);
+    to = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  } else {
+    from = new Date(now.getFullYear(), 0, 1);
+    to = new Date(now.getFullYear() + 1, 0, 1);
+  }
+  return sumIn(parse(sessions), from, to).total;
+}

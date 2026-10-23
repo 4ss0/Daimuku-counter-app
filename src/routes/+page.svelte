@@ -3,7 +3,7 @@
   import { get } from 'svelte/store';
   import { api, errText, fmtClock, fmtNum, type LiveSessionSummary, type LiveView, type SessionRecord } from '$lib/api';
   import { locale, t } from '$lib/i18n';
-  import { todayTotal } from '$lib/stats';
+  import { halfOf, splitGoal, todayHalves, todayTotal, type Half } from '$lib/stats';
   import { hasNative, shareFile, startCounting, stopCounting } from '$lib/native';
   import { share, sessionText } from '$lib/share';
   import { shareCard } from '$lib/card';
@@ -48,6 +48,16 @@
   $: baseToday = todayTotal(sessions);
   $: today = running ? baseToday + liveCount : baseToday;
   $: progress = Math.min(1, today / Math.max(1, goal));
+  // the daily goal in two sessions: morning and evening (see stats.ts)
+  const HALVES: Half[] = ['morning', 'evening'];
+  let sessionHalf: Half = halfOf(new Date());
+  let nowHalf: Half = halfOf(new Date());
+  $: halfGoal = splitGoal(goal);
+  $: halfDone = todayHalves(sessions);
+  $: halfNow = {
+    morning: halfDone.morning + (running && sessionHalf === 'morning' ? liveCount : 0),
+    evening: halfDone.evening + (running && sessionHalf === 'evening' ? liveCount : 0),
+  };
   $: goalReached = today >= goal;
   $: elapsed = view?.elapsed_secs ?? 0;
   // "listening" stays on through short pauses (breath, between syllables)
@@ -69,6 +79,7 @@
   async function refresh() {
     try {
       [sessions, goal] = await Promise.all([api.listSessions(), api.getGoal()]);
+      nowHalf = halfOf(new Date());
     } catch (e) {
       errorText = errText(e);
     }
@@ -97,6 +108,7 @@
   async function poll() {
     try {
       const v = await api.liveView();
+      nowHalf = halfOf(new Date());
       const now = performance.now();
       const away = document.hidden || now - lastFrameAt > AWAY_MS;
       askFrame();
@@ -201,6 +213,7 @@
     view = null;
     try {
       await api.startLive();
+      sessionHalf = halfOf(new Date());
       running = true;
       liveRunning.set(true);
       timer = setInterval(poll, POLL_MS);
@@ -328,6 +341,7 @@
       lastRecovered = v.recovered ?? 0;
       lastSpokeAt = 0;
       heard = false;
+      sessionHalf = halfOf(new Date(Date.now() - (v.elapsed_secs ?? 0) * 1000));
       running = true;
       timer = setInterval(poll, POLL_MS);
     } catch (e) {
@@ -352,6 +366,25 @@
       {#if goalReached}<span class="done" aria-label={$t('count.goalReached')}>✓</span>{/if}
     </div>
   </header>
+
+  {#if goal >= 2}
+    <div class="halves">
+      {#each HALVES as h}
+        <div class="half" class:current={h === nowHalf} class:done={halfNow[h] >= halfGoal[h]} title={$t(`goal.${h}`)}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            {#if h === 'morning'}
+              <circle cx="12" cy="12" r="4" /><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4" />
+            {:else}
+              <path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z" />
+            {/if}
+          </svg>
+          <span class="h-name">{$t(`goal.${h}`)}</span>
+          <span class="h-n"><strong>{fmtNum(halfNow[h], $locale)}</strong> / {fmtNum(halfGoal[h], $locale)}</span>
+          {#if halfNow[h] >= halfGoal[h]}<span class="h-ok" aria-label={$t('count.goalReached')}>✓</span>{/if}
+        </div>
+      {/each}
+    </div>
+  {/if}
 
   <div class="ring-wrap" class:speaking={running && heard}>
     {#key pulseKey}
@@ -512,6 +545,67 @@
     border: 1px solid var(--line);
     -webkit-backdrop-filter: blur(14px);
     backdrop-filter: blur(14px);
+  }
+  .halves {
+    width: 100%;
+    max-width: 420px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: -4px;
+  }
+  /* on a phone the sun and the moon say it: just the numbers */
+  @media (max-width: 440px) {
+    .h-name {
+      display: none;
+    }
+    .half {
+      justify-content: center;
+    }
+  }
+  .half {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    color: var(--muted);
+    font-size: 0.82rem;
+    white-space: nowrap;
+    opacity: 0.75;
+  }
+  .half.current {
+    opacity: 1;
+    border-color: var(--accent);
+  }
+  .half svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .h-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .h-n {
+    font-variant-numeric: tabular-nums;
+  }
+  .h-n strong {
+    color: var(--text);
+  }
+  .h-ok {
+    color: var(--green);
   }
   .date::first-letter {
     text-transform: uppercase;

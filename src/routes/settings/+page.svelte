@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getVersion } from '@tauri-apps/api/app';
-  import { api, errText } from '$lib/api';
+  import { api, errText, fmtNum } from '$lib/api';
+  import { splitGoal, type GoalPeriod } from '$lib/stats';
   import { LANGS, locale, t, type Key } from '$lib/i18n';
   import { ACCENTS, initPrefs, prefs, updatePrefs, type Accent, type ThemePref } from '$lib/prefs';
   import { hasNative, saveFile, shareFile, type ExportedFile } from '$lib/native';
@@ -45,6 +46,18 @@
       errorText = errText(e);
     }
   });
+
+  const PERIOD_GOALS: { id: GoalPeriod; label: Key }[] = [
+    { id: 'week', label: 'goal.weekly' },
+    { id: 'month', label: 'goal.monthly' },
+    { id: 'year', label: 'goal.yearly' },
+  ];
+
+  /** Weekly / monthly / yearly goal from its field (empty or 0 = none). */
+  function savePeriodGoal(id: GoalPeriod, raw: string) {
+    const v = parseInt(raw, 10);
+    updatePrefs({ goals: { ...$prefs.goals, [id]: Number.isFinite(v) && v > 0 ? v : 0 } });
+  }
 
   async function saveGoal() {
     const v = parseInt(goalInput, 10);
@@ -201,13 +214,36 @@
   </section>
 
   <section class="card glass">
-    <div class="row">
-      <div class="label">{$t('set.goal')}</div>
+    <div class="label">{$t('goal.title')}</div>
+    <div class="row goal-row">
+      <span>{$t('goal.daily')}</span>
       <form class="inline" on:submit|preventDefault={saveGoal}>
-        <input type="number" inputmode="numeric" min="1" bind:value={goalInput} on:blur={saveGoal} aria-label={$t('set.goal')} />
+        <input type="number" inputmode="numeric" min="1" bind:value={goalInput} on:blur={saveGoal} aria-label={$t('goal.daily')} />
         <span class="unit">{$t('count.unit')}</span>
       </form>
     </div>
+    <p class="muted small-hint goal-split">
+      {$t('goal.split', { m: fmtNum(splitGoal(goal).morning, $locale), e: fmtNum(splitGoal(goal).evening, $locale) })}
+    </p>
+    {#each PERIOD_GOALS as g}
+      <div class="row goal-row">
+        <span>{$t(g.label)}</span>
+        <form class="inline" on:submit|preventDefault={(e) => savePeriodGoal(g.id, new FormData(e.currentTarget).get('v')?.toString() ?? '')}>
+          <input
+            name="v"
+            type="number"
+            inputmode="numeric"
+            min="0"
+            placeholder={$t('goal.none')}
+            value={$prefs.goals[g.id] || ''}
+            on:blur={(e) => savePeriodGoal(g.id, e.currentTarget.value)}
+            aria-label={$t(g.label)}
+          />
+          <span class="unit">{$t('count.unit')}</span>
+        </form>
+      </div>
+    {/each}
+    <p class="muted small-hint">{$t('goal.hint')}</p>
   </section>
 
   {#if native}
@@ -298,9 +334,6 @@
   .label {
     font-weight: 600;
     margin-bottom: 10px;
-  }
-  .row .label {
-    margin-bottom: 0;
   }
   .options {
     display: grid;
@@ -479,6 +512,12 @@
     font-size: 0.8rem;
     line-height: 1.4;
     margin: 0 0 10px;
+  }
+  .goal-row {
+    margin-top: 8px;
+  }
+  .goal-split {
+    margin: 4px 0 6px;
   }
   .data-actions .wide {
     grid-column: 1 / -1;

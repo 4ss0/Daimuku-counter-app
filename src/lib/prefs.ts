@@ -14,9 +14,22 @@ export interface Prefs {
   accent: Accent;
   /** Keep the screen on while counting (counting also works with it off). */
   keepAwake: boolean;
+  /** Goals beyond the daily one (kept with the history); 0 = none. */
+  goals: { week: number; month: number; year: number };
 }
 
-const DEFAULTS: Prefs = { lang: 'auto', theme: 'system', accent: 'lotus', keepAwake: false };
+const DEFAULTS: Prefs = {
+  lang: 'auto',
+  theme: 'system',
+  accent: 'lotus',
+  keepAwake: false,
+  goals: { week: 0, month: 0, year: 0 },
+};
+
+/** A whole number in 0..max, or `fallback`. */
+function count(v: unknown, max: number, fallback: number): number {
+  return typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(0, Math.round(v))) : fallback;
+}
 
 export const prefs = writable<Prefs>({ ...DEFAULTS });
 /** The theme actually shown (system preference resolved). */
@@ -68,6 +81,10 @@ function sanitize(p: Partial<Prefs> | null | undefined): Partial<Prefs> {
   if (p.theme && ['system', 'light', 'dark'].includes(p.theme)) out.theme = p.theme;
   if (p.accent && (ACCENTS as string[]).includes(p.accent)) out.accent = p.accent;
   if (typeof p.keepAwake === 'boolean') out.keepAwake = p.keepAwake;
+  if (p.goals && typeof p.goals === 'object') {
+    const g = p.goals as Partial<Prefs['goals']>;
+    out.goals = { week: count(g.week, 1e7, 0), month: count(g.month, 1e8, 0), year: count(g.year, 1e9, 0) };
+  }
   return out;
 }
 

@@ -5,7 +5,8 @@
   import { locale, t, type Key } from '$lib/i18n';
   import { share, sessionText } from '$lib/share';
   import { shareCard } from '$lib/card';
-  import { bestDay, fmtWhen, goalDaysThisMonth, periodStats, sessionsIn, streak, type Period } from '$lib/stats';
+  import { bestDay, fmtWhen, goalDaysThisMonth, periodStats, periodTotal, sessionsIn, splitGoal, streak, todayHalves, type GoalPeriod, type Period } from '$lib/stats';
+  import { prefs } from '$lib/prefs';
 
   const PERIODS: { id: Period; label: Key; prev: Key | null; title: Key | null }[] = [
     { id: 'day', label: 'stats.day', prev: 'stats.prevDay', title: 'stats.titleDay' },
@@ -34,6 +35,18 @@
   $: days = streak(sessions);
   $: best = bestDay(sessions);
   $: goalMonth = goalDaysThisMonth(sessions, goal);
+  $: halfGoal = splitGoal(goal);
+  $: halves = todayHalves(sessions);
+  const PERIOD_GOALS: { id: GoalPeriod; label: Key }[] = [
+    { id: 'week', label: 'goal.thisWeek' },
+    { id: 'month', label: 'goal.thisMonth' },
+    { id: 'year', label: 'goal.thisYear' },
+  ];
+  $: periodGoals = PERIOD_GOALS.filter((g) => $prefs.goals[g.id] > 0).map((g) => ({
+    ...g,
+    goal: $prefs.goals[g.id],
+    done: periodTotal(sessions, g.id),
+  }));
   $: list = sessionsIn(sessions, period);
   $: visible = showAll ? list : list.slice(0, 20);
   $: period, (showAll = false);
@@ -225,6 +238,21 @@
         </span>
       {/if}
     </div>
+    {#if goal >= 2}
+      <div class="halves">
+        <span>{$t('goal.morning')} <strong>{fmtNum(halves.morning, $locale)}</strong> / {fmtNum(halfGoal.morning, $locale)}{halves.morning >= halfGoal.morning ? ' ✓' : ''}</span>
+        <span>{$t('goal.evening')} <strong>{fmtNum(halves.evening, $locale)}</strong> / {fmtNum(halfGoal.evening, $locale)}{halves.evening >= halfGoal.evening ? ' ✓' : ''}</span>
+      </div>
+    {/if}
+    {#each periodGoals as g}
+      <div class="pgoal">
+        <div class="pg-top">
+          <span>{$t(g.label)}</span>
+          <span><strong>{fmtNum(g.done, $locale)}</strong> / {fmtNum(g.goal, $locale)}{g.done >= g.goal ? ' ✓' : ''}</span>
+        </div>
+        <div class="bar"><div class="fill" class:full={g.done >= g.goal} style="width:{Math.min(100, (g.done / g.goal) * 100)}%"></div></div>
+      </div>
+    {/each}
   </section>
 
   <section class="card glass">
@@ -590,5 +618,43 @@
   .error {
     color: var(--red);
     font-size: 0.85rem;
+  }
+  .halves {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 0.86rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .halves strong,
+  .pg-top strong {
+    color: var(--text);
+  }
+  .pgoal {
+    margin-top: 12px;
+  }
+  .pg-top {
+    display: flex;
+    justify-content: space-between;
+    color: var(--muted);
+    font-size: 0.86rem;
+    font-variant-numeric: tabular-nums;
+    margin-bottom: 5px;
+  }
+  .bar {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--surface-2);
+    overflow: hidden;
+  }
+  .fill {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--accent);
+  }
+  .fill.full {
+    background: var(--green);
   }
 </style>
