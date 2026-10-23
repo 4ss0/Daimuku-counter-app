@@ -341,6 +341,43 @@
     --shadow: 0 10px 30px rgba(30, 50, 30, 0.12);
   }
 
+  /* backgrounds (src/lib/background.ts): the picture of each theme, in
+     its light and dark version; a picture of the user's own */
+  :global(:root[data-bg='sutra']) {
+    --bg-image: url('/backgrounds/sutra-dark.jpg');
+  }
+  :global(:root[data-theme='light'][data-bg='sutra']) {
+    --bg-image: url('/backgrounds/sutra-light.jpg');
+  }
+  :global(:root[data-bg='buddha']) {
+    --bg-image: url('/backgrounds/buddha-dark.jpg');
+  }
+  :global(:root[data-theme='light'][data-bg='buddha']) {
+    --bg-image: url('/backgrounds/buddha-light.jpg');
+  }
+  :global(:root[data-bg='temple']) {
+    --bg-image: url('/backgrounds/temple-dark.jpg');
+  }
+  :global(:root[data-theme='light'][data-bg='temple']) {
+    --bg-image: url('/backgrounds/temple-light.jpg');
+  }
+  :global(:root[data-bg='nature']) {
+    --bg-image: url('/backgrounds/nature-dark.jpg');
+  }
+  :global(:root[data-theme='light'][data-bg='nature']) {
+    --bg-image: url('/backgrounds/nature-light.jpg');
+  }
+  :global(:root[data-bg='sakura']) {
+    --bg-image: url('/backgrounds/sakura-dark.jpg');
+  }
+  :global(:root[data-theme='light'][data-bg='sakura']) {
+    --bg-image: url('/backgrounds/sakura-light.jpg');
+  }
+  :global(:root[data-bg='custom']),
+  :global(:root[data-theme='light'][data-bg='custom']) {
+    --bg-image: var(--bg-custom, none);
+  }
+
   /* accent colours: [theme] x [accent] */
   :global(:root[data-accent='lotus']),
   :global(:root:not([data-accent])) {

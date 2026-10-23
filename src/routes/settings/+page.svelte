@@ -4,7 +4,8 @@
   import { api, errText, fmtNum } from '$lib/api';
   import { splitGoal, type GoalPeriod } from '$lib/stats';
   import { LANGS, locale, t, type Key } from '$lib/i18n';
-  import { ACCENTS, initPrefs, prefs, updatePrefs, type Accent, type ThemePref } from '$lib/prefs';
+  import { ACCENTS, initPrefs, prefs, resolvedTheme, updatePrefs, type Accent, type ThemePref } from '$lib/prefs';
+  import { BACKGROUNDS, backgroundUrl, customBackgroundUrl, loadCustomBackground, setCustomBackground, type Background } from '$lib/background';
   import { hasNative, saveFile, shareFile, type ExportedFile } from '$lib/native';
 
   const THEMES: { id: ThemePref; label: Key }[] = [
@@ -57,6 +58,32 @@
   function savePeriodGoal(id: GoalPeriod, raw: string) {
     const v = parseInt(raw, 10);
     updatePrefs({ goals: { ...$prefs.goals, [id]: Number.isFinite(v) && v > 0 ? v : 0 } });
+  }
+
+  // background: one of the pictures, or the user's own
+  let bgFile: HTMLInputElement;
+  let customUrl: string | null = null;
+  let bgError = '';
+  onMount(async () => {
+    if (await loadCustomBackground()) customUrl = customBackgroundUrl();
+  });
+  function pickBackground(bg: Background) {
+    bgError = '';
+    if (bg === 'custom' && !customUrl) bgFile.click();
+    else updatePrefs({ background: bg });
+  }
+  async function chooseImage() {
+    const file = bgFile.files?.[0];
+    bgFile.value = '';
+    if (!file) return;
+    bgError = '';
+    try {
+      await setCustomBackground(file);
+      customUrl = customBackgroundUrl();
+      updatePrefs({ background: 'custom' });
+    } catch {
+      bgError = $t('bg.error');
+    }
   }
 
   async function saveGoal() {
@@ -211,6 +238,27 @@
         </button>
       {/each}
     </div>
+  </section>
+
+  <section class="card glass">
+    <div class="label">{$t('bg.title')}</div>
+    <div class="bgs">
+      {#each BACKGROUNDS as bg}
+        {@const url = bg === 'custom' ? customUrl : backgroundUrl(bg, $resolvedTheme)}
+        <button class="bg-tile" class:on={$prefs.background === bg} on:click={() => pickBackground(bg)} aria-pressed={$prefs.background === bg}>
+          <span class="thumb" style={url ? `background-image:url('${url}')` : ''}>
+            {#if bg === 'custom' && !url}<span class="plus">+</span>{/if}
+          </span>
+          <span class="bg-name">{$t(`bg.${bg}`)}</span>
+        </button>
+      {/each}
+    </div>
+    {#if customUrl}
+      <button class="link-btn" on:click={() => bgFile.click()}>{$t('bg.change')}</button>
+    {/if}
+    <p class="muted small-hint bg-hint">{$t('bg.hint')}</p>
+    {#if bgError}<p class="error">{bgError}</p>{/if}
+    <input class="hidden-file" type="file" accept="image/*" bind:this={bgFile} on:change={chooseImage} />
   </section>
 
   <section class="card glass">
@@ -512,6 +560,59 @@
     font-size: 0.8rem;
     line-height: 1.4;
     margin: 0 0 10px;
+  }
+  .bgs {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    gap: 10px;
+  }
+  .bg-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: pointer;
+  }
+  .thumb {
+    width: 100%;
+    aspect-ratio: 9 / 14;
+    border-radius: 12px;
+    border: 2px solid var(--line);
+    background: var(--surface-2) center 30% / cover no-repeat;
+    display: grid;
+    place-items: center;
+  }
+  .bg-tile.on .thumb {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+  }
+  .plus {
+    font-size: 2rem;
+    color: var(--muted);
+  }
+  .bg-name {
+    font-size: 0.78rem;
+    color: var(--muted);
+    text-align: center;
+  }
+  .bg-tile.on .bg-name {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .link-btn {
+    margin-top: 10px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent);
+    font-size: 0.88rem;
+    cursor: pointer;
+  }
+  .bg-hint {
+    margin-top: 10px;
   }
   .goal-row {
     margin-top: 8px;

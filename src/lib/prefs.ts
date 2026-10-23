@@ -3,6 +3,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { get, writable } from 'svelte/store';
 import { detectLang, lang, type Lang } from './i18n';
+import { BACKGROUNDS, loadCustomBackground, type Background } from './background';
 
 export type ThemePref = 'system' | 'light' | 'dark';
 export type Accent = 'lotus' | 'gold' | 'sakura' | 'indigo';
@@ -22,6 +23,7 @@ export interface Prefs {
   forgiven: string[];
   /** Badges already announced. */
   badgesSeen: string[];
+  background: Background;
 }
 
 const DEFAULTS: Prefs = {
@@ -33,6 +35,7 @@ const DEFAULTS: Prefs = {
   reminders: { morning: { on: false, time: '07:00' }, evening: { on: false, time: '19:00' } },
   forgiven: [],
   badgesSeen: [],
+  background: 'lotus',
 };
 
 /** Strings matching `re`, at most `max` of them. */
@@ -60,6 +63,7 @@ export const prefsLoaded = writable(false);
 export const resolvedTheme = writable<'light' | 'dark'>('dark');
 
 let loaded = false;
+let customLoaded = false;
 let media: MediaQueryList | null = null;
 
 function apply(p: Prefs) {
@@ -71,12 +75,17 @@ function apply(p: Prefs) {
     const root = document.documentElement;
     root.dataset.theme = theme;
     root.dataset.accent = p.accent;
+    root.dataset.bg = p.background;
+    if (p.background === 'custom' && !customLoaded) {
+      customLoaded = true;
+      loadCustomBackground();
+    }
     root.lang = get(lang);
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', theme === 'dark' ? '#0c0d0f' : '#eef2ea');
     // cache for app.html, so the next start paints the right theme immediately
     try {
-      localStorage.setItem('daimoku-theme', JSON.stringify({ theme: p.theme, accent: p.accent }));
+      localStorage.setItem('daimoku-theme', JSON.stringify({ theme: p.theme, accent: p.accent, bg: p.background }));
     } catch {
       /* storage unavailable: only costs a brief flash */
     }
@@ -110,6 +119,7 @@ function sanitize(p: Partial<Prefs> | null | undefined): Partial<Prefs> {
     const g = p.goals as Partial<Prefs['goals']>;
     out.goals = { week: count(g.week, 1e7, 0), month: count(g.month, 1e8, 0), year: count(g.year, 1e9, 0) };
   }
+  if (p.background && (BACKGROUNDS as readonly string[]).includes(p.background)) out.background = p.background;
   const forgiven = strings(p.forgiven, /^\d{4}-\d{1,2}-\d{1,2}$/, 2000);
   if (forgiven) out.forgiven = forgiven;
   const seen = strings(p.badgesSeen, /^(total|streak)-\d+$/, 100);

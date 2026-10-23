@@ -15,6 +15,7 @@
         var th = c.theme === 'light' || c.theme === 'dark' ? c.theme : dark ? 'dark' : 'light';
         document.documentElement.dataset.theme = th;
         document.documentElement.dataset.accent = c.accent || 'lotus';
+        document.documentElement.dataset.bg = c.bg || 'lotus';
       } catch (e) {}
     </script>
     <style>

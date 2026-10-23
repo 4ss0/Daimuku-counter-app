@@ -17,3 +17,6 @@ registrazioni/
 *.jks
 *.keystore
 keystore.properties
+
+# rendered from tools/backgrounds/make.py
+tools/backgrounds/svg/
