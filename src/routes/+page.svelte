@@ -74,33 +74,57 @@
     }
   }
 
+  // Coins are only for someone looking at the screen. With the screen off
+  // the WebView may keep polling, and even report the page as visible,
+  // while nothing is drawn: coins piled up there and, on return, the
+  // counter was behind until they had all flown in. Every poll asks for a
+  // frame; when the last one asked for has not been drawn within AWAY_MS
+  // nobody is looking (or the screen has just come back), and the Daimoku
+  // found by the checks go straight into the counter.
+  const AWAY_MS = 600;
+  let lastFrameAt = 0;
+  let frameAsked = false;
+
+  function askFrame() {
+    if (frameAsked) return;
+    frameAsked = true;
+    requestAnimationFrame(() => {
+      frameAsked = false;
+      lastFrameAt = performance.now();
+    });
+  }
+
   async function poll() {
     try {
       const v = await api.liveView();
-      const fresh = (v.recovered ?? 0) - lastRecovered;
-      // with the app hidden (screen off) animations do not run: recovered
-      // Daimoku go straight into the counter instead of queuing as coins
-      if (fresh > 0 && running && !document.hidden) launchCoins(fresh);
-      lastRecovered = v.recovered ?? 0;
-      view = v;
       const now = performance.now();
+      const away = document.hidden || now - lastFrameAt > AWAY_MS;
+      askFrame();
+      if (away) clearCoins();
+      const fresh = (v.recovered ?? 0) - lastRecovered;
+      if (fresh > 0 && running && !away) launchCoins(fresh);
+      // max: a reply overtaken by a newer one must not bring coins back
+      lastRecovered = Math.max(lastRecovered, v.recovered ?? 0);
+      view = v;
       if (v.speaking) lastSpokeAt = now;
       heard = running && (v.speaking || now - lastSpokeAt < SPEAK_HOLD_MS);
-      sync();
+      sync(away);
     } catch (e) {
       errorText = errText(e);
     }
   }
 
-  // coins still in flight when the app is hidden would all land on return
+  // hidden: coins in flight would all land on return. Visible again: bring
+  // the counter up to date at once, without waiting for the next poll.
   function onVisibility() {
     if (document.hidden) clearCoins();
+    else if (running) poll();
   }
 
-  /** Pulses for every Daimoku that reaches the counter. */
-  function sync() {
+  /** Pulses for every Daimoku that reaches the counter (no vibration when `quiet`). */
+  function sync(quiet = false) {
     const shown = Math.max(0, (view?.count ?? 0) - pending);
-    if (shown > lastCount) onIncrement(lastCount, shown);
+    if (shown > lastCount) onIncrement(lastCount, shown, quiet);
     lastCount = shown;
   }
 
@@ -134,11 +158,11 @@
     return 1;
   }
 
-  function onIncrement(from: number, to: number) {
+  function onIncrement(from: number, to: number, quiet = false) {
     const m = milestone(from, to);
     pulseTier = m === 1000 ? 'p1000' : m === 100 ? 'p100' : m === 10 ? 'p10' : 'p1';
     pulseKey += 1;
-    if (navigator.vibrate) {
+    if (!quiet && navigator.vibrate) {
       navigator.vibrate(m === 1000 ? [40, 60, 40, 60, 90] : m === 100 ? [30, 60, 30] : m === 10 ? 25 : 12);
     }
     // daily goal crossed during this session
