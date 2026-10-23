@@ -10,6 +10,7 @@
   import { prefs } from '$lib/prefs';
   import { liveRunning } from '$lib/live';
   import { noteBadges } from '$lib/badges';
+  import { prepareBell, strike } from '$lib/bell';
 
   const POLL_MS = 150;
   const R = 118;
@@ -54,6 +55,13 @@
   let sessionHalf: Half = halfOf(new Date());
   let nowHalf: Half = halfOf(new Date());
   $: halfGoal = splitGoal(goal);
+  // the bell button (Bell page): loaded ahead so the first strike is on time
+  let bellKey = 0;
+  $: if ($prefs.bell.on) prepareBell($prefs.bell.kind);
+  function ringBell() {
+    bellKey += 1;
+    strike($prefs.bell.kind, $prefs.bell.volume).catch(() => {});
+  }
   // a milestone of all the Daimoku can be crossed while counting
   $: if (running && liveCount > 0) noteBadges(sessions, liveCount);
   $: halfDone = todayHalves(sessions);
@@ -450,19 +458,32 @@
     {/if}
   </div>
 
-  <button
-    class="go"
-    class:stop={running}
-    on:click={running ? stop : start}
-    disabled={busy}
-    aria-label={running ? $t('count.stop') : $t('count.start')}
-  >
-    {#if running}
-      <svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" /></svg>
-    {:else}
-      <svg viewBox="0 0 24 24"><path d="M8.5 5.8v12.4a1 1 0 0 0 1.5.86l10-6.2a1 1 0 0 0 0-1.72l-10-6.2a1 1 0 0 0-1.5.86z" /></svg>
+  <div class="go-row">
+    <button
+      class="go"
+      class:stop={running}
+      on:click={running ? stop : start}
+      disabled={busy}
+      aria-label={running ? $t('count.stop') : $t('count.start')}
+    >
+      {#if running}
+        <svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" /></svg>
+      {:else}
+        <svg viewBox="0 0 24 24"><path d="M8.5 5.8v12.4a1 1 0 0 0 1.5.86l10-6.2a1 1 0 0 0 0-1.72l-10-6.2a1 1 0 0 0-1.5.86z" /></svg>
+      {/if}
+    </button>
+    {#if $prefs.bell.on}
+      <!-- touching it is striking the bell: it sounds on the touch, not on release -->
+      <button class="bell-btn glass" on:pointerdown|preventDefault={ringBell} aria-label={$t('bell.strike')} title={$t('bell.strike')}>
+        {#key bellKey}
+          <svg viewBox="0 0 24 24" class:swing={bellKey > 0} aria-hidden="true">
+            <path d="M5 16.5h14l-1.6-2.4V10a5.4 5.4 0 0 0-10.8 0v4.1z" />
+            <path d="M10 19.2a2.2 2.2 0 0 0 4 0M12 4.6V3" />
+          </svg>
+        {/key}
+      </button>
     {/if}
-  </button>
+  </div>
   <div class="go-label">{running ? $t('count.stop') : $t('count.start')}</div>
 
   {#if summary && !running}
@@ -1059,8 +1080,61 @@
     color: var(--faint);
   }
 
-  button.go {
+  .go-row {
+    position: relative;
     margin-top: 6px;
+  }
+  .bell-btn {
+    position: absolute;
+    top: 50%;
+    left: calc(100% + 26px);
+    transform: translateY(-50%);
+    width: 58px;
+    height: 58px;
+    padding: 0;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    color: var(--accent);
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .bell-btn:active {
+    transform: translateY(-50%) scale(0.94);
+  }
+  .bell-btn svg {
+    width: 28px;
+    height: 28px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .swing {
+    transform-origin: 12px 4px;
+    animation: bell-swing 0.6s ease-out;
+  }
+  @keyframes bell-swing {
+    20% {
+      transform: rotate(-14deg);
+    }
+    45% {
+      transform: rotate(10deg);
+    }
+    70% {
+      transform: rotate(-4deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .swing {
+      animation: none;
+    }
+  }
+
+  button.go {
     width: 84px;
     height: 84px;
     border-radius: 50%;

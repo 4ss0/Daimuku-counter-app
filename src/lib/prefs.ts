@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { get, writable } from 'svelte/store';
 import { detectLang, lang, type Lang } from './i18n';
 import { BACKGROUNDS, loadCustomBackground, type Background } from './background';
+import { BELLS, type BellKind } from './bell';
 
 export type ThemePref = 'system' | 'light' | 'dark';
 export type Accent = 'lotus' | 'gold' | 'sakura' | 'indigo';
@@ -24,6 +25,8 @@ export interface Prefs {
   /** Badges already announced. */
   badgesSeen: string[];
   background: Background;
+  /** The bell button on the Count screen. */
+  bell: { on: boolean; kind: BellKind; volume: number };
 }
 
 const DEFAULTS: Prefs = {
@@ -36,6 +39,7 @@ const DEFAULTS: Prefs = {
   forgiven: [],
   badgesSeen: [],
   background: 'lotus',
+  bell: { on: false, kind: 'high', volume: 0.8 },
 };
 
 /** Strings matching `re`, at most `max` of them. */
@@ -120,6 +124,14 @@ function sanitize(p: Partial<Prefs> | null | undefined): Partial<Prefs> {
     out.goals = { week: count(g.week, 1e7, 0), month: count(g.month, 1e8, 0), year: count(g.year, 1e9, 0) };
   }
   if (p.background && (BACKGROUNDS as readonly string[]).includes(p.background)) out.background = p.background;
+  if (p.bell && typeof p.bell === 'object') {
+    const b = p.bell as Partial<Prefs['bell']>;
+    out.bell = {
+      on: typeof b.on === 'boolean' ? b.on : DEFAULTS.bell.on,
+      kind: b.kind && (BELLS as readonly string[]).includes(b.kind) ? b.kind : DEFAULTS.bell.kind,
+      volume: typeof b.volume === 'number' && Number.isFinite(b.volume) ? Math.min(1, Math.max(0, b.volume)) : DEFAULTS.bell.volume,
+    };
+  }
   const forgiven = strings(p.forgiven, /^\d{4}-\d{1,2}-\d{1,2}$/, 2000);
   if (forgiven) out.forgiven = forgiven;
   const seen = strings(p.badgesSeen, /^(total|streak)-\d+$/, 100);

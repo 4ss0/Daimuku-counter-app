@@ -22,6 +22,7 @@
   const sections: { href: string; key: Key; icon: string; soon?: boolean }[] = [
     { href: '/', key: 'menu.counter', icon: 'count' },
     { href: '/reminders', key: 'menu.reminders', icon: 'alarm' },
+    { href: '/bell', key: 'menu.bell', icon: 'bell' },
     { href: '/dictionary', key: 'menu.dictionary', icon: 'book' },
     { href: '/social', key: 'menu.social', icon: 'people', soon: true },
     { href: '/donate', key: 'menu.donate', icon: 'heart' },
@@ -271,6 +272,9 @@
             {:else if s.icon === 'alarm'}
               <circle cx="12" cy="13" r="7.5" />
               <path d="M12 9.5V13l2.5 2M5 4.5L3 6.5M19 4.5l2 2" />
+            {:else if s.icon === 'bell'}
+              <path d="M5 16.5h14l-1.6-2.4V10a5.4 5.4 0 0 0-10.8 0v4.1z" />
+              <path d="M10 19.2a2.2 2.2 0 0 0 4 0M12 4.6V3" />
             {:else if s.icon === 'book'}
               <path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v15H7.5A2.5 2.5 0 0 0 5 20.5zM5 20.5A2.5 2.5 0 0 0 7.5 23H19v-5" />
             {:else if s.icon === 'people'}
