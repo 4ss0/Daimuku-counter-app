@@ -1,6 +1,9 @@
 // The bell: three struck bells (static/bells, made by tools/bells/make.py),
 // played with Web Audio so that a tap sounds at once. Each tap is a new
 // strike: the previous one keeps ringing under it, as with a real bell.
+// The counter is told of every strike, so that it does not hear the bell
+// (src-tauri/src/bell.rs takes its frequencies out of the microphone).
+import { invoke } from '@tauri-apps/api/core';
 export const BELLS = ['high', 'medium', 'deep'] as const;
 export type BellKind = (typeof BELLS)[number];
 
@@ -31,6 +34,7 @@ export function prepareBell(kind: BellKind) {
 
 /** Strikes the bell at `volume` (0..1). */
 export async function strike(kind: BellKind, volume: number) {
+  invoke('bell_struck', { kind }).catch(() => {});
   const ac = audio();
   if (ac.state === 'suspended') await ac.resume();
   const buf = await load(kind);

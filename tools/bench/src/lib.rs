@@ -1,6 +1,8 @@
 //! The app's recognition modules, compiled from src-tauri/src.
 #[path = "../../../src-tauri/src/base.rs"]
 pub mod base;
+#[path = "../../../src-tauri/src/bell.rs"]
+pub mod bell;
 #[path = "../../../src-tauri/src/engine.rs"]
 pub mod engine;
 #[path = "../../../src-tauri/src/features.rs"]

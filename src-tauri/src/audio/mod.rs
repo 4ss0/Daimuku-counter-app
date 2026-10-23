@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use tokio::sync::oneshot;
 
+use crate::bell::BellFilter;
 use crate::dsp::{DaimokuCountResult, StreamingState};
 use crate::engine::{Engine, EngineState};
 use crate::profile::{base_only_model, placeholder_model, PersonalProfile};
@@ -111,6 +112,8 @@ struct LiveInner {
     /// Cached result of the one authoritative `finish()` call, if the
     /// recording has actually stopped.
     finished_result: Option<DaimokuCountResult>,
+    /// Takes the bell of the Count screen out of what the engine hears.
+    bell: BellFilter,
 }
 
 impl LiveCounter {
@@ -123,6 +126,7 @@ impl LiveCounter {
                 pending_model: placeholder_model(),
                 pending_slow: None,
                 finished_result: None,
+                bell: BellFilter::new(initial_sample_rate),
             }),
         }
     }
@@ -138,6 +142,7 @@ impl LiveCounter {
         }
         g.engine = Some(engine);
         g.finished_result = None;
+        g.bell = BellFilter::new(sample_rate);
     }
 
     /// Selects the model to use for the *next* recording. Does not
@@ -158,10 +163,23 @@ impl LiveCounter {
 
     pub fn push(&self, samples: &[f32]) {
         if let Ok(mut g) = self.inner.lock() {
+            let g = &mut *g;
             if let Some(engine) = g.engine.as_mut() {
-                engine.push(samples);
+                if g.bell.active() {
+                    let mut x = samples.to_vec();
+                    g.bell.process(&mut x);
+                    engine.push(&x);
+                } else {
+                    engine.push(samples);
+                }
             }
         }
+    }
+
+    /// The bell `kind` was struck: the engine stops hearing it until it is
+    /// over. False for an unknown bell.
+    pub fn bell_struck(&self, kind: &str) -> bool {
+        self.inner.lock().map(|mut g| g.bell.strike(kind)).unwrap_or(false)
     }
 
     pub fn sample_rate(&self) -> u32 {

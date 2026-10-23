@@ -164,6 +164,17 @@ pub async fn stop_live_session(
     })
 }
 
+/// The bell of the Count screen was struck: taken out of what the counter
+/// hears (see `bell.rs`).
+#[tauri::command]
+pub fn bell_struck(state: State<'_, AudioState>, kind: String) -> Result<(), String> {
+    if state.live().bell_struck(&kind) {
+        Ok(())
+    } else {
+        Err(format!("unknown bell: {kind}"))
+    }
+}
+
 /// Everything the live screen needs; cheap, poll it every ~150 ms.
 #[tauri::command]
 pub fn live_view(state: State<'_, AudioState>) -> LiveView {

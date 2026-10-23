@@ -160,15 +160,15 @@ export const HELP: HelpSection[] = [
     text: {
       it: [
         'Campana e sfondo',
-        'Nel menù, Campana ti fa scegliere tra tre campane, dalla più acuta alla più profonda. Se attivi il tasto, nella schermata Conta compare una campana accanto a Inizia: toccarla è come colpirla.\n\nIn Impostazioni → Sfondo scegli tra il loto e cinque illustrazioni (Sutra del Loto, Budda, tempio, natura, ciliegi), ognuna chiara o scura secondo il tema, oppure una tua immagine.',
+        'Nel menù, Campana ti fa scegliere tra tre campane, dalla più acuta alla più profonda. Se attivi il tasto, nella schermata Conta compare una campana accanto a Inizia: toccarla è come colpirla. Puoi suonarla mentre reciti: il contatore non la sente, perché toglie dal microfono le note di quella campana finché suona.\n\nIn Impostazioni → Sfondo scegli tra il loto e cinque illustrazioni (Sutra del Loto, Budda, tempio, natura, ciliegi), ognuna chiara o scura secondo il tema, oppure una tua immagine.',
       ],
       en: [
         'Bell and background',
-        'In the menu, Bell lets you choose among three bells, from the highest to the deepest. If you turn its button on, a bell appears next to Start on the Count screen: tapping it is like striking it.\n\nIn Settings → Background choose the lotus or one of five illustrations (Lotus Sutra, Buddha, temple, nature, cherry blossoms), each light or dark with the theme, or a picture of your own.',
+        'In the menu, Bell lets you choose among three bells, from the highest to the deepest. If you turn its button on, a bell appears next to Start on the Count screen: tapping it is like striking it. You can ring it while chanting: the counter does not hear it, as it takes that bell's notes out of the microphone while it rings.\n\nIn Settings → Background choose the lotus or one of five illustrations (Lotus Sutra, Buddha, temple, nature, cherry blossoms), each light or dark with the theme, or a picture of your own.',
       ],
       ja: [
         '鈴と背景',
-        'メニューの「鈴（りん）」では、高い音から低い音まで3種類の鈴を選べます。ボタンをオンにすると「唱題」画面の「開始」の横に鈴が表示され、タップすると鈴を打つのと同じように鳴ります。\n\n「設定」→「背景」では、蓮と5つのイラスト（法華経・仏陀・寺院・自然・桜、テーマに合わせてライト／ダーク）、または自分の画像から選べます。',
+        'メニューの「鈴（りん）」では、高い音から低い音まで3種類の鈴を選べます。ボタンをオンにすると「唱題」画面の「開始」の横に鈴が表示され、タップすると鈴を打つのと同じように鳴ります。唱題しながら鳴らしても大丈夫です。鳴っている間、その鈴の音をマイクから取り除くので、カウンターには聞こえません。\n\n「設定」→「背景」では、蓮と5つのイラスト（法華経・仏陀・寺院・自然・桜、テーマに合わせてライト／ダーク）、または自分の画像から選べます。',
       ],
     },
   },

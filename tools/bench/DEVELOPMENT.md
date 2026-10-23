@@ -180,6 +180,29 @@ Daimoku, so these are not all errors).
   | the 4 new takes, leave one out | 3/4 (slow 2/3) | 3/4 |
   | negatives (takes, both sessions) | 0 (500 ms: 2) | same |
 
+- **v0.6.1, the app's bell taken out of the microphone.** The bells of the
+  Count screen are synthetic, so their partials are known exactly
+  (tools/bells/make.py). On every strike the front end tells the engine
+  (`bell_struck`) and `src-tauri/src/bell.rs` puts a notch (RBJ, Q 20) on
+  both sines of every partial (they come in pairs a few Hz apart, the
+  beat; one notch on the centre left them at only ~-22 dB) for 6.5 s,
+  fading in and out over 20 ms. `examples/bellmix` mixes the real bell
+  (static/bells, struck every 10 s / 6 s, peak 0.5x or 1.5x the voice's)
+  into a session and counts it clean, with the bell, and with the bell
+  and the filter:
+
+  | session | bell | clean | with bell (0.5x / 1.5x) | bell + filter | filter, no bell |
+  |---|---|---|---|---|---|
+  | 56 (13-take profile) | high | 52 | 36 / 37 | 52 / 52 | 52 |
+  | | medium | 52 | 28 / 21 | 51 / 51 | 51 |
+  | | deep | 52 | 51 / 42 | 53 / 53 | 53 |
+  | 6 of the 15:41 session | high | 6 | 0 / 0 | 6 / 6 | 6 |
+  | | medium | 6 | 0 / 0 | 6 / 6 | 6 |
+  | | deep | 6 | 6 / 7 | 6 / 6 | 6 |
+
+  With the filter the bell changes nothing: the counts are those of the
+  filter alone, which moves the session of 56 by one either way.
+
 ## Known weaknesses / open questions
 
 - Tuned on few recordings, one voice; 59 hand-checked phrases only.

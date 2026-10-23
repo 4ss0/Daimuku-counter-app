@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod backup;
 pub mod base;
+pub mod bell;
 pub mod commands;
 pub mod dsp;
 pub mod engine;
@@ -64,6 +65,7 @@ pub fn run() {
             commands::start_live_session,
             commands::stop_live_session,
             commands::live_view,
+            commands::bell_struck,
             commands::export_live_session_wav,
             // history & statistics
             commands::list_sessions,

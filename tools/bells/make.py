@@ -22,6 +22,8 @@ SR = 44_100
 OUT = os.path.join(os.path.dirname(__file__), "..", "..", "static", "bells")
 
 # (frequency Hz, relative amplitude, decay time constant s, beat Hz)
+# The frequencies and beats are also in src-tauri/src/bell.rs, which takes
+# them out of the microphone while a bell rings: change both together.
 # About 6 s each: the decays are shorter than a real bell's, and the last
 # 1.5 s fade out, so the sound ends while it is already soft.
 SECONDS = 6.0
