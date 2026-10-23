@@ -7,6 +7,8 @@
   import { shareCard } from '$lib/card';
   import { bestDay, fmtWhen, goalDaysThisMonth, periodStats, periodTotal, sessionsIn, splitGoal, streak, todayHalves, type GoalPeriod, type Period } from '$lib/stats';
   import { prefs } from '$lib/prefs';
+  import BadgeIcon from '$lib/BadgeIcon.svelte';
+  import { badgeName, badges, forgive, graceOffer, longestStreak, noteBadges } from '$lib/badges';
 
   const PERIODS: { id: Period; label: Key; prev: Key | null; title: Key | null }[] = [
     { id: 'day', label: 'stats.day', prev: 'stats.prevDay', title: 'stats.titleDay' },
@@ -32,7 +34,24 @@
   $: p = PERIODS.find((x) => x.id === period)!;
   $: heroTitle = p.title ? $t(p.title) : st.title;
   $: delta = st.prevTotal !== null && st.prevTotal > 0 ? Math.round(((st.total - st.prevTotal) / st.prevTotal) * 100) : null;
-  $: days = streak(sessions);
+  $: days = streak(sessions, new Date(), $prefs.forgiven);
+  $: offer = loaded ? graceOffer(sessions, $prefs.forgiven) : null;
+  let forgivenNow = false;
+  $: allBadges = badges(sessions, $prefs.forgiven);
+  $: longest = longestStreak(sessions, $prefs.forgiven);
+  $: allTotal = sessions.reduce((a, x) => a + x.count, 0);
+  function dayWords(d: Date): string {
+    const y = new Date();
+    y.setDate(y.getDate() - 1);
+    if (d.toDateString() === y.toDateString()) return $t('common.yesterday');
+    const s = d.toLocaleDateString($locale, { weekday: 'long', day: 'numeric', month: 'long' });
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+  function useGrace() {
+    if (!offer) return;
+    forgive(offer.key);
+    forgivenNow = true;
+  }
   $: best = bestDay(sessions);
   $: goalMonth = goalDaysThisMonth(sessions, goal);
   $: halfGoal = splitGoal(goal);
@@ -55,6 +74,7 @@
   async function load() {
     try {
       [sessions, goal] = await Promise.all([api.listSessions(), api.getGoal()]);
+      noteBadges(sessions);
     } catch (e) {
       errorText = errText(e);
     }
@@ -215,6 +235,16 @@
     </div>
   </div>
 
+  {#if offer}
+    <section class="card glass grace">
+      <div class="c-title">{$t('grace.title')}</div>
+      <p>{$t('grace.text', { day: dayWords(offer.day) })}</p>
+      <button class="small primary" on:click={useGrace}>{$t('grace.button')}</button>
+    </section>
+  {:else if forgivenNow}
+    <p class="note-ok">{$t('grace.done')}</p>
+  {/if}
+
   <section class="card glass goal">
     <div class="row">
       <div>
@@ -251,6 +281,25 @@
           <span><strong>{fmtNum(g.done, $locale)}</strong> / {fmtNum(g.goal, $locale)}{g.done >= g.goal ? ' ✓' : ''}</span>
         </div>
         <div class="bar"><div class="fill" class:full={g.done >= g.goal} style="width:{Math.min(100, (g.done / g.goal) * 100)}%"></div></div>
+      </div>
+    {/each}
+  </section>
+
+  <section class="card glass badges" id="badges">
+    <div class="c-title">{$t('badge.title')}</div>
+    <div class="c-sub">{$t('badge.have', { n: fmtNum(allTotal, $locale), d: fmtNum(longest, $locale) })}</div>
+    {#each [['total', 'badge.totalGroup'], ['streak', 'badge.streakGroup']] as const as [kind, label]}
+      <div class="b-group">{$t(label)}</div>
+      <div class="b-grid">
+        {#each allBadges.filter((b) => b.kind === kind) as b (b.id)}
+          <div class="b-item" class:locked={!b.earned} title={badgeName(b, $t, $locale)}>
+            <BadgeIcon badge={b} size={54} />
+            <span class="b-name">{badgeName(b, $t, $locale)}</span>
+            {#if !b.earned}
+              <span class="b-bar"><span style="width:{Math.min(100, (b.have / b.n) * 100)}%"></span></span>
+            {/if}
+          </div>
+        {/each}
       </div>
     {/each}
   </section>
@@ -656,5 +705,49 @@
   }
   .fill.full {
     background: var(--green);
+  }
+  .grace p {
+    margin: 6px 0 12px;
+    line-height: 1.5;
+    color: var(--muted);
+  }
+  .b-group {
+    margin: 14px 0 8px;
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .b-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+    gap: 12px 8px;
+  }
+  .b-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    text-align: center;
+  }
+  .b-name {
+    font-size: 0.78rem;
+    line-height: 1.25;
+  }
+  .b-item.locked .b-name {
+    color: var(--faint);
+  }
+  .b-bar {
+    width: 70%;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--surface-2);
+    overflow: hidden;
+  }
+  .b-bar span {
+    display: block;
+    height: 100%;
+    background: var(--accent);
   }
 </style>

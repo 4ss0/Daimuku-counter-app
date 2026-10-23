@@ -9,6 +9,7 @@
   import { shareCard } from '$lib/card';
   import { prefs } from '$lib/prefs';
   import { liveRunning } from '$lib/live';
+  import { noteBadges } from '$lib/badges';
 
   const POLL_MS = 150;
   const R = 118;
@@ -53,6 +54,8 @@
   let sessionHalf: Half = halfOf(new Date());
   let nowHalf: Half = halfOf(new Date());
   $: halfGoal = splitGoal(goal);
+  // a milestone of all the Daimoku can be crossed while counting
+  $: if (running && liveCount > 0) noteBadges(sessions, liveCount);
   $: halfDone = todayHalves(sessions);
   $: halfNow = {
     morning: halfDone.morning + (running && sessionHalf === 'morning' ? liveCount : 0),
@@ -80,6 +83,7 @@
     try {
       [sessions, goal] = await Promise.all([api.listSessions(), api.getGoal()]);
       nowHalf = halfOf(new Date());
+      noteBadges(sessions);
     } catch (e) {
       errorText = errText(e);
     }

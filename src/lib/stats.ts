@@ -39,7 +39,7 @@ const dayTitle = (loc: string, d: Date) => fmt(loc, { weekday: 'short', day: 'nu
 export function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
-function addDays(d: Date, n: number): Date {
+export function addDays(d: Date, n: number): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 }
 export function startOfWeek(d: Date): Date {
@@ -85,10 +85,17 @@ export function todayTotal(sessions: SessionRecord[], now = new Date()): number 
   return sumIn(parse(sessions), from, addDays(from, 1)).total;
 }
 
-/** Consecutive days with at least one Daimoku, ending today (or
- *  yesterday, if nothing has been chanted yet today). */
-export function streak(sessions: SessionRecord[], now = new Date()): number {
-  const days = new Set(parse(sessions).filter((p) => p.count > 0).map((p) => dayKey(p.t)));
+/** Days with at least one Daimoku (`dayKey`). */
+export function chantedDays(sessions: SessionRecord[]): Set<string> {
+  return new Set(parse(sessions).filter((p) => p.count > 0).map((p) => dayKey(p.t)));
+}
+
+/** Consecutive days with at least one Daimoku (or forgiven, see
+ *  badges.ts), ending today (or yesterday, if nothing has been chanted
+ *  yet today). */
+export function streak(sessions: SessionRecord[], now = new Date(), forgiven: string[] = []): number {
+  const days = chantedDays(sessions);
+  for (const k of forgiven) days.add(k);
   let d = startOfDay(now);
   if (!days.has(dayKey(d))) d = addDays(d, -1);
   let n = 0;

@@ -8,6 +8,8 @@
   import { liveCount, liveRunning } from '$lib/live';
   import { initPrefs, prefs } from '$lib/prefs';
   import { syncReminders } from '$lib/reminders';
+  import BadgeIcon from '$lib/BadgeIcon.svelte';
+  import { badgeName, newBadges, type Badge } from '$lib/badges';
 
   const tabs = [
     { href: '/', key: 'tab.count', icon: 'count' },
@@ -32,6 +34,22 @@
   $: section = inCounter ? sections[0] : sections.find((s) => s.href === path);
 
   let version = '';
+
+  // new badges: a banner at the top, closed by a tap or after a while
+  const BANNER_MS = 7000;
+  let banner: Badge[] = [];
+  let bannerTimer: ReturnType<typeof setTimeout> | null = null;
+  $: if ($newBadges.length && !banner.length) {
+    banner = $newBadges;
+    newBadges.set([]);
+    if (bannerTimer) clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(closeBanner, BANNER_MS);
+  }
+  function closeBanner() {
+    banner = [];
+    if (bannerTimer) clearTimeout(bannerTimer);
+    bannerTimer = null;
+  }
   let prefsReady = false;
   // the Android side keeps its own copy of the reminders (and their text)
   $: if (prefsReady) syncReminders($prefs), $t;
@@ -194,6 +212,18 @@
       {/each}
     </nav>
   {/if}
+</div>
+
+<div role="status">
+{#if banner.length}
+  <a class="badge-banner glass" href="/stats#badges" on:click={closeBanner}>
+    <BadgeIcon badge={banner[banner.length - 1]} size={46} />
+    <span>
+      <strong>{banner.length > 1 ? $t('badge.newMany', { n: banner.length }) : $t('badge.new')}</strong>
+      <span class="b-names">{banner.map((b) => badgeName(b, $t, $locale)).join(' · ')}</span>
+    </span>
+  </a>
+{/if}
 </div>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -511,6 +541,44 @@
   nav a.active {
     color: var(--accent);
   }
+  /* ---------- new badge banner ---------- */
+  .badge-banner {
+    position: fixed;
+    z-index: 30;
+    top: calc(10px + env(safe-area-inset-top));
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(420px, calc(100vw - 24px));
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px 10px 12px;
+    color: var(--text);
+    text-decoration: none;
+    animation: banner-in 0.45s cubic-bezier(0.2, 1.4, 0.4, 1);
+  }
+  .badge-banner > span {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .b-names {
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+  @keyframes banner-in {
+    from {
+      transform: translate(-50%, -120%);
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .badge-banner {
+      animation: none;
+    }
+  }
+
   /* ---------- top bar and side menu ---------- */
   .topbar {
     flex-shrink: 0;

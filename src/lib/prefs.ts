@@ -18,6 +18,10 @@ export interface Prefs {
   goals: { week: number; month: number; year: number };
   /** Daily reminders of the two sessions (Android), time "HH:MM". */
   reminders: Record<'morning' | 'evening', { on: boolean; time: string }>;
+  /** Days forgiven so as not to break the run of days (`dayKey`, see badges.ts). */
+  forgiven: string[];
+  /** Badges already announced. */
+  badgesSeen: string[];
 }
 
 const DEFAULTS: Prefs = {
@@ -27,7 +31,14 @@ const DEFAULTS: Prefs = {
   keepAwake: false,
   goals: { week: 0, month: 0, year: 0 },
   reminders: { morning: { on: false, time: '07:00' }, evening: { on: false, time: '19:00' } },
+  forgiven: [],
+  badgesSeen: [],
 };
+
+/** Strings matching `re`, at most `max` of them. */
+function strings(v: unknown, re: RegExp, max: number): string[] | undefined {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && re.test(x)).slice(-max) : undefined;
+}
 
 function reminder(v: unknown, fallback: { on: boolean; time: string }) {
   const r = (v && typeof v === 'object' ? v : {}) as { on?: unknown; time?: unknown };
@@ -43,6 +54,8 @@ function count(v: unknown, max: number, fallback: number): number {
 }
 
 export const prefs = writable<Prefs>({ ...DEFAULTS });
+/** True once the saved preferences have been read. */
+export const prefsLoaded = writable(false);
 /** The theme actually shown (system preference resolved). */
 export const resolvedTheme = writable<'light' | 'dark'>('dark');
 
@@ -82,6 +95,7 @@ export async function initPrefs() {
     prefs.set({ ...DEFAULTS });
   }
   loaded = true;
+  prefsLoaded.set(true);
   apply(get(prefs));
 }
 
@@ -96,6 +110,10 @@ function sanitize(p: Partial<Prefs> | null | undefined): Partial<Prefs> {
     const g = p.goals as Partial<Prefs['goals']>;
     out.goals = { week: count(g.week, 1e7, 0), month: count(g.month, 1e8, 0), year: count(g.year, 1e9, 0) };
   }
+  const forgiven = strings(p.forgiven, /^\d{4}-\d{1,2}-\d{1,2}$/, 2000);
+  if (forgiven) out.forgiven = forgiven;
+  const seen = strings(p.badgesSeen, /^(total|streak)-\d+$/, 100);
+  if (seen) out.badgesSeen = seen;
   if (p.reminders && typeof p.reminders === 'object') {
     out.reminders = {
       morning: reminder(p.reminders.morning, DEFAULTS.reminders.morning),
