@@ -114,6 +114,7 @@ export function errText(e: unknown): string {
   if (/no default input device/i.test(s)) {
     return tr('err.noMic');
   }
+  if (s.includes('already recording')) return tr('err.busy');
   if (s.includes('backup-newer')) return tr('err.backupNewer');
   if (s.includes('backup-invalid')) return tr('err.backupInvalid');
   return s;

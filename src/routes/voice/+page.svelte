@@ -2,7 +2,8 @@
   import { onDestroy, onMount } from 'svelte';
   import { api, errText, fmtClock, type PersonalProfile, type ValidationResult } from '$lib/api';
   import { t, type Key } from '$lib/i18n';
-  import { hasNative, shareFile } from '$lib/native';
+  import { hasNative, shareFile, stopCounting } from '$lib/native';
+  import { liveRunning } from '$lib/live';
 
   type Speed = 'slow' | 'medium' | 'fast';
   const SPEEDS: { id: Speed; label: Key; n: number; how: Key }[] = [
@@ -32,6 +33,9 @@
   let voiceMsg = '';
   let voiceFile: HTMLInputElement;
   let pendingVoice: { content: string; n: number } | null = null;
+  /** A counting session holds the microphone (started on the Count page). */
+  let liveBusy = false;
+  $: micTaken = !recording && ($liveRunning || liveBusy);
 
   async function shareVoice() {
     errorText = '';
@@ -150,6 +154,24 @@
         }
       }, 200);
     } catch (e) {
+      if (String(e).includes('already recording')) liveBusy = true;
+      else errorText = errText(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  /** Stops the counting session that holds the microphone (it is saved as usual). */
+  async function stopLive() {
+    if (busy) return;
+    busy = true;
+    errorText = '';
+    try {
+      liveRunning.set(false);
+      stopCounting();
+      await api.stopLive();
+      liveBusy = false;
+    } catch (e) {
       errorText = errText(e);
     } finally {
       busy = false;
@@ -221,7 +243,17 @@
     }
   }
 
-  onMount(loadProfile);
+  onMount(async () => {
+    await loadProfile();
+    // a session may still run in the engine although this page does not
+    // know it (the page was reloaded)
+    try {
+      const v = await api.liveView();
+      if (!recording && v.elapsed_secs > 0 && !v.finished) liveBusy = true;
+    } catch {
+      /* the Record button reports it */
+    }
+  });
   onDestroy(() => {
     if (tick) clearInterval(tick);
     if (recording) api.stopRecording(n).catch(() => {});
@@ -264,8 +296,13 @@
       </div>
     {/if}
 
+    {#if micTaken && !result}
+      <p class="busy-note">{$t('voice.liveRunning')}</p>
+      <button class="btn primary stop-live" on:click={stopLive} disabled={busy}>{$t('voice.stopLive')}</button>
+    {/if}
+
     {#if !result}
-      <button class="go" class:stop={recording} on:click={recording ? stop : start} disabled={busy} aria-label={recording ? $t('voice.finish') : $t('voice.record')}>
+      <button class="go" class:stop={recording} on:click={recording ? stop : start} disabled={busy || micTaken} aria-label={recording ? $t('voice.finish') : $t('voice.record')}>
         {#if recording}
           <svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" /></svg>
         {:else}
@@ -476,6 +513,18 @@
     font-weight: 700;
     color: var(--text);
     font-variant-numeric: tabular-nums;
+  }
+  .busy-note {
+    margin: 0 0 10px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--accent-soft);
+    line-height: 1.45;
+    font-size: 0.92rem;
+  }
+  .stop-live {
+    display: block;
+    margin: 0 auto 12px;
   }
   .instr {
     margin: 0;

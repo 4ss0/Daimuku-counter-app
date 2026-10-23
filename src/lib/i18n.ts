@@ -55,6 +55,8 @@ const it = {
   'voice.importConfirm': 'Sostituire le registrazioni attuali con quelle del file ({n})?',
   'voice.imported': 'Voce importata: {n} registrazioni',
   'voice.importInvalid': 'Il file non è una voce esportata da Daimoku Counter.',
+  'voice.liveRunning': 'È in corso una sessione di conteggio e il microfono è occupato. Fermala per registrare la tua voce: verrà salvata nelle statistiche.',
+  'voice.stopLive': 'Ferma il conteggio',
   'common.less': 'Uno in meno',
   'common.more': 'Uno in più',
   'common.add': 'Aggiungi',
@@ -68,6 +70,7 @@ const it = {
 
   'err.mic': "L'app non può usare il microfono: consenti l'accesso nelle impostazioni del telefono.",
   'err.noMic': 'Nessun microfono trovato.',
+  'err.busy': 'Il microfono è già in uso da una sessione di conteggio: fermala prima.',
 
   'stats.title': 'Statistiche',
   'stats.day': 'Giorno',
@@ -282,6 +285,8 @@ const en: Dict = {
   'voice.importConfirm': 'Replace the current recordings with those in the file ({n})?',
   'voice.imported': 'Voice imported: {n} recordings',
   'voice.importInvalid': 'This file is not a voice exported by Daimoku Counter.',
+  'voice.liveRunning': 'A counting session is running and the microphone is busy. Stop it to record your voice: it will be saved in your statistics.',
+  'voice.stopLive': 'Stop counting',
   'common.less': 'One less',
   'common.more': 'One more',
   'common.add': 'Add',
@@ -295,6 +300,7 @@ const en: Dict = {
 
   'err.mic': "The app can't use the microphone: allow access in the phone settings.",
   'err.noMic': 'No microphone found.',
+  'err.busy': 'The microphone is already in use by a counting session: stop it first.',
 
   'stats.title': 'Statistics',
   'stats.day': 'Day',
@@ -506,6 +512,8 @@ const ja: Dict = {
   'voice.importConfirm': '現在の録音をファイルの録音（{n}）に置き換えますか？',
   'voice.imported': '声を読み込みました: 録音 {n} 件',
   'voice.importInvalid': 'Daimoku Counter で書き出した声のファイルではありません。',
+  'voice.liveRunning': 'カウント中のセッションがあり、マイクが使用中です。声を録音するには停止してください（記録に保存されます）。',
+  'voice.stopLive': 'カウントを停止',
   'common.less': '1つ減らす',
   'common.more': '1つ増やす',
   'common.add': '追加',
@@ -519,6 +527,7 @@ const ja: Dict = {
 
   'err.mic': 'マイクを使用できません。スマートフォンの設定でマイクへのアクセスを許可してください。',
   'err.noMic': 'マイクが見つかりません。',
+  'err.busy': 'マイクはカウント中のセッションで使用されています。先に停止してください。',
 
   'stats.title': '記録',
   'stats.day': '日',

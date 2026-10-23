@@ -16,7 +16,9 @@ pub fn list_input_devices() -> Result<Vec<audio::DeviceInfo>, String> {
     audio::list_input_devices()
 }
 
-#[tauri::command]
+// async: waits up to 10 s for the microphone to open, which must not block
+// the window (sync commands run on the main thread)
+#[tauri::command(async)]
 pub fn start_recording(state: State<'_, AudioState>) -> Result<(), String> {
     state.start()
 }
