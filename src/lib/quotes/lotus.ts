@@ -309,13 +309,13 @@ export const LOTUS: Q[] = [
   ],
   // 10. The Teacher of the Law
   [
-    "Chi, anche in segreto, espone a una sola persona anche una sola frase del Sutra del Loto, è un messaggero del Così Venuto.",
+    "Chi, anche in segreto, espone a una sola persona anche una sola frase del Sutra del Loto, è un messaggero del Budda.",
     "If someone, even in secret, expounds to one person even one phrase of the Lotus Sutra, that person is the envoy of the Thus Come One.",
     "能く竊かに一人の為にも法華経の乃至一句を説かん、当に知るべし、是の人は則ち如来の使なり。",
     "ls:10",
   ],
   [
-    "La stanza del Così Venuto è la grande compassione, la sua veste è un cuore mite e paziente, il suo seggio è la vacuità di tutti i fenomeni.",
+    "La stanza del Budda è la grande compassione, la sua veste è un cuore mite e paziente, il suo seggio è la vacuità di tutti i fenomeni.",
     "The room of the Thus Come One is great compassion; his robe is a gentle and forbearing heart; his seat is the emptiness of all phenomena.",
     "如来の室とは大慈悲心是れなり。如来の衣とは柔和忍辱の心是れなり。如来の座とは一切法空是れなり。",
     "ls:10",
@@ -327,7 +327,7 @@ export const LOTUS: Q[] = [
     "ls:10",
   ],
   [
-    "Anche ora che il Così Venuto è nel mondo questo sutra suscita odio e invidia; quanto più dopo la sua scomparsa.",
+    "Anche ora che il Budda è nel mondo questo sutra suscita odio e invidia; quanto più dopo la sua scomparsa.",
     "Since hatred and jealousy toward this sutra abound even now while the Thus Come One is in the world, how much more will this be so after his passing?",
     "如来の現在すら猶怨嫉多し、況や滅度の後をや。",
     "ls:10",
@@ -351,13 +351,13 @@ export const LOTUS: Q[] = [
     "ls:10",
   ],
   [
-    "Il Così Venuto avvolgerà nella sua veste chi abbraccia questo sutra, e i Budda delle altre direzioni lo proteggeranno.",
+    "Il Budda avvolgerà nella sua veste chi abbraccia questo sutra, e i Budda delle altre direzioni lo proteggeranno.",
     "The Thus Come One will cover with his robe those who uphold this sutra, and the Buddhas of other directions will protect them.",
     "如来は衣を以て之を覆いたもう、又他方の現在の諸仏に護念せらるることを為ん。",
     "ls:10",
   ],
   [
-    "Dove si espone questo sutra si eriga una torre: lì c’è il corpo intero del Così Venuto.",
+    "Dove si espone questo sutra si eriga una torre: lì c’è il corpo intero del Budda.",
     "Wherever this sutra is preached, a tower should be raised, for there is the entire body of the Thus Come One.",
     "若しは説き若しは読み…皆応に七宝の塔を起つべし…此の中には已に如来の全身有す。",
     "ls:10",
@@ -579,7 +579,7 @@ export const LOTUS: Q[] = [
     "ls:16",
   ],
   [
-    "Il Così Venuto vede il triplice mondo così com’è: non c’è nascita né morte, né andare né venire.",
+    "Il Budda vede il triplice mondo così com’è: non c’è nascita né morte, né andare né venire.",
     "The Thus Come One perceives the threefold world exactly as it is: there is no ebb or flow of birth and death.",
     "如来は如実に三界の相を知見す、生死の若しは退、若しは出有ること無し。",
     "ls:16",
@@ -603,7 +603,7 @@ export const LOTUS: Q[] = [
     "ls:16",
   ],
   [
-    "Voi tutti credete e comprendete le parole sincere e vere del Così Venuto.",
+    "Voi tutti credete e comprendete le parole sincere e vere del Budda.",
     "All of you should believe and understand the sincere and truthful words of the Thus Come One.",
     "汝等当に如来の誠諦の語を信解すべし。",
     "ls:16",
@@ -740,7 +740,7 @@ export const LOTUS: Q[] = [
     "ls:21",
   ],
   [
-    "Tutte le leggi del Così Venuto, tutti i suoi poteri, il tesoro dei suoi segreti e le sue opere più profonde sono rivelati in questo sutra.",
+    "Tutte le leggi del Budda, tutti i suoi poteri, il tesoro dei suoi segreti e le sue opere più profonde sono rivelati in questo sutra.",
     "All the doctrines of the Thus Come One, all his powers, the storehouse of his secret essentials and all his profound actions are revealed in this sutra.",
     "如来の一切の所有の法、一切の自在の神力、一切の秘要の蔵、一切の甚深の事、皆此の経に於て宣示顕説す。",
     "ls:21",
@@ -753,7 +753,7 @@ export const LOTUS: Q[] = [
     "ls:22",
   ],
   [
-    "Il Così Venuto è il grande donatore di tutti gli esseri.",
+    "Il Budda è il grande donatore di tutti gli esseri.",
     "The Thus Come One is the great giver to all living beings.",
     "如来は是れ一切衆生の大施主なり。",
     "ls:22",
