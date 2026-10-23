@@ -106,15 +106,15 @@ export const HELP: HelpSection[] = [
     text: {
       it: [
         'Statistiche, obiettivo e condivisione',
-        'In Statistiche vedi i daimoku per giorno, settimana, mese e anno, i giorni di fila e la media: tocca una barra per il dettaglio. Imposta l’obiettivo giornaliero: l’anello della schermata Conta si riempie fino a raggiungerlo.\n\nHai recitato senza l’app, per esempio a una riunione? Usa «Aggiungi a mano…»; per una sessione di un altro giorno tocca «Una sessione passata?» e scegli data e ora. Con l’icona di condivisione puoi condividere una sessione, un periodo o l’obiettivo raggiunto.',
+        'In Statistiche vedi i daimoku per giorno, settimana, mese e anno, i giorni di fila e la media: tocca una barra per il dettaglio. Imposta l’obiettivo giornaliero: l’anello della schermata Conta si riempie fino a raggiungerlo.\n\nHai recitato senza l’app, per esempio a una riunione? Sotto «Sessioni» scegli il giorno, la sessione (mattina o sera) e scrivi quanti Daimoku hai recitato. Con l’icona di condivisione puoi condividere una sessione, un periodo o l’obiettivo raggiunto.',
       ],
       en: [
         'Statistics, goal and sharing',
-        'In Statistics you see your daimoku by day, week, month and year, your streak and your average: tap a bar for details. Set a daily goal: the ring on the Count screen fills up until you reach it.\n\nDid you chant without the app, for example at a meeting? Use "Add by hand…"; for a session on another day tap "A past session?" and choose the date and time. With the share icon you can share a session, a period or a goal reached.',
+        'In Statistics you see your daimoku by day, week, month and year, your streak and your average: tap a bar for details. Set a daily goal: the ring on the Count screen fills up until you reach it.\n\nDid you chant without the app, for example at a meeting? Under "Sessions" choose the day and the session (morning or evening) and type how many Daimoku you chanted. With the share icon you can share a session, a period or a goal reached.',
       ],
       ja: [
         '記録・目標・共有',
-        '「記録」では、日・週・月・年ごとの遍数、連続日数、平均を確認できます。棒をタップすると詳細が表示されます。毎日の目標を設定すると、「唱題」画面のリングが目標に向かって満ちていきます。\n\n会合などアプリを使わずに唱えたときは「手動で追加…」を使ってください。別の日のセッションは「過去のセッション？」から日付と時刻を選べます。共有アイコンから、セッション、期間の記録、目標達成を共有できます。',
+        '「記録」では、日・週・月・年ごとの遍数、連続日数、平均を確認できます。棒をタップすると詳細が表示されます。毎日の目標を設定すると、「唱題」画面のリングが目標に向かって満ちていきます。\n\n会合などアプリを使わずに唱えたときは、「セッション」の下で日付と朝・夜を選び、唱えた遍数を入力してください。共有アイコンから、セッション、期間の記録、目標達成を共有できます。',
       ],
     },
   },

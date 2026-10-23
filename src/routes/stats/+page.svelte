@@ -5,7 +5,7 @@
   import { locale, t, type Key } from '$lib/i18n';
   import { share, sessionText } from '$lib/share';
   import { shareCard } from '$lib/card';
-  import { bestDay, fmtWhen, goalDaysThisMonth, periodStats, periodTotal, sessionsIn, splitGoal, streak, todayHalves, type GoalPeriod, type Period } from '$lib/stats';
+  import { bestDay, fmtWhen, goalDaysThisMonth, halfOf, periodStats, periodTotal, sessionsIn, splitGoal, streak, todayHalves, type GoalPeriod, type Half, type Period } from '$lib/stats';
   import { prefs } from '$lib/prefs';
   import BadgeIcon from '$lib/BadgeIcon.svelte';
   import { badgeName, badges, forgive, graceOffer, longestStreak, noteBadges } from '$lib/badges';
@@ -95,44 +95,36 @@
     editingGoal = false;
   }
 
-  // a session added by hand: now, or at a date and time in the past
-  let pastOpen = false;
-  let pastDate = '';
-  let pastTime = '';
-  let pastMin = '';
-  let pastMsg = '';
+  // a session added by hand: the day, its session (morning or evening)
+  // and the Daimoku chanted. Today's goes in now; an earlier day's at 8:00
+  // or 20:00, so that the list shows it in its place.
   const pad = (n: number) => String(n).padStart(2, '0');
-  function openPast() {
-    const d = new Date();
-    pastDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-    pastTime = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    pastMin = '';
-    pastOpen = true;
-  }
+  const dayInput = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  let addDay = dayInput(new Date());
+  let addHalf: Half = halfOf(new Date());
+  let pastMsg = '';
+  const HALF_HOUR: Record<Half, number> = { morning: 8, evening: 20 };
 
   async function addManual() {
     const v = parseInt(manualInput, 10);
     if (!Number.isFinite(v) || v < 1) return;
     errorText = '';
     pastMsg = '';
+    const today = dayInput(new Date());
     let at: string | undefined;
-    let secs: number | undefined;
-    if (pastOpen && pastDate) {
-      const when = new Date(`${pastDate}T${pastTime || '00:00'}`);
-      if (isNaN(when.getTime())) return;
-      if (when.getTime() > Date.now() + 60_000) {
+    if (addDay && addDay !== today) {
+      if (addDay > today) {
         errorText = $t('past.future');
         return;
       }
+      const when = new Date(`${addDay}T${pad(HALF_HOUR[addHalf])}:00`);
+      if (isNaN(when.getTime())) return;
       at = when.toISOString();
-      const m = parseFloat(pastMin);
-      secs = Number.isFinite(m) && m > 0 ? Math.round(m * 60) : 0;
     }
     try {
-      await api.addManual(v, at, secs);
+      await api.addManual(v, at, at ? 0 : undefined, addHalf);
       manualInput = '';
-      if (pastOpen) pastMsg = $t('past.added');
-      pastOpen = false;
+      pastMsg = $t('past.added');
       await load();
     } catch (e) {
       errorText = errText(e);
@@ -339,28 +331,24 @@
   <section class="card glass">
     <div class="c-title">{$t('stats.sessionsTitle')}</div>
     <form class="add-form" on:submit|preventDefault={addManual}>
+      <div class="past">
+        <label>
+          <span>{$t('past.day')}</span>
+          <input type="date" bind:value={addDay} max={dayInput(new Date())} />
+        </label>
+        <div class="past-half" role="group" aria-label={$t('past.session')}>
+          <span>{$t('past.session')}</span>
+          <div class="seg glass">
+            {#each ['morning', 'evening'] as const as h}
+              <button type="button" class:on={addHalf === h} aria-pressed={addHalf === h} on:click={() => (addHalf = h)}>{$t(`goal.${h}`)}</button>
+            {/each}
+          </div>
+        </div>
+      </div>
       <div class="inline add">
         <input type="number" inputmode="numeric" min="1" placeholder={$t('stats.addManual')} bind:value={manualInput} aria-label={$t('stats.addManualLabel')} />
         <button class="small primary" type="submit" disabled={!manualInput}>{$t('common.add')}</button>
       </div>
-      {#if pastOpen}
-        <div class="past">
-          <label>
-            <span>{$t('past.date')}</span>
-            <input type="date" bind:value={pastDate} max={new Date().toISOString().slice(0, 10)} />
-          </label>
-          <label>
-            <span>{$t('past.time')}</span>
-            <input type="time" bind:value={pastTime} />
-          </label>
-          <label>
-            <span>{$t('past.minutes')}</span>
-            <input type="number" inputmode="numeric" min="0" placeholder={$t('past.optional')} bind:value={pastMin} />
-          </label>
-        </div>
-      {:else}
-        <button type="button" class="link past-link" on:click={openPast}>{$t('past.link')}</button>
-      {/if}
     </form>
     {#if pastMsg}<p class="note-ok">{pastMsg}</p>{/if}
 
@@ -373,6 +361,11 @@
         <li class:open={openId === s.id}>
           <button class="item" on:click={() => (openId = openId === s.id ? null : s.id)}>
             <span class="when">
+              {#if (s.half ?? halfOf(new Date(s.started_at))) === 'morning'}
+                <svg class="h-ico" viewBox="0 0 24 24" role="img" aria-label={$t('goal.morning')}><circle cx="12" cy="12" r="4" /><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4" /></svg>
+              {:else}
+                <svg class="h-ico" viewBox="0 0 24 24" role="img" aria-label={$t('goal.evening')}><path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z" /></svg>
+              {/if}
               {fmtWhen(s.started_at, new Date(), $locale, words)}
               {#if s.manual}<span class="badge">{$t('stats.manual')}</span>{/if}
             </span>
@@ -641,6 +634,17 @@
   .when {
     font-size: 0.9rem;
   }
+  .h-ico {
+    width: 14px;
+    height: 14px;
+    margin-right: 4px;
+    vertical-align: -2px;
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
   .badge {
     font-size: 0.68rem;
     color: var(--muted);
@@ -805,11 +809,12 @@
   }
   .past {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
     margin-top: 10px;
   }
-  .past label {
+  .past label,
+  .past-half {
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -821,8 +826,12 @@
     width: 100%;
     min-width: 0;
   }
-  .past-link {
-    margin-top: 8px;
+  .past-half .seg {
+    flex: 1;
+    grid-template-columns: repeat(2, 1fr);
+    align-items: stretch;
+  }
+  .past-half .seg button {
     font-size: 0.86rem;
   }
 </style>
