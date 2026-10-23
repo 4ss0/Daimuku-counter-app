@@ -159,6 +159,27 @@ Daimoku, so these are not all errors).
   whole session and moves borderline phrases both ways. Open: rescoring the
   first seconds once the mean has settled.
 
+- **v0.6.1, a slow Daimoku with breaths inside.** A 26 s session (3 fast,
+  then 3 slow of ~5 s; new profile of 4 takes, one slow) counted 5 of 6.
+  The middle slow one had two breaths inside ("Nam-myoho-ren ... ge ...
+  kyo") and a clipped "kyo" of 0.25 s. B refused it (middling evidence,
+  and not in a run: the slow one before it was still waiting for S, which
+  confirms slow ones only in pairs); S's decoding put "kyo" on the breath
+  and called the real "kyo" garbage, so the phrase had no "kyo"; N found
+  it (envelope 0.68) but its window was at least 0.85 x the period, the
+  period being the longer of the two slow anchors (B's estimated end of a
+  slow one runs long), so the window took in the next pause and only 73%
+  of it was voice (< 0.8). Two changes in N: the period is the lower
+  median of the anchors, and a slow step needs 70% voice instead of 80%.
+
+  | | before | after |
+  |---|---|---|
+  | this session, its profile / the 13-take profile | 5/6, 5/6 | 6/6, 6/6 |
+  | session of 56, 13-take profile / new 4-take profile | 52, 53 | 52, 54 |
+  | the 13 takes, leave one out | 13/13 | 13/13 |
+  | the 4 new takes, leave one out | 3/4 (slow 2/3) | 3/4 |
+  | negatives (takes, both sessions) | 0 (500 ms: 2) | same |
+
 ## Known weaknesses / open questions
 
 - Tuned on few recordings, one voice; 59 hand-checked phrases only.

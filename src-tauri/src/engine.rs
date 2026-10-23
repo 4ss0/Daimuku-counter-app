@@ -144,6 +144,8 @@ const N_EDGE_SYL: u32 = 3;
 const N_OFFSET: f32 = 0.15;
 const N_DUR: (f32, f32) = (0.85, 1.15);
 const N_ACTIVE: f32 = 0.8;
+/// Chanting slowly, breaths inside a Daimoku are normal.
+const N_ACTIVE_SLOW: f32 = 0.7;
 const N_VOICED: f32 = 0.5;
 const N_MAX_BREATH: u64 = 80;
 /// A frame is a pause when its low-band level is this far (nats, ~17 dB)
@@ -1199,7 +1201,10 @@ impl Engine {
             }
             let mut spans: Vec<u32> = class.iter().map(|e| e.2).collect();
             spans.sort_unstable();
-            let p = spans[spans.len() / 2] as f32;
+            // the lower median: of two slow ones, the longer (the base
+            // controller's end of a slow one is only an estimate) made
+            // every step too long for a shorter Daimoku
+            let p = spans[(spans.len() - 1) / 2] as f32;
             let typical: Vec<&&(u64, u64, u32, Source, bool)> = class.iter().filter(|e| (0.75..=1.33).contains(&(e.2 as f32 / p))).collect();
             if typical.len() < need {
                 continue;
@@ -1375,7 +1380,7 @@ impl Engine {
                             weak_run = 0;
                         }
                         let (act_sh, vo_sh) = shares(best.1, best.2);
-                        if act_sh < N_ACTIVE || vo_sh < N_VOICED {
+                        if act_sh < if slow { N_ACTIVE_SLOW } else { N_ACTIVE } || vo_sh < N_VOICED {
                             break;
                         }
                         if let Some(&(c0, c1)) = taken.iter().find(|&&x| same_daimoku(x, (best.1, best.2))) {
