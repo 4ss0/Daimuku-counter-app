@@ -164,7 +164,7 @@ export const HELP: HelpSection[] = [
       ],
       en: [
         'Bell and background',
-        'In the menu, Bell lets you choose among three bells, from the highest to the deepest. If you turn its button on, a bell appears next to Start on the Count screen: tapping it is like striking it. You can ring it while chanting: the counter does not hear it, as it takes that bell's notes out of the microphone while it rings.\n\nIn Settings → Background choose the lotus or one of five illustrations (Lotus Sutra, Buddha, temple, nature, cherry blossoms), each light or dark with the theme, or a picture of your own.',
+        'In the menu, Bell lets you choose among three bells, from the highest to the deepest. If you turn its button on, a bell appears next to Start on the Count screen: tapping it is like striking it. You can ring it while chanting: the counter does not hear it, as it takes that bell’s notes out of the microphone while it rings.\n\nIn Settings → Background choose the lotus or one of five illustrations (Lotus Sutra, Buddha, temple, nature, cherry blossoms), each light or dark with the theme, or a picture of your own.',
       ],
       ja: [
         '鈴と背景',
