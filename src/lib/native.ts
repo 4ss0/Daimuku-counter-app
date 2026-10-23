@@ -1,5 +1,6 @@
 // Bridge to the Android side (MainActivity.kt): counting with the screen
-// off, keep-screen-on, and the system "save as" / "share" screens.
+// off, keep-screen-on, the system "save as" / "share" screens and
+// donations through Google Play.
 // On desktop there is no bridge and every call is a harmless no-op.
 
 export interface ExportedFile {
@@ -15,6 +16,8 @@ interface Bridge {
   saveFile(path: string, name: string, mime: string): void;
   shareFile(path: string, name: string, mime: string, title: string): void;
   shareText(text: string, title: string): void;
+  donationProducts?(ids: string): void;
+  donate?(productId: string): void;
 }
 
 function bridge(): Bridge | undefined {
@@ -26,19 +29,28 @@ export function hasNative(): boolean {
   return !!bridge();
 }
 
-const waiters: Record<string, (ok: boolean) => void> = {};
+type Reply = { ok: boolean; data: string | null };
+const waiters: Record<string, (r: Reply) => void> = {};
 if (typeof window !== 'undefined') {
-  (window as unknown as { __daimokuNative: (ev: string, ok: boolean) => void }).__daimokuNative = (ev, ok) => {
+  (window as unknown as { __daimokuNative: (ev: string, ok: boolean, data?: string | null) => void }).__daimokuNative = (
+    ev,
+    ok,
+    data,
+  ) => {
     const w = waiters[ev];
     delete waiters[ev];
-    w?.(ok);
+    w?.({ ok, data: data ?? null });
   };
 }
-function waitFor(ev: string): Promise<boolean> {
+/** The next reply to `ev` (a newer wait for the same event cancels this one). */
+function reply(ev: string): Promise<Reply> {
   return new Promise((resolve) => {
-    waiters[ev]?.(false);
+    waiters[ev]?.({ ok: false, data: null });
     waiters[ev] = resolve;
   });
+}
+function waitFor(ev: string): Promise<boolean> {
+  return reply(ev).then((r) => r.ok);
 }
 
 function safe(fn: (b: Bridge) => void) {
@@ -123,4 +135,56 @@ export function shareFile(f: ExportedFile, mime: string, title: string): Promise
     return Promise.resolve(false);
   }
   return p;
+}
+
+// ---------------------------------------------------------------- donations
+
+export interface DonationProduct {
+  id: string;
+  /** Price in the user's currency, formatted by Google Play. */
+  price: string;
+}
+
+export type DonationResult = 'thanks' | 'pending' | 'cancelled' | 'unavailable' | 'error';
+
+const PRODUCTS_TIMEOUT_MS = 15_000;
+
+/** True inside an Android app that can take donations (older APKs cannot). */
+export function canDonate(): boolean {
+  return typeof bridge()?.donate === 'function';
+}
+
+/** The products Google Play knows, with their prices; null if Play is not available. */
+export async function donationProducts(ids: string[]): Promise<DonationProduct[] | null> {
+  const b = bridge();
+  if (!b?.donationProducts) return null;
+  const p = reply('products');
+  try {
+    b.donationProducts(ids.join(','));
+  } catch {
+    return null;
+  }
+  // Play may never answer (no Play Store, no network): give up after a while
+  const r = await Promise.race([p, new Promise<Reply>((res) => setTimeout(() => res({ ok: false, data: null }), PRODUCTS_TIMEOUT_MS))]);
+  if (!r.ok || !r.data) return null;
+  try {
+    return (JSON.parse(r.data) as DonationProduct[]).filter((x) => ids.includes(x.id));
+  } catch {
+    return null;
+  }
+}
+
+/** Opens the Google Play payment sheet; resolves when it closes. */
+export async function donate(productId: string): Promise<DonationResult> {
+  const b = bridge();
+  if (!b?.donate) return 'unavailable';
+  const p = reply('donate');
+  try {
+    b.donate(productId);
+  } catch {
+    return 'error';
+  }
+  const r = await p;
+  const d = r.data as DonationResult | null;
+  return d && ['thanks', 'pending', 'cancelled', 'unavailable', 'error'].includes(d) ? d : r.ok ? 'thanks' : 'error';
 }

@@ -18,11 +18,12 @@ import java.io.File
 
 /**
  * Exposes `window.DaimokuAndroid` to the web page (src/lib/native.ts):
- * counting service, keep-screen-on, "save as" and "share" screens.
- * Replies go back through `window.__daimokuNative(event, ok, data)`.
+ * counting service, keep-screen-on, "save as" and "share" screens and
+ * donations. Replies go back through `window.__daimokuNative(event, ok, data)`.
  */
 class MainActivity : TauriActivity() {
   private var webView: WebView? = null
+  private lateinit var donations: Donations
 
   /** File waiting for the place the user picks in the "save as" screen. */
   private var toSave: File? = null
@@ -54,7 +55,13 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    donations = Donations(this) { ev, ok, data -> notifyPage(ev, ok, data) }
     askMissingPermissions()
+  }
+
+  override fun onDestroy() {
+    donations.end()
+    super.onDestroy()
   }
 
   override fun onWebViewCreate(webView: WebView) {
@@ -161,6 +168,18 @@ class MainActivity : TauriActivity() {
           notifyPage("shareText", false)
         }
       }
+    }
+
+    /** Comma-separated product ids; replies with event "products". */
+    @JavascriptInterface
+    fun donationProducts(ids: String) {
+      donations.products(ids.split(',').map { it.trim() }.filter { it.isNotEmpty() })
+    }
+
+    /** Replies with event "donate". */
+    @JavascriptInterface
+    fun donate(productId: String) {
+      donations.donate(productId)
     }
   }
 }

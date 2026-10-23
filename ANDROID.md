@@ -103,3 +103,26 @@ npm run tauri android build -- --aab --target aarch64 --target armv7
 
 Every upload needs a higher version (`version` in `tauri.conf.json`,
 `package.json` and `src-tauri/Cargo.toml`).
+
+## Donations (Google Play Billing)
+
+The Donations page (`src/routes/donate`) sells three consumable one-time
+products through Google Play Billing (`Donations.kt`, billing library 8).
+Google Play requires its own billing for donations to the developer inside
+an app it distributes; it accepts cards, PayPal and Play balance.
+
+One-time setup in the Play Console:
+1. Set up a payments profile (Settings → Payments profile).
+2. Upload a build that contains the billing library (any track, e.g.
+   internal testing): the in-app products page stays locked until then.
+3. Monetize → Products → In-app products → create, and activate, these ids
+   (the price is yours to choose; the page shows Play's localised price):
+   - `donation_small`
+   - `donation_medium`
+   - `donation_large`
+4. To try it without paying: Settings → License testing, add your Google
+   account, and install the app from the testing track's link.
+
+The products are consumed as soon as they are bought, so they can be given
+again, and they unlock nothing. If Play is missing or the ids do not exist
+yet, the page says that donations are not available.
