@@ -1,0 +1,4 @@
+<resources>
+    <string name="channel_counting">カウント</string>
+    <string name="channel_counting_text">カウンターが音声を聞いている間（画面オフ時も）表示されます。</string>
+</resources>

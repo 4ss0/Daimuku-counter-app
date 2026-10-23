@@ -1,0 +1,4 @@
+<resources>
+    <string name="channel_counting">Conteggio</string>
+    <string name="channel_counting_text">Visibile mentre il contatore ascolta, anche a schermo spento.</string>
+</resources>
