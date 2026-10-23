@@ -46,6 +46,14 @@ The bench compiles the app's own sources (see src/lib.rs). Test audio in
     V=1 ...                                              # per-file events (B/F/S/N) and misses
     cargo run --release --example seg -- c28.wav         # full-hindsight decoding of one file
     cargo run --release --example phrfeat -- c28.wav wa0929.wav:rev > f.csv   # phrase features
+    cargo run --release --example session -- s.wav take-0.wav:3 ...   # one session with a profile, every event (TRUTH=n NEG=1 BASEONLY=1)
+    cargo run --release --example loo -- take-0.wav:3 take-1.wav:5 ...  # each take by the profile trained without it, + negatives
+    cargo run --release --example frames -- s.wav 0 10                 # front end every 0.1 s (energy, activity, voicing)
+    cargo run --release --example latency -- 5 480                      # time of one Engine::push
+
+A voice exported from the app (.json) holds the takes as base64 WAV with
+their `n_daimoku`: decode `wav_base64` of each take to a file for these
+tools.
 
 Profiles: `A` = base only, `P3` = the author's PC profile (data/pcprof3).
 Negatives: reversed audio, chant cut in 100/200 ms pieces and shuffled,
@@ -108,6 +116,48 @@ Daimoku, so these are not all errors).
   counted about half the time by the profile trained without that take, and
   a profile of many takes recognises fewer of its slow takes (39 -> 32 of
   44 above).
+
+- v0.6.0: four fixes in the checkers, found on a phone session of 56
+  Daimoku (3 + 3 slow under a bell + 44 fast with beads rubbed twice + 3 slow
+  under a bell + 3; recorded 2026-10-23, sent as WhatsApp AAC, not in the
+  bench) that the app counted 49:
+  1. N stopped its walk at the first Daimoku already counted (by B, not
+     confirmed by a checker) instead of walking past it: the 4 Daimoku under
+     the beads right after it were never reached.
+  2. `phrases_on_path` trims the ends of a phrase of frames whose low-band
+     level is `EDGE_QUIET_NATS` below its voice, not only of inactive ones:
+     room noise (~26 dB under the voice) kept the activity flag on, and the
+     decoder stretched "Nam" or "kyo" over seconds of silence, so the
+     phrases around a pause had absurd lengths for F and S.
+  3. F links two phrases whose lengths up to "kyo" match (`WPhrase::body`)
+     even when the whole lengths do not (the last "kyo" of a group is held),
+     and accepts a run of three with two strong phrases (before: two strong
+     only, or four sane): the three Daimoku that open and close a practice.
+  4. N's "complete phrase on the decoding" test, for the last phrase of a
+     walk, ignores decoded phrases already counted: the held "kyo" after the
+     last Daimoku of a group was counted a second time.
+
+  Measured (`examples/session`, `examples/loo`; the full bench was not run,
+  its audio is not in git: run `bench new A P3` and `FULL=1` before release):
+
+  | | v0.5.3 | v0.6.0 |
+  |---|---|---|
+  | session above, user profile (13 takes) | 45/56 | 52/56 |
+  | same, base model only | 48/56 | 53/56 |
+  | the 13 takes, each by the profile trained without it | 12/13 exact, \|err\| 1 | 13/13, \|err\| 0 |
+  | negatives of the takes (reversed, 100/200 ms shuffled) | 4 | 0 |
+  | negatives of the session (reversed, 100/200/500 ms) | 0/0/0/2 | 0/0/0/2 |
+  | built-in clips looped 5 min (`examples/latency`) | 161/162 | 161/162 |
+
+  Still missed: the first group of three (1/3 at best). Its first Daimoku
+  scores badly (llr 0.3): the session starts with room noise taken for voice
+  (the noise estimate starts at `ABS_ENERGY_FLOOR`, or lower when the first
+  frames are digital silence, and rises 0.2 nats/s), which also feeds the
+  cepstral mean. Measured and not adopted: a faster rise in the first second
+  (session 54/56 but take-8 10 -> 9) and starting the estimate after digital
+  silence only (session 51/56): the start changes the cepstral mean for the
+  whole session and moves borderline phrases both ways. Open: rescoring the
+  first seconds once the mean has settled.
 
 ## Known weaknesses / open questions
 

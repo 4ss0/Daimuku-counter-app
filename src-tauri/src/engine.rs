@@ -69,6 +69,9 @@ const SETTLE: u64 = 80;
 /// A phrase starting this close to the window's start may be cut: it is
 /// left to the previous checks (unless the window starts the session).
 const EDGE: u64 = 150;
+/// Frames at the ends of a phrase this far (nats, ~17 dB) below its voice
+/// in the low band are silence, even if marked active (see `phrases_on_path`).
+const EDGE_QUIET_NATS: f32 = 4.0;
 
 /// F: run of consecutive phrases (next one starting within
 /// `F_CHAIN_GAP` frames of the previous end, durations within
@@ -438,6 +441,10 @@ impl WPhrase {
     fn dur(&self) -> u64 {
         self.t1 - self.t0
     }
+    /// Frames before "kyo" (the last "kyo" of a group is often held long).
+    fn body(&self) -> u64 {
+        self.dur().saturating_sub(self.sf[N_SYL - 1] as u64)
+    }
     fn llr(&self) -> f32 {
         let a: u32 = self.sa.iter().sum();
         self.sl.iter().sum::<f32>() / a.max(1) as f32
@@ -535,47 +542,60 @@ impl WinDecoder {
 }
 
 /// Complete phrases on a decoded path starting at frame `a`.
-fn phrases_on_path(path: &[usize], a: u64, emit: &[[f32; N_NODES]], act: &[bool]) -> Vec<WPhrase> {
+///
+/// The ends of a phrase are trimmed of quiet frames: inactive ones, and
+/// those whose low-band level is far below the phrase's voice (room noise
+/// can keep the activity detector on, and the decoder then stretches "Nam"
+/// over the silence before a phrase, or "kyo" over the one after it).
+fn phrases_on_path(path: &[usize], a: u64, emit: &[[f32; N_NODES]], act: &[bool], lf: &[f32]) -> Vec<WPhrase> {
     let n = path.len();
     let is_nam = |m: usize| m < N_CHAIN && m / K == 0;
     let mut out = Vec::new();
     let mut i = 0;
     while i < n {
         if is_nam(path[i]) && (i == 0 || !is_nam(path[i - 1])) {
-            let mut p = WPhrase { t0: a + i as u64, t1: a + i as u64, sf: [0; N_SYL], sa: [0; N_SYL], sl: [0.0; N_SYL], gap: 0 };
+            // the phrase's frames on the path: i..j
             let mut last = 0usize;
             let mut j = i;
             while j < n {
                 let m = path[j];
-                let t = a + j as u64;
-                let idx = (t as usize) % RING;
                 if m < N_CHAIN {
                     let s = m / K;
                     if s < last && s == 0 {
                         break;
                     }
                     last = s;
+                } else if !(NODE_PAUSE0..NODE_SIL).contains(&m) {
+                    break;
+                }
+                j += 1;
+            }
+            let ix = |k: usize| ((a + k as u64) as usize) % RING;
+            let mut levels: Vec<f32> = (i..j).filter(|&k| act[ix(k)]).map(|k| lf[ix(k)]).collect();
+            levels.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+            let voice = levels.get(levels.len() * 9 / 10).cloned().unwrap_or(0.0);
+            let quiet = |k: usize| !act[ix(k)] || lf[ix(k)] < voice - EDGE_QUIET_NATS;
+            let (mut k0, mut k1) = (i, j);
+            while k1 > k0 + 1 && quiet(k1 - 1) {
+                k1 -= 1;
+            }
+            while k0 + 1 < k1 && quiet(k0) {
+                k0 += 1;
+            }
+            let mut p = WPhrase { t0: a + k0 as u64, t1: a + k1 as u64, sf: [0; N_SYL], sa: [0; N_SYL], sl: [0.0; N_SYL], gap: 0 };
+            for k in k0..k1 {
+                let m = path[k];
+                let idx = ix(k);
+                if m < N_CHAIN {
+                    let s = m / K;
                     p.sf[s] += 1;
                     if act[idx] {
                         p.sa[s] += 1;
                         p.sl[s] += emit[idx][m] - emit[idx][NODE_GAR];
                     }
-                } else if (NODE_PAUSE0..NODE_SIL).contains(&m) {
-                    if act[idx] {
-                        p.gap += 1;
-                    }
-                } else {
-                    break;
+                } else if act[idx] {
+                    p.gap += 1;
                 }
-                j += 1;
-            }
-            p.t1 = a + j as u64;
-            // quiet frames at either end (a breath taken as part of "kyo")
-            while p.t1 > p.t0 + 1 && !act[((p.t1 - 1) as usize) % RING] {
-                p.t1 -= 1;
-            }
-            while p.t0 + 1 < p.t1 && !act[(p.t0 as usize) % RING] {
-                p.t0 += 1;
             }
             if p.sf[N_SYL - 1] > 0 {
                 out.push(p);
@@ -1254,12 +1274,15 @@ impl Engine {
             // a phrase at the edge of a run (followed or preceded by a pause, by
             // the end of the recording or by other sounds) must be complete
             // on the checkers' decoding: every syllable, and a real "kyo" (a
-            // Daimoku stopped at "renge" never counts)
-            let complete = |t0: u64, t1: u64| -> bool {
+            // Daimoku stopped at "renge" never counts). That phrase must not
+            // be one counted already (`known`): the held "kyo" after the last
+            // Daimoku of a run would otherwise count it twice.
+            let complete = |t0: u64, t1: u64, known: &[(u64, u64)]| -> bool {
                 let len = (t1 - t0) as f32;
                 phrases.iter().any(|q| {
                     let ov = (q.t1.min(t1) as f32 - q.t0.max(t0) as f32).max(0.0);
                     ov >= N_PATH_OVERLAP * len
+                        && !known.iter().any(|&x| same_daimoku(x, (q.t0, q.t1)))
                         && (0..N_SYL).all(|k| q.sf[k] >= N_EDGE_SYL)
                         && q.sa[N_SYL - 1] >= KYO_MIN_ACT
                         && q.syl(N_SYL - 1) >= KYO_MIN_LLR
@@ -1355,8 +1378,18 @@ impl Engine {
                         if act_sh < N_ACTIVE || vo_sh < N_VOICED {
                             break;
                         }
-                        if taken.iter().any(|&x| same_daimoku(x, (best.1, best.2))) {
-                            break;
+                        if let Some(&(c0, c1)) = taken.iter().find(|&&x| same_daimoku(x, (best.1, best.2))) {
+                            // a Daimoku counted already: where it keeps the
+                            // run's shape (one the base controller counted and
+                            // no checker confirmed yet), walk on past it
+                            // instead of stopping; the walk only adds the
+                            // missing ones around it
+                            let next = if forward { c1 } else { c0 };
+                            if best.0 < N_CORR || next == t || (next > t) != forward {
+                                break;
+                            }
+                            t = next;
+                            continue;
                         }
                         taken.push((best.1, best.2));
                         added.push((best.1, best.2, best.0));
@@ -1374,7 +1407,7 @@ impl Engine {
                             }
                         });
                         let (e0, e1, _) = *added.last().unwrap();
-                        if forward && !closed && !complete(e0, e1) {
+                        if forward && !closed && !complete(e0, e1, &known) {
                             added.pop();
                             if let Some(pos) = taken.iter().rposition(|&x| x == (e0, e1)) {
                                 taken.remove(pos);
@@ -1400,7 +1433,7 @@ impl Engine {
     fn fast_candidates(&mut self, a: u64, b: u64, limit: u64) -> Vec<(u64, u64, f32)> {
         let emit = &self.main.emit;
         let path = self.win_fast.decode(emit, a, b);
-        let phs = phrases_on_path(&path, a, emit, &self.act);
+        let phs = phrases_on_path(&path, a, emit, &self.act, &self.lf);
         self.fast_phrases = phs.clone();
         let sane: Vec<bool> = phs
             .iter()
@@ -1418,10 +1451,13 @@ impl Engine {
                     && p.gap_share() <= F_GAP_SHARE
             })
             .collect();
+        // same tempo: similar length, or similar up to "kyo" (a group
+        // often ends on a long "kyo")
         let linked = |p: &WPhrase, q: &WPhrase| {
             let gap = q.t0 as i64 - p.t1 as i64;
-            let r = q.dur() as f32 / p.dur() as f32;
-            gap <= F_CHAIN_GAP && r >= F_RATIO.0 && r <= F_RATIO.1
+            let fits = |r: f32| r >= F_RATIO.0 && r <= F_RATIO.1;
+            gap <= F_CHAIN_GAP
+                && (fits(q.dur() as f32 / p.dur() as f32) || fits(q.body() as f32 / p.body().max(1) as f32))
         };
         let mut accepted: Vec<(u64, u64, f32)> = Vec::new();
         let mut i = 0;
@@ -1441,8 +1477,13 @@ impl Engine {
                     && p.gap_share() <= F_STRONG_GAP_SHARE
                     && p.sa[N_SYL - 1] >= F_STRONG_KYO
             };
-            let all_strong = j > i && phs[i..=j].iter().all(strong);
-            if j + 1 - i >= F_MIN_RUN || all_strong {
+            // a short run counts when strong: two strong phrases, or a
+            // group of three (the three Daimoku that open and close a
+            // practice) with at most one merely sane
+            let len = j + 1 - i;
+            let n_strong = phs[i..=j].iter().filter(|p| strong(p)).count();
+            let strong_run = len >= 2 && n_strong >= 2 && n_strong + 1 >= len;
+            if len >= F_MIN_RUN || strong_run {
                 for p in &phs[i..=j] {
                     if p.t1 <= limit && (a == 0 || p.t0 >= a + EDGE) {
                         accepted.push((p.t0, p.t1, p.llr()));
@@ -1497,7 +1538,7 @@ impl Engine {
     fn check_slow(&mut self, a: u64, b: u64, limit: u64) {
         let Some(lane) = self.slow.as_ref() else { return };
         let path = self.win_slow.decode(&lane.emit, a, b);
-        let phs = phrases_on_path(&path, a, &lane.emit, &self.act);
+        let phs = phrases_on_path(&path, a, &lane.emit, &self.act, &self.lf);
         self.slow_phrases = phs.clone();
         let good: Vec<&WPhrase> = phs
             .iter()
