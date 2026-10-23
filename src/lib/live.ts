@@ -9,6 +9,9 @@ import { updateCounting } from '$lib/native';
 /** True from Start to Stop (module state: it outlives the pages). */
 export const liveRunning = writable(false);
 
+/** The engine's count, refreshed every second while a session runs. */
+export const liveCount = writable(0);
+
 // The notification is updated from here only, whatever page is shown.
 // Android drops the updates of an app that posts more than about 5 per
 // second: the Count page used to post one at every poll (150 ms), and with
@@ -26,6 +29,7 @@ async function notifyNow() {
   try {
     const v = await api.liveView();
     if (!get(liveRunning)) return;
+    liveCount.set(v.count ?? 0);
     const text = get(t)('notif.count', { n: fmtNum(v.count ?? 0, get(locale)) });
     const now = Date.now();
     if (text === lastText && now - lastPostedAt < REFRESH_MS) return;
@@ -47,6 +51,7 @@ liveRunning.subscribe((on) => {
   if (on && !notifier) {
     lastText = '';
     lastPostedAt = 0;
+    liveCount.set(0);
     notifier = setInterval(notifyNow, NOTIFY_EVERY_MS);
     document.addEventListener('visibilitychange', onVisibility);
   } else if (!on && notifier) {
