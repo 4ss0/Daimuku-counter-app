@@ -81,7 +81,9 @@ export const api = {
   updateSessionCount: (id: number, count: number) =>
     invoke<SessionRecord>('update_session_count', { id, count }),
   deleteSession: (id: number) => invoke<void>('delete_session', { id }),
-  addManual: (count: number) => invoke<SessionRecord>('add_manual_session', { count }),
+  /** Now, or at `startedAt` (ISO 8601) lasting `durationSecs`. */
+  addManual: (count: number, startedAt?: string, durationSecs?: number) =>
+    invoke<SessionRecord>('add_manual_session', { count, startedAt: startedAt ?? null, durationSecs: durationSecs ?? null }),
   getGoal: () => invoke<number>('get_daily_goal'),
   setGoal: (goal: number) => invoke<number>('set_daily_goal', { goal }),
 

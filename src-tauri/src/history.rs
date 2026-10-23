@@ -42,6 +42,8 @@ impl Default for HistoryFile {
 
 pub const DEFAULT_DAILY_GOAL: u32 = 100;
 const MAX_COUNT: u32 = 1_000_000;
+/// A session added by hand lasts at most a day.
+const MAX_MANUAL_SECS: f32 = 86_400.0;
 
 pub struct History {
     path: Option<PathBuf>,
@@ -94,10 +96,28 @@ impl History {
 
     /// Adds `count` Daimoku chanted without the counter, now.
     pub fn add_manual(&self, count: u32) -> Result<SessionRecord, String> {
+        self.add_manual_at(count, None, 0.0)
+    }
+
+    /// Adds `count` Daimoku chanted without the counter, started at
+    /// `started_at` (now if `None`; never in the future) and lasting
+    /// `duration_secs` (0 if not known).
+    pub fn add_manual_at(
+        &self,
+        count: u32,
+        started_at: Option<DateTime<Utc>>,
+        duration_secs: f32,
+    ) -> Result<SessionRecord, String> {
         if count == 0 {
             return Err("the count must be at least 1".to_string());
         }
-        self.add(Utc::now(), 0.0, count, 0, true)
+        let now = Utc::now();
+        let at = started_at.unwrap_or(now);
+        if at > now + Duration::minutes(1) {
+            return Err("the session cannot be in the future".to_string());
+        }
+        let secs = if duration_secs.is_finite() { duration_secs.clamp(0.0, MAX_MANUAL_SECS) } else { 0.0 };
+        self.add(at, secs, count, 0, true)
     }
 
     pub fn set_count(&self, id: u64, count: u32) -> Result<SessionRecord, String> {
@@ -246,6 +266,20 @@ mod tests {
         assert!(h.list().is_empty());
         assert_eq!(h.daily_goal(), DEFAULT_DAILY_GOAL);
         assert!(p.with_extension("json.bak").exists());
+    }
+
+    #[test]
+    fn past_session_by_hand() {
+        let h = History::load_from(None);
+        let at = Utc::now() - Duration::days(3);
+        let s = h.add_manual_at(500, Some(at), 1800.0).unwrap();
+        assert_eq!(s.started_at, at);
+        assert_eq!(s.duration_secs, 1800.0);
+        assert!(s.manual);
+        assert_eq!(s.detected, 0);
+        assert!(h.add_manual_at(5, Some(Utc::now() + Duration::hours(2)), 0.0).is_err());
+        assert_eq!(h.add_manual_at(5, None, f32::NAN).unwrap().duration_secs, 0.0);
+        assert_eq!(h.add_manual_at(5, None, 1e9).unwrap().duration_secs, MAX_MANUAL_SECS);
     }
 
     #[test]

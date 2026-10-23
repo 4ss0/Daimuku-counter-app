@@ -95,12 +95,44 @@
     editingGoal = false;
   }
 
+  // a session added by hand: now, or at a date and time in the past
+  let pastOpen = false;
+  let pastDate = '';
+  let pastTime = '';
+  let pastMin = '';
+  let pastMsg = '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  function openPast() {
+    const d = new Date();
+    pastDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    pastTime = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    pastMin = '';
+    pastOpen = true;
+  }
+
   async function addManual() {
     const v = parseInt(manualInput, 10);
     if (!Number.isFinite(v) || v < 1) return;
+    errorText = '';
+    pastMsg = '';
+    let at: string | undefined;
+    let secs: number | undefined;
+    if (pastOpen && pastDate) {
+      const when = new Date(`${pastDate}T${pastTime || '00:00'}`);
+      if (isNaN(when.getTime())) return;
+      if (when.getTime() > Date.now() + 60_000) {
+        errorText = $t('past.future');
+        return;
+      }
+      at = when.toISOString();
+      const m = parseFloat(pastMin);
+      secs = Number.isFinite(m) && m > 0 ? Math.round(m * 60) : 0;
+    }
     try {
-      await api.addManual(v);
+      await api.addManual(v, at, secs);
       manualInput = '';
+      if (pastOpen) pastMsg = $t('past.added');
+      pastOpen = false;
       await load();
     } catch (e) {
       errorText = errText(e);
@@ -306,10 +338,31 @@
 
   <section class="card glass">
     <div class="c-title">{$t('stats.sessionsTitle')}</div>
-    <form class="inline add" on:submit|preventDefault={addManual}>
-      <input type="number" inputmode="numeric" min="1" placeholder={$t('stats.addManual')} bind:value={manualInput} aria-label={$t('stats.addManualLabel')} />
-      <button class="small primary" type="submit" disabled={!manualInput}>{$t('common.add')}</button>
+    <form class="add-form" on:submit|preventDefault={addManual}>
+      <div class="inline add">
+        <input type="number" inputmode="numeric" min="1" placeholder={$t('stats.addManual')} bind:value={manualInput} aria-label={$t('stats.addManualLabel')} />
+        <button class="small primary" type="submit" disabled={!manualInput}>{$t('common.add')}</button>
+      </div>
+      {#if pastOpen}
+        <div class="past">
+          <label>
+            <span>{$t('past.date')}</span>
+            <input type="date" bind:value={pastDate} max={new Date().toISOString().slice(0, 10)} />
+          </label>
+          <label>
+            <span>{$t('past.time')}</span>
+            <input type="time" bind:value={pastTime} />
+          </label>
+          <label>
+            <span>{$t('past.minutes')}</span>
+            <input type="number" inputmode="numeric" min="0" placeholder={$t('past.optional')} bind:value={pastMin} />
+          </label>
+        </div>
+      {:else}
+        <button type="button" class="link past-link" on:click={openPast}>{$t('past.link')}</button>
+      {/if}
     </form>
+    {#if pastMsg}<p class="note-ok">{pastMsg}</p>{/if}
 
     {#if loaded && list.length === 0}
       <p class="empty">{$t('stats.empty')}</p>
@@ -323,7 +376,7 @@
               {fmtWhen(s.started_at, new Date(), $locale, words)}
               {#if s.manual}<span class="badge">{$t('stats.manual')}</span>{/if}
             </span>
-            <span class="dur">{s.manual ? '' : fmtDuration(s.duration_secs, $t)}</span>
+            <span class="dur">{s.manual && !(s.duration_secs > 0) ? '' : fmtDuration(s.duration_secs, $t)}</span>
             <span class="n">{fmtNum(s.count, $locale)}</span>
           </button>
           {#if openId === s.id}
@@ -749,5 +802,27 @@
     display: block;
     height: 100%;
     background: var(--accent);
+  }
+  .past {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .past label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    color: var(--muted);
+    font-size: 0.78rem;
+  }
+  .past input {
+    width: 100%;
+    min-width: 0;
+  }
+  .past-link {
+    margin-top: 8px;
+    font-size: 0.86rem;
   }
 </style>

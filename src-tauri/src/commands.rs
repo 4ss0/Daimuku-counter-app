@@ -205,10 +205,24 @@ pub fn delete_session(history: State<'_, History>, id: u64) -> Result<(), String
     history.delete(id)
 }
 
-/// Daimoku chanted without the counter (e.g. at a meeting).
+/// Daimoku chanted without the counter (e.g. at a meeting), now or at
+/// `started_at` (RFC 3339), lasting `duration_secs` if known.
 #[tauri::command]
-pub fn add_manual_session(history: State<'_, History>, count: u32) -> Result<SessionRecord, String> {
-    history.add_manual(count)
+pub fn add_manual_session(
+    history: State<'_, History>,
+    count: u32,
+    started_at: Option<String>,
+    duration_secs: Option<f32>,
+) -> Result<SessionRecord, String> {
+    let at = match started_at {
+        Some(s) => Some(
+            chrono::DateTime::parse_from_rfc3339(&s)
+                .map_err(|e| format!("invalid date {s}: {e}"))?
+                .with_timezone(&chrono::Utc),
+        ),
+        None => None,
+    };
+    history.add_manual_at(count, at, duration_secs.unwrap_or(0.0))
 }
 
 #[tauri::command]
