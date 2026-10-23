@@ -5,7 +5,7 @@ import type { Lang } from './i18n';
 
 export interface HelpSection {
   id: string;
-  icon: 'voice' | 'count' | 'coin' | 'moon' | 'tips' | 'stats' | 'backup' | 'menu' | 'help';
+  icon: 'voice' | 'count' | 'coin' | 'moon' | 'tips' | 'stats' | 'goal' | 'badge' | 'bell' | 'backup' | 'menu' | 'help';
   text: Record<Lang, [title: string, body: string]>;
 }
 
@@ -106,15 +106,69 @@ export const HELP: HelpSection[] = [
     text: {
       it: [
         'Statistiche, obiettivo e condivisione',
-        'In Statistiche vedi i daimoku per giorno, settimana, mese e anno, i giorni di fila e la media: tocca una barra per il dettaglio. Imposta l’obiettivo giornaliero: l’anello della schermata Conta si riempie fino a raggiungerlo.\n\nHai recitato senza l’app, per esempio a una riunione? Usa «Aggiungi a mano…». Con l’icona di condivisione puoi condividere una sessione, un periodo o l’obiettivo raggiunto.',
+        'In Statistiche vedi i daimoku per giorno, settimana, mese e anno, i giorni di fila e la media: tocca una barra per il dettaglio. Imposta l’obiettivo giornaliero: l’anello della schermata Conta si riempie fino a raggiungerlo.\n\nHai recitato senza l’app, per esempio a una riunione? Usa «Aggiungi a mano…»; per una sessione di un altro giorno tocca «Una sessione passata?» e scegli data e ora. Con l’icona di condivisione puoi condividere una sessione, un periodo o l’obiettivo raggiunto.',
       ],
       en: [
         'Statistics, goal and sharing',
-        'In Statistics you see your daimoku by day, week, month and year, your streak and your average: tap a bar for details. Set a daily goal: the ring on the Count screen fills up until you reach it.\n\nDid you chant without the app, for example at a meeting? Use "Add by hand…". With the share icon you can share a session, a period or a goal reached.',
+        'In Statistics you see your daimoku by day, week, month and year, your streak and your average: tap a bar for details. Set a daily goal: the ring on the Count screen fills up until you reach it.\n\nDid you chant without the app, for example at a meeting? Use "Add by hand…"; for a session on another day tap "A past session?" and choose the date and time. With the share icon you can share a session, a period or a goal reached.',
       ],
       ja: [
         '記録・目標・共有',
-        '「記録」では、日・週・月・年ごとの遍数、連続日数、平均を確認できます。棒をタップすると詳細が表示されます。毎日の目標を設定すると、「唱題」画面のリングが目標に向かって満ちていきます。\n\n会合などアプリを使わずに唱えたときは「手動で追加…」を使ってください。共有アイコンから、セッション、期間の記録、目標達成を共有できます。',
+        '「記録」では、日・週・月・年ごとの遍数、連続日数、平均を確認できます。棒をタップすると詳細が表示されます。毎日の目標を設定すると、「唱題」画面のリングが目標に向かって満ちていきます。\n\n会合などアプリを使わずに唱えたときは「手動で追加…」を使ってください。別の日のセッションは「過去のセッション？」から日付と時刻を選べます。共有アイコンから、セッション、期間の記録、目標達成を共有できます。',
+      ],
+    },
+  },
+  {
+    id: 'goals',
+    icon: 'goal',
+    text: {
+      it: [
+        'Obiettivi e promemoria',
+        'In Impostazioni → Obiettivi scegli l’obiettivo giornaliero e, se vuoi, uno settimanale, mensile e annuale. L’obiettivo del giorno è diviso in due sessioni: la mattina (fino alle 14:00) e la sera; nella schermata Conta vedi a che punto sei con ciascuna.\n\nNel menù, Promemoria ti manda una notifica all’ora che scegli per la sessione del mattino e per quella della sera.',
+      ],
+      en: [
+        'Goals and reminders',
+        'In Settings → Goals choose your daily goal and, if you like, a weekly, monthly and yearly one. The daily goal is split in two sessions: the morning (until 2 pm) and the evening; the Count screen shows how far you are with each.\n\nIn the menu, Reminders sends you a notification at the time you choose for the morning and for the evening session.',
+      ],
+      ja: [
+        '目標とリマインダー',
+        '「設定」→「目標」で毎日の目標と、必要なら毎週・毎月・毎年の目標を設定します。毎日の目標は朝（14時まで）と夜の2回に分かれ、「唱題」画面でそれぞれの進み具合が分かります。\n\nメニューの「リマインダー」では、朝と夜それぞれ好きな時刻にお知らせを受け取れます。',
+      ],
+    },
+  },
+  {
+    id: 'badges',
+    icon: 'badge',
+    text: {
+      it: [
+        'Traguardi e giorno abbuonato',
+        'Ricevi un traguardo a 100, 1.000, 10.000, 1 milione, 5 e 10 milioni di daimoku, e per i giorni di recitazione consecutivi: una settimana, un mese, sei mesi, poi 1, 2, 5, 10, 15 e 20 anni. Li trovi tutti in Statistiche.\n\nSe un giorno non hai recitato, una volta a settimana puoi abbuonarlo con il tasto in Statistiche: la serie di giorni consecutivi non si interrompe.',
+      ],
+      en: [
+        'Milestones and the forgiven day',
+        'You earn a milestone at 100, 1,000, 10,000, 1 million, 5 and 10 million daimoku, and for days of chanting in a row: a week, a month, six months, then 1, 2, 5, 10, 15 and 20 years. You find them all in Statistics.\n\nIf you did not chant one day, once a week you can forgive it with the button in Statistics: your run of days in a row does not break.',
+      ],
+      ja: [
+        '達成バッジとお休みの日',
+        '通算100・1,000・10,000・100万・500万・1,000万遍と、連続日数（1週間、1か月、6か月、1・2・5・10・15・20年）でバッジがもらえます。すべて「記録」で確認できます。\n\n唱題できなかった日は、週に1日だけ「記録」のボタンで「お休み」にでき、連続日数が途切れません。',
+      ],
+    },
+  },
+  {
+    id: 'bell',
+    icon: 'bell',
+    text: {
+      it: [
+        'Campana e sfondo',
+        'Nel menù, Campana ti fa scegliere tra tre campane, dalla più acuta alla più profonda. Se attivi il tasto, nella schermata Conta compare una campana accanto a Inizia: toccarla è come colpirla.\n\nIn Impostazioni → Sfondo scegli tra il loto e cinque illustrazioni (Sutra del Loto, Budda, tempio, natura, ciliegi), ognuna chiara o scura secondo il tema, oppure una tua immagine.',
+      ],
+      en: [
+        'Bell and background',
+        'In the menu, Bell lets you choose among three bells, from the highest to the deepest. If you turn its button on, a bell appears next to Start on the Count screen: tapping it is like striking it.\n\nIn Settings → Background choose the lotus or one of five illustrations (Lotus Sutra, Buddha, temple, nature, cherry blossoms), each light or dark with the theme, or a picture of your own.',
+      ],
+      ja: [
+        '鈴と背景',
+        'メニューの「鈴（りん）」では、高い音から低い音まで3種類の鈴を選べます。ボタンをオンにすると「唱題」画面の「開始」の横に鈴が表示され、タップすると鈴を打つのと同じように鳴ります。\n\n「設定」→「背景」では、蓮と5つのイラスト（法華経・仏陀・寺院・自然・桜、テーマに合わせてライト／ダーク）、または自分の画像から選べます。',
       ],
     },
   },
@@ -142,15 +196,15 @@ export const HELP: HelpSection[] = [
     text: {
       it: [
         'Il menù',
-        'Tocca ☰ in alto a sinistra, oppure scorri verso destra partendo dalla metà sinistra dello schermo, per aprire il menù: contatore, dizionario dei concetti buddisti, donazioni, questa guida e privacy. Per chiuderlo scorri verso sinistra o tocca fuori.',
+        'Tocca ☰ in alto a sinistra, oppure scorri verso destra partendo dalla metà sinistra dello schermo, per aprire il menù: contatore, promemoria, campana, dizionario dei concetti buddisti, donazioni, questa guida e privacy. Per chiuderlo scorri verso sinistra o tocca fuori.',
       ],
       en: [
         'The menu',
-        'Tap ☰ at the top left, or swipe to the right starting from the left half of the screen, to open the menu: counter, dictionary of Buddhist concepts, donations, this guide and privacy. To close it swipe to the left or tap outside.',
+        'Tap ☰ at the top left, or swipe to the right starting from the left half of the screen, to open the menu: counter, reminders, bell, dictionary of Buddhist concepts, donations, this guide and privacy. To close it swipe to the left or tap outside.',
       ],
       ja: [
         'メニュー',
-        '左上の ☰ をタップするか、画面の左半分から右へスワイプするとメニューが開きます。カウンター、仏法用語集、寄付、この使い方、プライバシーに移動できます。閉じるには左へスワイプするか、外側をタップします。',
+        '左上の ☰ をタップするか、画面の左半分から右へスワイプするとメニューが開きます。カウンター、リマインダー、鈴、仏法用語集、寄付、この使い方、プライバシーに移動できます。閉じるには左へスワイプするか、外側をタップします。',
       ],
     },
   },

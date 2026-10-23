@@ -26,6 +26,12 @@
             <path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.9V16h5v-.2c0-.8.4-1.5 1-1.9A6 6 0 0 0 12 3z" />
           {:else if s.icon === 'stats'}
             <path d="M5 20V11M12 20V5M19 20v-6" />
+          {:else if s.icon === 'goal'}
+            <circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="4.5" /><circle cx="12" cy="12" r="1" />
+          {:else if s.icon === 'badge'}
+            <circle cx="12" cy="9.5" r="5.5" /><path d="M8.5 14l-1.5 7 5-2.5 5 2.5-1.5-7" />
+          {:else if s.icon === 'bell'}
+            <path d="M5 16.5h14l-1.6-2.4V10a5.4 5.4 0 0 0-10.8 0v4.1z" /><path d="M10 19.2a2.2 2.2 0 0 0 4 0M12 4.6V3" />
           {:else if s.icon === 'backup'}
             <path d="M12 15V4M8 8l4-4 4 4M5 14v4.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V14" />
           {:else if s.icon === 'menu'}
