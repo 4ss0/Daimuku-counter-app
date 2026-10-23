@@ -9,6 +9,7 @@
   import { initPrefs, prefs } from '$lib/prefs';
   import { syncReminders } from '$lib/reminders';
   import BadgeIcon from '$lib/BadgeIcon.svelte';
+  import DailyQuote from '$lib/DailyQuote.svelte';
   import { badgeName, newBadges, type Badge } from '$lib/badges';
 
   const tabs = [
@@ -52,6 +53,9 @@
     bannerTimer = null;
   }
   let prefsReady = false;
+  // the quote of the day, every time the app starts (the language comes
+  // with the preferences, so it waits for them)
+  let showQuote = true;
   // the Android side keeps its own copy of the reminders (and their text)
   $: if (prefsReady) syncReminders($prefs), $t;
 
@@ -166,6 +170,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="app"
+  inert={showQuote && prefsReady}
   on:touchstart|passive={onTouchStart}
   on:touchmove|passive={onTouchMove}
   on:touchend={onTouchEnd}
@@ -303,6 +308,11 @@
     {/each}
   </ul>
 </aside>
+
+
+{#if showQuote && prefsReady}
+  <DailyQuote onenter={() => (showQuote = false)} />
+{/if}
 
 <style>
   /* ---------- theme tokens ---------- */

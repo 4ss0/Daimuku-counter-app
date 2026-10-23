@@ -196,15 +196,15 @@ export const HELP: HelpSection[] = [
     text: {
       it: [
         'Il menù',
-        'Tocca ☰ in alto a sinistra, oppure scorri verso destra partendo dalla metà sinistra dello schermo, per aprire il menù: contatore, promemoria, campana, dizionario dei concetti buddisti, donazioni, questa guida e privacy. Per chiuderlo scorri verso sinistra o tocca fuori.',
+        'Tocca ☰ in alto a sinistra, oppure scorri verso destra partendo dalla metà sinistra dello schermo, per aprire il menù: contatore, promemoria, campana, dizionario dei concetti buddisti, donazioni, questa guida e privacy. Per chiuderlo scorri verso sinistra o tocca fuori.\n\nOgni volta che apri l’app trovi la citazione del giorno, dai Gosho di Nichiren Daishonin, dal Sutra del Loto o dai presidenti della Soka Gakkai. Con le frecce (o scorrendo) leggi quelle degli altri giorni; con «Entra» vai all’app.',
       ],
       en: [
         'The menu',
-        'Tap ☰ at the top left, or swipe to the right starting from the left half of the screen, to open the menu: counter, reminders, bell, dictionary of Buddhist concepts, donations, this guide and privacy. To close it swipe to the left or tap outside.',
+        'Tap ☰ at the top left, or swipe to the right starting from the left half of the screen, to open the menu: counter, reminders, bell, dictionary of Buddhist concepts, donations, this guide and privacy. To close it swipe to the left or tap outside.\n\nEach time you open the app you find the quote of the day, from the writings of Nichiren Daishonin, the Lotus Sutra or the presidents of the Soka Gakkai. The arrows (or a swipe) show the other days’ quotes; “Enter” takes you into the app.',
       ],
       ja: [
         'メニュー',
-        '左上の ☰ をタップするか、画面の左半分から右へスワイプするとメニューが開きます。カウンター、リマインダー、鈴、仏法用語集、寄付、この使い方、プライバシーに移動できます。閉じるには左へスワイプするか、外側をタップします。',
+        '左上の ☰ をタップするか、画面の左半分から右へスワイプするとメニューが開きます。カウンター、リマインダー、鈴、仏法用語集、寄付、この使い方、プライバシーに移動できます。閉じるには左へスワイプするか、外側をタップします。\n\nアプリを開くたびに、日蓮大聖人の御書、法華経、創価学会の歴代会長の言葉から「今日の言葉」が表示されます。矢印（またはスワイプ）でほかの日の言葉を読み、「はじめる」でアプリに入ります。',
       ],
     },
   },
