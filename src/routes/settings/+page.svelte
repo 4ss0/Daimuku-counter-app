@@ -5,9 +5,6 @@
   import { LANGS, locale, t, type Key } from '$lib/i18n';
   import { ACCENTS, initPrefs, prefs, updatePrefs, type Accent, type ThemePref } from '$lib/prefs';
   import { hasNative, saveFile, shareFile, type ExportedFile } from '$lib/native';
-  import { openUrl } from '@tauri-apps/plugin-opener';
-
-  const PRIVACY_URL = 'https://4ss0.github.io/Daimuku-counter-app/privacy-policy.html';
 
   const THEMES: { id: ThemePref; label: Key }[] = [
     { id: 'system', label: 'set.themeSystem' },
@@ -48,14 +45,6 @@
       errorText = errText(e);
     }
   });
-
-  async function openPrivacy() {
-    try {
-      await openUrl(PRIVACY_URL);
-    } catch (e) {
-      errorText = errText(e);
-    }
-  }
 
   async function saveGoal() {
     const v = parseInt(goalInput, 10);
@@ -281,7 +270,7 @@
     <div class="label">{$t('set.privacy')}</div>
     <p class="muted small privacy">{$t('set.privacyText')}</p>
     <div class="options data-actions">
-      <button class="wide" on:click={openPrivacy}>{$t('set.privacyLink')}</button>
+      <a class="wide" href="/privacy">{$t('set.privacyOpen')}</a>
     </div>
   </section>
 
@@ -321,7 +310,8 @@
   .options.three {
     grid-template-columns: repeat(3, 1fr);
   }
-  .options button {
+  .options button,
+  .options a {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -332,6 +322,10 @@
     background: var(--surface-2);
     cursor: pointer;
     font-size: 0.9rem;
+  }
+  .options a {
+    color: inherit;
+    text-decoration: none;
   }
   .options button.on {
     background: var(--accent);
