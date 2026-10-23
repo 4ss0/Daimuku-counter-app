@@ -124,15 +124,15 @@ export const HELP: HelpSection[] = [
     text: {
       it: [
         'Obiettivi e promemoria',
-        'In Impostazioni → Obiettivi scegli l’obiettivo giornaliero e, se vuoi, uno settimanale, mensile e annuale. L’obiettivo del giorno è diviso in due sessioni: la mattina (fino alle 14:00) e la sera; nella schermata Conta vedi a che punto sei con ciascuna.\n\nNel menù, Promemoria ti manda una notifica all’ora che scegli per la sessione del mattino e per quella della sera.',
+        'In Impostazioni → Obiettivi scegli l’obiettivo giornaliero e, se vuoi, uno settimanale, mensile e annuale. L’obiettivo del giorno è diviso in due sessioni: la mattina (fino alle 14:00) e la sera; nella schermata Conta vedi a che punto sei con ciascuna.\n\nIl contatore continua la sessione in corso, partendo dai Daimoku già fatti. Per continuare l’altra (per esempio la recitazione del mattino fatta nel pomeriggio), toccala prima di premere Inizia. Ogni sessione salvata resta della mattina o della sera che hai scelto.\n\nNel menù, Promemoria ti manda una notifica all’ora che scegli per la sessione del mattino e per quella della sera.',
       ],
       en: [
         'Goals and reminders',
-        'In Settings → Goals choose your daily goal and, if you like, a weekly, monthly and yearly one. The daily goal is split in two sessions: the morning (until 2 pm) and the evening; the Count screen shows how far you are with each.\n\nIn the menu, Reminders sends you a notification at the time you choose for the morning and for the evening session.',
+        'In Settings → Goals choose your daily goal and, if you like, a weekly, monthly and yearly one. The daily goal is split in two sessions: the morning (until 2 pm) and the evening; the Count screen shows how far you are with each.\n\nThe counter continues the current session, starting from the Daimoku already chanted. To continue the other one (say, the morning chanting done in the afternoon), tap it before pressing Start. Every saved session stays in the morning or the evening you chose.\n\nIn the menu, Reminders sends you a notification at the time you choose for the morning and for the evening session.',
       ],
       ja: [
         '目標とリマインダー',
-        '「設定」→「目標」で毎日の目標と、必要なら毎週・毎月・毎年の目標を設定します。毎日の目標は朝（14時まで）と夜の2回に分かれ、「唱題」画面でそれぞれの進み具合が分かります。\n\nメニューの「リマインダー」では、朝と夜それぞれ好きな時刻にお知らせを受け取れます。',
+        '「設定」→「目標」で毎日の目標と、必要なら毎週・毎月・毎年の目標を設定します。毎日の目標は朝（14時まで）と夜の2回に分かれ、「唱題」画面でそれぞれの進み具合が分かります。\n\nカウンターは今の時間帯のお勤めを、すでに唱えた数から続けます。もう一方を続けたいとき（たとえば朝の分を午後に唱えるとき）は、開始を押す前にそちらをタップしてください。保存したセッションは選んだ朝・夜のまま記録されます。\n\nメニューの「リマインダー」では、朝と夜それぞれ好きな時刻にお知らせを受け取れます。',
       ],
     },
   },

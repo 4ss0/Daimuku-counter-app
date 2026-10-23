@@ -8,7 +8,7 @@
   import { share, sessionText } from '$lib/share';
   import { shareCard } from '$lib/card';
   import { prefs } from '$lib/prefs';
-  import { liveRunning } from '$lib/live';
+  import { liveBase, liveHalf, liveRunning } from '$lib/live';
   import { noteBadges } from '$lib/badges';
   import { prepareBell, strike } from '$lib/bell';
 
@@ -46,14 +46,17 @@
   let goal = 100;
   let userTakes = -1;
 
-  $: liveCount = running ? Math.max(0, (view?.count ?? 0) - pending) : summary ? corrected : 0;
+  $: liveCount = running ? Math.max(0, (view?.count ?? 0) - pending) : 0;
   $: baseToday = todayTotal(sessions);
   $: today = running ? baseToday + liveCount : baseToday;
-  $: progress = Math.min(1, today / Math.max(1, goal));
-  // the daily goal in two sessions: morning and evening (see stats.ts)
+  // the daily goal in two sessions: morning and evening (see stats.ts).
+  // The one chosen (the current one, unless the other is touched) goes on
+  // from where it was: the ring shows all its Daimoku of today.
   const HALVES: Half[] = ['morning', 'evening'];
-  let sessionHalf: Half = halfOf(new Date());
   let nowHalf: Half = halfOf(new Date());
+  let picked: Half | null = null;
+  let sessionHalf: Half = nowHalf;
+  $: chosenHalf = running ? sessionHalf : picked ?? nowHalf;
   $: halfGoal = splitGoal(goal);
   // the bell button (Bell page): loaded ahead so the first strike is on time
   let bellKey = 0;
@@ -69,6 +72,22 @@
     morning: halfDone.morning + (running && sessionHalf === 'morning' ? liveCount : 0),
     evening: halfDone.evening + (running && sessionHalf === 'evening' ? liveCount : 0),
   };
+  $: ringCount = halfNow[chosenHalf];
+  // the ring fills up with the goal of that session (of the day, when the
+  // goal is too small to split)
+  $: progress = goal >= 2 ? Math.min(1, ringCount / Math.max(1, halfGoal[chosenHalf])) : Math.min(1, today / Math.max(1, goal));
+
+  function pickHalf(h: Half) {
+    if (!running) picked = h;
+  }
+
+  /** At 14:00 the evening begins: a choice made in the morning lapses. */
+  function tickHalf() {
+    const h = halfOf(new Date());
+    if (h === nowHalf) return;
+    nowHalf = h;
+    if (!running) picked = null;
+  }
   $: goalReached = today >= goal;
   $: elapsed = view?.elapsed_secs ?? 0;
   // "listening" stays on through short pauses (breath, between syllables)
@@ -90,7 +109,7 @@
   async function refresh() {
     try {
       [sessions, goal] = await Promise.all([api.listSessions(), api.getGoal()]);
-      nowHalf = halfOf(new Date());
+      tickHalf();
       noteBadges(sessions);
     } catch (e) {
       errorText = errText(e);
@@ -120,7 +139,7 @@
   async function poll() {
     try {
       const v = await api.liveView();
-      nowHalf = halfOf(new Date());
+      tickHalf();
       const now = performance.now();
       const away = document.hidden || now - lastFrameAt > AWAY_MS;
       askFrame();
@@ -142,7 +161,10 @@
   // the counter up to date at once, without waiting for the next poll.
   function onVisibility() {
     if (document.hidden) clearCoins();
-    else if (running) poll();
+    else {
+      tickHalf();
+      if (running) poll();
+    }
   }
 
   /** Pulses for every Daimoku that reaches the counter (no vibration when `quiet`). */
@@ -183,7 +205,9 @@
   }
 
   function onIncrement(from: number, to: number, quiet = false) {
-    const m = milestone(from, to);
+    // milestones of the number shown: the session of the day goes on
+    const base = halfDone[sessionHalf];
+    const m = milestone(base + from, base + to);
     pulseTier = m === 1000 ? 'p1000' : m === 100 ? 'p100' : m === 10 ? 'p10' : 'p1';
     pulseKey += 1;
     if (!quiet && navigator.vibrate) {
@@ -225,7 +249,10 @@
     view = null;
     try {
       await api.startLive();
-      sessionHalf = halfOf(new Date());
+      tickHalf();
+      sessionHalf = picked ?? nowHalf;
+      liveHalf.set(sessionHalf);
+      liveBase.set(halfDone[sessionHalf]);
       running = true;
       liveRunning.set(true);
       timer = setInterval(poll, POLL_MS);
@@ -248,10 +275,14 @@
     }
     stopCounting();
     try {
-      summary = await api.stopLive();
+      summary = await api.stopLive(sessionHalf);
       corrected = summary.count;
       clearCoins();
-      await poll();
+      // the session is in the list at once, so the ring keeps showing the
+      // total of its session of the day, without counting it twice
+      if (summary.session) sessions = [...sessions, summary.session];
+      running = false;
+      picked = sessionHalf;
       await refresh();
     } catch (e) {
       errorText = errText(e);
@@ -267,6 +298,7 @@
     if (saveTimer) clearTimeout(saveTimer);
     const id = summary.session.id;
     const value = corrected;
+    sessions = sessions.map((s) => (s.id === id ? { ...s, count: value } : s));
     saveTimer = setTimeout(async () => {
       try {
         await api.updateSessionCount(id, value);
@@ -353,7 +385,7 @@
       lastRecovered = v.recovered ?? 0;
       lastSpokeAt = 0;
       heard = false;
-      sessionHalf = halfOf(new Date(Date.now() - (v.elapsed_secs ?? 0) * 1000));
+      sessionHalf = get(liveHalf);
       running = true;
       timer = setInterval(poll, POLL_MS);
     } catch (e) {
@@ -379,24 +411,32 @@
     </div>
   </header>
 
-  {#if goal >= 2}
-    <div class="halves">
-      {#each HALVES as h}
-        <div class="half" class:current={h === nowHalf} class:done={halfNow[h] >= halfGoal[h]} title={$t(`goal.${h}`)}>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            {#if h === 'morning'}
-              <circle cx="12" cy="12" r="4" /><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4" />
-            {:else}
-              <path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z" />
-            {/if}
-          </svg>
-          <span class="h-name">{$t(`goal.${h}`)}</span>
-          <span class="h-n"><strong>{fmtNum(halfNow[h], $locale)}</strong> / {fmtNum(halfGoal[h], $locale)}</span>
-          {#if halfNow[h] >= halfGoal[h]}<span class="h-ok" aria-label={$t('count.goalReached')}>✓</span>{/if}
-        </div>
-      {/each}
-    </div>
-  {/if}
+  <div class="halves">
+    {#each HALVES as h}
+      <button
+        class="half"
+        class:current={h === chosenHalf}
+        class:done={goal >= 2 && halfNow[h] >= halfGoal[h]}
+        disabled={running}
+        aria-pressed={h === chosenHalf}
+        on:click={() => pickHalf(h)}
+        title={running ? $t(`goal.${h}`) : $t('count.pickHalf')}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          {#if h === 'morning'}
+            <circle cx="12" cy="12" r="4" /><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4" />
+          {:else}
+            <path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z" />
+          {/if}
+        </svg>
+        <span class="h-name">{$t(`goal.${h}`)}</span>
+        <span class="h-n"
+          ><strong>{fmtNum(halfNow[h], $locale)}</strong>{#if goal >= 2}&nbsp;/ {fmtNum(halfGoal[h], $locale)}{/if}</span
+        >
+        {#if goal >= 2 && halfNow[h] >= halfGoal[h]}<span class="h-ok" aria-label={$t('count.goalReached')}>✓</span>{/if}
+      </button>
+    {/each}
+  </div>
 
   <div class="ring-wrap" class:speaking={running && heard}>
     {#key pulseKey}
@@ -424,7 +464,7 @@
       <circle class="track" cx="140" cy="140" r={R} />
       <circle
         class="bar"
-        class:full={goalReached}
+        class:full={progress >= 1}
         cx="140"
         cy="140"
         r={R}
@@ -434,8 +474,8 @@
     </svg>
     <div class="center">
       {#key pulseKey}
-        <div class="count {pulseTier}" class:d4={liveCount >= 1000} class:d5={liveCount >= 10000} aria-live="polite">
-          {liveCount}
+        <div class="count {pulseTier}" class:d4={ringCount >= 1000} class:d5={ringCount >= 10000} aria-live="polite">
+          {ringCount}
         </div>
       {/key}
       <div class="unit">{$t('count.unit')}</div>
@@ -602,6 +642,14 @@
     font-size: 0.82rem;
     white-space: nowrap;
     opacity: 0.75;
+    font: inherit;
+    font-size: 0.82rem;
+    text-align: left;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .half:disabled {
+    cursor: default;
   }
   .half.current {
     opacity: 1;

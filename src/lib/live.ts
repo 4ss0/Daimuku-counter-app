@@ -9,7 +9,16 @@ import { updateCounting } from '$lib/native';
 /** True from Start to Stop (module state: it outlives the pages). */
 export const liveRunning = writable(false);
 
-/** The engine's count, refreshed every second while a session runs. */
+/** The session of the day the running one continues (chosen on the Count page). */
+export const liveHalf = writable<'morning' | 'evening'>('morning');
+
+/** That session's Daimoku of today before the running one started. */
+export const liveBase = writable(0);
+
+/**
+ * The number shown while a session runs, as on the Count page: `liveBase`
+ * plus the engine's count, refreshed every second.
+ */
 export const liveCount = writable(0);
 
 // The notification is updated from here only, whatever page is shown.
@@ -29,8 +38,9 @@ async function notifyNow() {
   try {
     const v = await api.liveView();
     if (!get(liveRunning)) return;
-    liveCount.set(v.count ?? 0);
-    const text = get(t)('notif.count', { n: fmtNum(v.count ?? 0, get(locale)) });
+    const n = get(liveBase) + (v.count ?? 0);
+    liveCount.set(n);
+    const text = get(t)('notif.count', { n: fmtNum(n, get(locale)) });
     const now = Date.now();
     if (text === lastText && now - lastPostedAt < REFRESH_MS) return;
     lastText = text;
@@ -51,7 +61,7 @@ liveRunning.subscribe((on) => {
   if (on && !notifier) {
     lastText = '';
     lastPostedAt = 0;
-    liveCount.set(0);
+    liveCount.set(get(liveBase));
     notifier = setInterval(notifyNow, NOTIFY_EVERY_MS);
     document.addEventListener('visibilitychange', onVisibility);
   } else if (!on && notifier) {

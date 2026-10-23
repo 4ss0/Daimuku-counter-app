@@ -29,6 +29,8 @@ export interface SessionRecord {
   count: number;
   detected: number;
   manual: boolean;
+  /** Session of the day chosen for it; without it, its start time decides. */
+  half?: 'morning' | 'evening' | null;
 }
 
 export interface LiveSessionSummary {
@@ -73,7 +75,8 @@ export interface ValidationResult {
 
 export const api = {
   startLive: () => invoke<void>('start_live_session'),
-  stopLive: () => invoke<LiveSessionSummary>('stop_live_session'),
+  /** `half`: the session of the day this one continues. */
+  stopLive: (half?: 'morning' | 'evening') => invoke<LiveSessionSummary>('stop_live_session', { half: half ?? null }),
   liveView: () => invoke<LiveView>('live_view'),
   exportLiveWav: () => invoke<ExportedFile>('export_live_session_wav'),
 
@@ -81,9 +84,14 @@ export const api = {
   updateSessionCount: (id: number, count: number) =>
     invoke<SessionRecord>('update_session_count', { id, count }),
   deleteSession: (id: number) => invoke<void>('delete_session', { id }),
-  /** Now, or at `startedAt` (ISO 8601) lasting `durationSecs`. */
-  addManual: (count: number, startedAt?: string, durationSecs?: number) =>
-    invoke<SessionRecord>('add_manual_session', { count, startedAt: startedAt ?? null, durationSecs: durationSecs ?? null }),
+  /** Now, or at `startedAt` (ISO 8601) lasting `durationSecs`, for the session `half` of that day. */
+  addManual: (count: number, startedAt?: string, durationSecs?: number, half?: 'morning' | 'evening') =>
+    invoke<SessionRecord>('add_manual_session', {
+      count,
+      startedAt: startedAt ?? null,
+      durationSecs: durationSecs ?? null,
+      half: half ?? null,
+    }),
   getGoal: () => invoke<number>('get_daily_goal'),
   setGoal: (goal: number) => invoke<number>('set_daily_goal', { goal }),
 

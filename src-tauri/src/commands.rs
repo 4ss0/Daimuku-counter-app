@@ -1,6 +1,6 @@
 use crate::audio::{self, AudioState, LiveView, RecordedAudio};
 use crate::dsp::{count_daimoku_with_profile, DaimokuCountResult, StreamingState};
-use crate::history::{started_before_now, History, SessionRecord};
+use crate::history::{started_before_now, Half, History, SessionRecord};
 use crate::profile::{PersonalProfile, ProfileState};
 use crate::training::{TrainingStore, TrainingTakeMeta};
 use serde::Serialize;
@@ -127,11 +127,15 @@ pub fn start_live_session(
     audio_state.start_live()
 }
 
+/// `half`: the session of the day it continues ("morning" | "evening"),
+/// if chosen on the Count screen.
 #[tauri::command]
 pub async fn stop_live_session(
     audio_state: State<'_, AudioState>,
     history: State<'_, History>,
+    half: Option<String>,
 ) -> Result<LiveSessionSummary, String> {
+    let half = half.as_deref().map(Half::parse).transpose()?;
     let rx = audio_state.stop()?;
     let audio = rx
         .await
@@ -147,7 +151,7 @@ pub async fn stop_live_session(
     }
     let session = if view.count > 0 {
         let n = view.count as u32;
-        Some(history.add(started_before_now(view.elapsed_secs), view.elapsed_secs, n, n, false)?)
+        Some(history.add(started_before_now(view.elapsed_secs), view.elapsed_secs, n, n, false, half)?)
     } else {
         None
     };
@@ -206,14 +210,17 @@ pub fn delete_session(history: State<'_, History>, id: u64) -> Result<(), String
 }
 
 /// Daimoku chanted without the counter (e.g. at a meeting), now or at
-/// `started_at` (RFC 3339), lasting `duration_secs` if known.
+/// `started_at` (RFC 3339), lasting `duration_secs` if known, for the
+/// session `half` ("morning" | "evening") of that day if given.
 #[tauri::command]
 pub fn add_manual_session(
     history: State<'_, History>,
     count: u32,
     started_at: Option<String>,
     duration_secs: Option<f32>,
+    half: Option<String>,
 ) -> Result<SessionRecord, String> {
+    let half = half.as_deref().map(Half::parse).transpose()?;
     let at = match started_at {
         Some(s) => Some(
             chrono::DateTime::parse_from_rfc3339(&s)
@@ -222,7 +229,7 @@ pub fn add_manual_session(
         ),
         None => None,
     };
-    history.add_manual_at(count, at, duration_secs.unwrap_or(0.0))
+    history.add_manual_at(count, at, duration_secs.unwrap_or(0.0), half)
 }
 
 #[tauri::command]

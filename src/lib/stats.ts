@@ -58,11 +58,12 @@ interface Parsed {
   t: Date;
   count: number;
   seconds: number;
+  half: SessionRecord['half'];
 }
 
 function parse(sessions: SessionRecord[]): Parsed[] {
   return sessions
-    .map((s) => ({ t: new Date(s.started_at), count: s.count, seconds: s.duration_secs }))
+    .map((s) => ({ t: new Date(s.started_at), count: s.count, seconds: s.duration_secs, half: s.half }))
     .filter((p) => !isNaN(p.t.getTime()));
 }
 
@@ -308,7 +309,7 @@ export function todayHalves(sessions: SessionRecord[], now = new Date()): Record
   const from = startOfDay(now);
   const to = addDays(from, 1);
   const out = { morning: 0, evening: 0 };
-  for (const p of parse(sessions)) if (p.t >= from && p.t < to) out[halfOf(p.t)] += p.count;
+  for (const p of parse(sessions)) if (p.t >= from && p.t < to) out[p.half ?? halfOf(p.t)] += p.count;
   return out;
 }
 

@@ -7,6 +7,26 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+/// The session of the day a record belongs to: chosen on the Count
+/// screen (to continue the morning or the evening session) or when it is
+/// added by hand. Records without it go by their start time.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Half {
+    Morning,
+    Evening,
+}
+
+impl Half {
+    pub fn parse(s: &str) -> Result<Half, String> {
+        match s {
+            "morning" => Ok(Half::Morning),
+            "evening" => Ok(Half::Evening),
+            _ => Err(format!("unknown session {s}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionRecord {
     pub id: u64,
@@ -19,6 +39,8 @@ pub struct SessionRecord {
     /// Added by hand, without the counter.
     #[serde(default)]
     pub manual: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub half: Option<Half>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +100,7 @@ impl History {
         count: u32,
         detected: u32,
         manual: bool,
+        half: Option<Half>,
     ) -> Result<SessionRecord, String> {
         let mut g = self.inner.lock().unwrap();
         let rec = SessionRecord {
@@ -87,6 +110,7 @@ impl History {
             count: count.min(MAX_COUNT),
             detected: detected.min(MAX_COUNT),
             manual,
+            half,
         };
         g.next_id += 1;
         g.sessions.push(rec.clone());
@@ -96,17 +120,19 @@ impl History {
 
     /// Adds `count` Daimoku chanted without the counter, now.
     pub fn add_manual(&self, count: u32) -> Result<SessionRecord, String> {
-        self.add_manual_at(count, None, 0.0)
+        self.add_manual_at(count, None, 0.0, None)
     }
 
     /// Adds `count` Daimoku chanted without the counter, started at
     /// `started_at` (now if `None`; never in the future) and lasting
-    /// `duration_secs` (0 if not known).
+    /// `duration_secs` (0 if not known), for the session `half` of its day
+    /// (`None`: by its start time).
     pub fn add_manual_at(
         &self,
         count: u32,
         started_at: Option<DateTime<Utc>>,
         duration_secs: f32,
+        half: Option<Half>,
     ) -> Result<SessionRecord, String> {
         if count == 0 {
             return Err("the count must be at least 1".to_string());
@@ -117,7 +143,7 @@ impl History {
             return Err("the session cannot be in the future".to_string());
         }
         let secs = if duration_secs.is_finite() { duration_secs.clamp(0.0, MAX_MANUAL_SECS) } else { 0.0 };
-        self.add(at, secs, count, 0, true)
+        self.add(at, secs, count, 0, true, half)
     }
 
     pub fn set_count(&self, id: u64, count: u32) -> Result<SessionRecord, String> {
@@ -236,7 +262,7 @@ mod tests {
     fn add_edit_delete_and_reload() {
         let p = tmp("crud");
         let h = History::load_from(Some(p.clone()));
-        let a = h.add(Utc::now(), 60.0, 50, 50, false).unwrap();
+        let a = h.add(Utc::now(), 60.0, 50, 50, false, None).unwrap();
         let b = h.add_manual(20).unwrap();
         assert_ne!(a.id, b.id);
         h.set_count(a.id, 53).unwrap();
@@ -272,14 +298,31 @@ mod tests {
     fn past_session_by_hand() {
         let h = History::load_from(None);
         let at = Utc::now() - Duration::days(3);
-        let s = h.add_manual_at(500, Some(at), 1800.0).unwrap();
+        let s = h.add_manual_at(500, Some(at), 1800.0, Some(Half::Evening)).unwrap();
         assert_eq!(s.started_at, at);
         assert_eq!(s.duration_secs, 1800.0);
         assert!(s.manual);
         assert_eq!(s.detected, 0);
-        assert!(h.add_manual_at(5, Some(Utc::now() + Duration::hours(2)), 0.0).is_err());
-        assert_eq!(h.add_manual_at(5, None, f32::NAN).unwrap().duration_secs, 0.0);
-        assert_eq!(h.add_manual_at(5, None, 1e9).unwrap().duration_secs, MAX_MANUAL_SECS);
+        assert_eq!(s.half, Some(Half::Evening));
+        assert!(h.add_manual_at(5, Some(Utc::now() + Duration::hours(2)), 0.0, None).is_err());
+        assert_eq!(h.add_manual_at(5, None, f32::NAN, None).unwrap().duration_secs, 0.0);
+        assert_eq!(h.add_manual_at(5, None, 1e9, None).unwrap().duration_secs, MAX_MANUAL_SECS);
+    }
+
+    #[test]
+    fn half_is_kept_and_optional_in_the_file() {
+        let p = tmp("half");
+        let h = History::load_from(Some(p.clone()));
+        h.add(Utc::now(), 10.0, 3, 3, false, Some(Half::Morning)).unwrap();
+        h.add(Utc::now(), 10.0, 4, 4, false, None).unwrap();
+        let json = fs::read_to_string(&p).unwrap();
+        assert!(json.contains(r#""half":"morning""#));
+        assert_eq!(json.matches("half").count(), 1, "absent when not set: {json}");
+        let l = History::load_from(Some(p)).list();
+        assert_eq!(l[0].half, Some(Half::Morning));
+        assert_eq!(l[1].half, None);
+        assert_eq!(Half::parse("evening"), Ok(Half::Evening));
+        assert!(Half::parse("noon").is_err());
     }
 
     #[test]
