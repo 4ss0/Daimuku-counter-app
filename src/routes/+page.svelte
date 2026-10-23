@@ -4,7 +4,7 @@
   import { api, errText, fmtClock, fmtNum, type LiveSessionSummary, type LiveView, type SessionRecord } from '$lib/api';
   import { locale, t } from '$lib/i18n';
   import { todayTotal } from '$lib/stats';
-  import { hasNative, shareFile, startCounting, stopCounting, updateCounting } from '$lib/native';
+  import { hasNative, shareFile, startCounting, stopCounting } from '$lib/native';
   import { share, sessionText } from '$lib/share';
   import { shareCard } from '$lib/card';
   import { prefs } from '$lib/prefs';
@@ -87,14 +87,9 @@
       if (v.speaking) lastSpokeAt = now;
       heard = running && (v.speaking || now - lastSpokeAt < SPEAK_HOLD_MS);
       sync();
-      if (running) updateCounting($t('notif.count', { n: fmtNum(liveCountOf(v), $locale) }));
     } catch (e) {
       errorText = errText(e);
     }
-  }
-
-  function liveCountOf(v: LiveView) {
-    return Math.max(0, (v.count ?? 0) - pending);
   }
 
   // coins still in flight when the app is hidden would all land on return
