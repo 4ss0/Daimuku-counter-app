@@ -12,3 +12,8 @@ vite.config.ts.timestamp-*
 /registrazioni
 # personal test recordings
 registrazioni/
+
+# signing keys and their passwords: never in git
+*.jks
+*.keystore
+keystore.properties
