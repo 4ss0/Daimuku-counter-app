@@ -9,6 +9,7 @@ pub mod features;
 pub mod history;
 pub mod hmm;
 pub mod model;
+pub mod native;
 pub mod paths;
 pub mod profile;
 pub mod session;
@@ -38,7 +39,9 @@ pub fn run() {
             app.manage(history::History::load());
             app.manage(training::TrainingStore::new());
             app.manage(profile::ProfileState::empty());
-            app.manage(audio::AudioState::spawn()?);
+            let audio = audio::AudioState::spawn()?;
+            native::set_live(audio.live());
+            app.manage(audio);
 
             let handle = app.handle().clone();
             std::thread::Builder::new()

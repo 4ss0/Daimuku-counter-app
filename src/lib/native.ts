@@ -12,6 +12,7 @@ interface Bridge {
   startCounting(title: string, text: string): void;
   updateCounting(title: string): void;
   stopCounting(): void;
+  countFrom?(base: number, template: string, locale: string): void;
   keepScreenOn(on: boolean): void;
   saveFile(path: string, name: string, mime: string): void;
   shareFile(path: string, name: string, mime: string, title: string): void;
@@ -64,9 +65,8 @@ function safe(fn: (b: Bridge) => void) {
   }
 }
 
-export function startCounting(title: string, text: string, keepScreen: boolean) {
+export function startCounting(title: string, text: string) {
   safe((b) => b.startCounting(title, text));
-  safe((b) => b.keepScreenOn(keepScreen));
 }
 
 /** Android: updates the notification title (the current count). */
@@ -74,9 +74,25 @@ export function updateCounting(title: string) {
   safe((b) => b.updateCounting(title));
 }
 
+/**
+ * Android: the counting service writes the count in the notification by
+ * itself, reading it from the engine: `template` with `{n}` replaced by
+ * `base` plus the engine's count. False on an older APK, where the page
+ * must keep the notification up to date (`updateCounting`).
+ */
+export function countInNotification(base: number, template: string, locale: string): boolean {
+  const b = bridge();
+  if (typeof b?.countFrom !== 'function') return false;
+  try {
+    b.countFrom(base, template, locale);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function stopCounting() {
   safe((b) => b.stopCounting());
-  safe((b) => b.keepScreenOn(false));
 }
 
 /** Android: lets the user pick where to save the file. Resolves false if cancelled. */
@@ -203,7 +219,14 @@ export async function donate(productId: string): Promise<DonationResult> {
   return d && ['thanks', 'pending', 'cancelled', 'unavailable', 'error'].includes(d) ? d : r.ok ? 'thanks' : 'error';
 }
 
-/** Keeps the screen on (Android), e.g. while reciting Gongyo. */
-export function keepScreen(on: boolean) {
-  safe((b) => b.keepScreenOn(on));
+// The screen is kept on while counting (if chosen in Settings) and while
+// Gongyo plays. Each asks under its own name, so that one letting go does
+// not turn the screen off under the other.
+const awake = new Set<'counting' | 'gongyo'>();
+
+/** Keeps the screen on (Android) for `reason`, or stops keeping it for it. */
+export function keepScreen(reason: 'counting' | 'gongyo', on: boolean) {
+  if (on) awake.add(reason);
+  else awake.delete(reason);
+  safe((b) => b.keepScreenOn(awake.size > 0));
 }

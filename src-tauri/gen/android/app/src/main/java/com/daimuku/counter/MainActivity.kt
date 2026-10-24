@@ -111,6 +111,11 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
+    fun countFrom(base: Int, template: String, locale: String) {
+      CountingService.countFrom(base, template, locale)
+    }
+
+    @JavascriptInterface
     fun stopCounting() {
       stopService(Intent(this@MainActivity, CountingService::class.java))
     }

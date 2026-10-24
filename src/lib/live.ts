@@ -4,7 +4,8 @@
 import { get, writable } from 'svelte/store';
 import { api, fmtNum } from '$lib/api';
 import { locale, t } from '$lib/i18n';
-import { updateCounting } from '$lib/native';
+import { countInNotification, keepScreen, updateCounting } from '$lib/native';
+import { prefs } from '$lib/prefs';
 
 /** True from Start to Stop (module state: it outlives the pages). */
 export const liveRunning = writable(false);
@@ -21,16 +22,18 @@ export const liveBase = writable(0);
  */
 export const liveCount = writable(0);
 
-// The notification is updated from here only, whatever page is shown.
-// Android drops the updates of an app that posts more than about 5 per
-// second: the Count page used to post one at every poll (150 ms), and with
-// the app open the notification stayed frozen. Now it is posted at most
-// once a second, when the count changes, plus a periodic refresh in case
-// an update was lost.
+// The notification shows the count. On Android the counting service
+// writes it by itself, reading the engine (CountingService.kt): with the
+// screen locked the page's timers are slowed down to one a minute and the
+// number used to stop. An older APK cannot, and the page posts it from
+// here, whatever page is shown: at most once a second (Android drops the
+// updates of an app that posts more than about 5 a second), when the count
+// changes, plus a periodic refresh in case an update was lost.
 const NOTIFY_EVERY_MS = 1000;
 const REFRESH_MS = 10_000;
 
 let notifier: ReturnType<typeof setInterval> | null = null;
+let nativeNotifies = false;
 let lastText = '';
 let lastPostedAt = 0;
 
@@ -40,6 +43,7 @@ async function notifyNow() {
     if (!get(liveRunning)) return;
     const n = get(liveBase) + (v.count ?? 0);
     liveCount.set(n);
+    if (nativeNotifies) return;
     const text = get(t)('notif.count', { n: fmtNum(n, get(locale)) });
     const now = Date.now();
     if (text === lastText && now - lastPostedAt < REFRESH_MS) return;
@@ -62,6 +66,7 @@ liveRunning.subscribe((on) => {
     lastText = '';
     lastPostedAt = 0;
     liveCount.set(get(liveBase));
+    nativeNotifies = countInNotification(get(liveBase), get(t)('notif.count', { n: '{n}' }), get(locale));
     notifier = setInterval(notifyNow, NOTIFY_EVERY_MS);
     document.addEventListener('visibilitychange', onVisibility);
   } else if (!on && notifier) {
@@ -69,4 +74,17 @@ liveRunning.subscribe((on) => {
     notifier = null;
     document.removeEventListener('visibilitychange', onVisibility);
   }
+});
+
+// "Keep the screen on while counting" (Settings) holds for the whole
+// session, whatever page is shown, and a change applies at once.
+let running = false;
+let keepAwake = false;
+liveRunning.subscribe((on) => {
+  running = on;
+  keepScreen('counting', running && keepAwake);
+});
+prefs.subscribe((p) => {
+  keepAwake = p.keepAwake;
+  keepScreen('counting', running && keepAwake);
 });

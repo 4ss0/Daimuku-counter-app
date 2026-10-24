@@ -257,7 +257,7 @@
       liveRunning.set(true);
       timer = setInterval(poll, POLL_MS);
       // Android: keeps counting with the screen off (shows a notification)
-      startCounting($t('notif.title'), $t('notif.text'), $prefs.keepAwake);
+      startCounting($t('notif.title'), $t('notif.text'));
     } catch (e) {
       errorText = errText(e);
     } finally {

@@ -148,17 +148,17 @@
     if (finished) goTo(0);
     if (index === 0 && beat === 0) beat = -LEAD_IN;
     playing = true;
-    keepScreen(true);
+    keepScreen('gongyo', true);
     run();
   }
   function pause() {
     playing = false;
-    keepScreen(false);
+    keepScreen('gongyo', false);
   }
   function finish() {
     playing = false;
     finished = true;
-    keepScreen(false);
+    keepScreen('gongyo', false);
   }
   function goTo(i: number) {
     index = Math.max(0, Math.min(GONGYO.length - 1, i));
@@ -235,7 +235,7 @@
 
   onDestroy(() => {
     if (raf) cancelAnimationFrame(raf);
-    if (playing) keepScreen(false);
+    if (playing) keepScreen('gongyo', false);
   });
 </script>
 

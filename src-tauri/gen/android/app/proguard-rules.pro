@@ -19,3 +19,6 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# the count read from the Rust engine (src-tauri/src/native.rs): JNI finds it by name
+-keep class com.daimuku.counter.Native { native <methods>; }

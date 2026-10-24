@@ -9,18 +9,34 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import java.text.NumberFormat
+import java.util.Locale
 
 /**
  * Foreground service that keeps the process (and so the Rust audio engine)
  * running with the screen off, with a notification showing the count.
- * The count comes from the web page (`DaimokuAndroid.updateCounting`).
+ * The service reads the count from the engine every second by itself
+ * (`Native.count`): with the screen locked the web page's timers are slowed
+ * down to one a minute, and the number in the notification used to stop.
+ * The page only says how to write it (`countFrom`); an older page sends the
+ * text itself (`DaimokuAndroid.updateCounting`).
  */
 class CountingService : Service() {
   private var wakeLock: PowerManager.WakeLock? = null
+  private val handler = Handler(Looper.getMainLooper())
+  private var ticking = false
+  private val tick = object : Runnable {
+    override fun run() {
+      refresh(this@CountingService)
+      handler.postDelayed(this, TICK_MS)
+    }
+  }
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -47,11 +63,18 @@ class CountingService : Service() {
       }
     }
     running = true
+    if (!ticking) {
+      ticking = true
+      handler.post(tick)
+    }
     return START_NOT_STICKY
   }
 
   override fun onDestroy() {
     running = false
+    handler.removeCallbacks(tick)
+    ticking = false
+    template = ""
     wakeLock?.let { if (it.isHeld) it.release() }
     wakeLock = null
     super.onDestroy()
@@ -64,10 +87,31 @@ class CountingService : Service() {
     private const val NOTIFICATION_ID = 1
     /** A practice longer than this lets the phone sleep again. */
     private const val MAX_WAKE_MS = 12L * 60 * 60 * 1000
+    private const val TICK_MS = 1000L
 
     @Volatile private var running = false
     @Volatile private var title = ""
     @Volatile private var text = ""
+    /** The count in the notification: `template` with {n} = base + the engine's count. */
+    @Volatile private var template = ""
+    @Volatile private var base = 0
+    @Volatile private var format: NumberFormat = NumberFormat.getIntegerInstance()
+
+    /** How to write the count (from the page, before the service starts). */
+    fun countFrom(base: Int, template: String, locale: String) {
+      this.base = base
+      this.format = NumberFormat.getIntegerInstance(Locale.forLanguageTag(locale))
+      this.template = template
+    }
+
+    /** The count from the engine into the notification (when the page said how). */
+    private fun refresh(context: Context) {
+      val t = template
+      if (t.isEmpty()) return
+      val n = Native.count()
+      if (n < 0) return
+      update(context, t.replace("{n}", format.format((base + n).toLong())))
+    }
 
     /** New title (the count): posted only when it changes. */
     fun update(context: Context, newTitle: String) {
