@@ -1,6 +1,6 @@
 [package]
 name = "daimuku-counter"
-version = "0.6.1"
+version = "0.6.2"
 description = "Daimoku counter application"
 authors = ["you"]
 edition = "2021"
