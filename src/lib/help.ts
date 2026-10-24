@@ -106,15 +106,15 @@ export const HELP: HelpSection[] = [
     text: {
       it: [
         'Statistiche, obiettivo e condivisione',
-        'In Statistiche vedi i daimoku per giorno, settimana, mese e anno, i giorni di fila e la media: tocca una barra per il dettaglio. Imposta l’obiettivo giornaliero: l’anello della schermata Conta si riempie fino a raggiungerlo.\n\nHai recitato senza l’app, per esempio a una riunione? Sotto «Sessioni» scegli il giorno, la sessione (mattina o sera) e scrivi quanti Daimoku hai recitato. Con l’icona di condivisione puoi condividere una sessione, un periodo o l’obiettivo raggiunto.',
+        'In Statistiche vedi i daimoku per giorno, settimana, mese e anno, i giorni di fila e la media: tocca un punto del grafico per il dettaglio. In Impostazioni scegli quale periodo vedere per primo. Imposta l’obiettivo giornaliero: l’anello della schermata Conta si riempie fino a raggiungerlo.\n\nHai recitato senza l’app, per esempio a una riunione? Sotto «Sessioni» scegli il giorno, la sessione (mattina o sera) e scrivi quanti Daimoku hai recitato. Con l’icona di condivisione puoi condividere una sessione, un periodo o l’obiettivo raggiunto.',
       ],
       en: [
         'Statistics, goal and sharing',
-        'In Statistics you see your daimoku by day, week, month and year, your streak and your average: tap a bar for details. Set a daily goal: the ring on the Count screen fills up until you reach it.\n\nDid you chant without the app, for example at a meeting? Under "Sessions" choose the day and the session (morning or evening) and type how many Daimoku you chanted. With the share icon you can share a session, a period or a goal reached.',
+        'In Statistics you see your daimoku by day, week, month and year, your streak and your average: tap a point of the chart for details. In Settings choose which period is shown first. Set a daily goal: the ring on the Count screen fills up until you reach it.\n\nDid you chant without the app, for example at a meeting? Under "Sessions" choose the day and the session (morning or evening) and type how many Daimoku you chanted. With the share icon you can share a session, a period or a goal reached.',
       ],
       ja: [
         '記録・目標・共有',
-        '「記録」では、日・週・月・年ごとの遍数、連続日数、平均を確認できます。棒をタップすると詳細が表示されます。毎日の目標を設定すると、「唱題」画面のリングが目標に向かって満ちていきます。\n\n会合などアプリを使わずに唱えたときは、「セッション」の下で日付と朝・夜を選び、唱えた遍数を入力してください。共有アイコンから、セッション、期間の記録、目標達成を共有できます。',
+        '「記録」では、日・週・月・年ごとの遍数、連続日数、平均を確認できます。グラフの点をタップすると詳細が表示されます。最初に表示する期間は「設定」で選べます。毎日の目標を設定すると、「唱題」画面のリングが目標に向かって満ちていきます。\n\n会合などアプリを使わずに唱えたときは、「セッション」の下で日付と朝・夜を選び、唱えた遍数を入力してください。共有アイコンから、セッション、期間の記録、目標達成を共有できます。',
       ],
     },
   },
@@ -142,15 +142,15 @@ export const HELP: HelpSection[] = [
     text: {
       it: [
         'Traguardi e giorno abbuonato',
-        'Ricevi un traguardo a 100, 1.000, 10.000, 1 milione, 5 e 10 milioni di daimoku, e per i giorni di recitazione consecutivi: una settimana, un mese, sei mesi, poi 1, 2, 5, 10, 15 e 20 anni. Li trovi tutti in Statistiche.\n\nSe un giorno non hai recitato, una volta a settimana puoi abbuonarlo con il tasto in Statistiche: la serie di giorni consecutivi non si interrompe.',
+        'Ricevi un traguardo a 100, 1.000, 10.000, 1 milione, 5 e 10 milioni di daimoku, e per i giorni di recitazione consecutivi: una settimana, un mese, sei mesi, poi 1, 2, 5, 10, 15 e 20 anni. Li trovi tutti nel menù, alla voce Traguardi, insieme al giorno abbuonato.\n\nSe un giorno non hai recitato, una volta a settimana puoi abbuonarlo con il tasto in Statistiche: la serie di giorni consecutivi non si interrompe.',
       ],
       en: [
         'Milestones and the forgiven day',
-        'You earn a milestone at 100, 1,000, 10,000, 1 million, 5 and 10 million daimoku, and for days of chanting in a row: a week, a month, six months, then 1, 2, 5, 10, 15 and 20 years. You find them all in Statistics.\n\nIf you did not chant one day, once a week you can forgive it with the button in Statistics: your run of days in a row does not break.',
+        'You earn a milestone at 100, 1,000, 10,000, 1 million, 5 and 10 million daimoku, and for days of chanting in a row: a week, a month, six months, then 1, 2, 5, 10, 15 and 20 years. You find them all in the menu, under Milestones, together with the forgiven day.\n\nIf you did not chant one day, once a week you can forgive it with the button in Statistics: your run of days in a row does not break.',
       ],
       ja: [
         '達成バッジとお休みの日',
-        '通算100・1,000・10,000・100万・500万・1,000万遍と、連続日数（1週間、1か月、6か月、1・2・5・10・15・20年）でバッジがもらえます。すべて「記録」で確認できます。\n\n唱題できなかった日は、週に1日だけ「記録」のボタンで「お休み」にでき、連続日数が途切れません。',
+        '通算100・1,000・10,000・100万・500万・1,000万遍と、連続日数（1週間、1か月、6か月、1・2・5・10・15・20年）でバッジがもらえます。すべてメニューの「達成バッジ」で確認できます。\n\n唱題できなかった日は、週に1日だけ「記録」のボタンで「お休み」にでき、連続日数が途切れません。',
       ],
     },
   },
@@ -196,15 +196,15 @@ export const HELP: HelpSection[] = [
     text: {
       it: [
         'Il menù',
-        'Tocca ☰ in alto a sinistra, oppure scorri verso destra partendo dalla metà sinistra dello schermo, per aprire il menù: contatore, promemoria, campana, dizionario dei concetti buddisti, donazioni, questa guida e privacy. Per chiuderlo scorri verso sinistra o tocca fuori.\n\nOgni volta che apri l’app trovi la citazione del giorno, dai Gosho di Nichiren Daishonin, dal Sutra del Loto o dai presidenti della Soka Gakkai. Con le frecce (o scorrendo) leggi quelle degli altri giorni; con «Entra» vai all’app.',
+        'Tocca ☰ in alto a sinistra, oppure scorri verso destra partendo dalla metà sinistra dello schermo, per aprire il menù: contatore, Gongyo, traguardi, promemoria, campana, dizionario dei concetti buddisti, donazioni, questa guida e privacy. Per chiuderlo scorri verso sinistra o tocca fuori.\n\nIn Gongyo il testo scorre come un karaoke: la riga che stai recitando, con il cursore, fra la precedente e la successiva. Regola la velocità con la barra: mentre la muovi vedi un’anteprima.\n\nOgni volta che apri l’app trovi la citazione del giorno, dai Gosho di Nichiren Daishonin, dal Sutra del Loto o dai presidenti della Soka Gakkai. Con le frecce (o scorrendo) leggi quelle degli altri giorni; con «Entra» vai all’app.',
       ],
       en: [
         'The menu',
-        'Tap ☰ at the top left, or swipe to the right starting from the left half of the screen, to open the menu: counter, reminders, bell, dictionary of Buddhist concepts, donations, this guide and privacy. To close it swipe to the left or tap outside.\n\nEach time you open the app you find the quote of the day, from the writings of Nichiren Daishonin, the Lotus Sutra or the presidents of the Soka Gakkai. The arrows (or a swipe) show the other days’ quotes; “Enter” takes you into the app.',
+        'Tap ☰ at the top left, or swipe to the right starting from the left half of the screen, to open the menu: counter, Gongyo, milestones, reminders, bell, dictionary of Buddhist concepts, donations, this guide and privacy. To close it swipe to the left or tap outside.\n\nIn Gongyo the text runs like karaoke: the line you are reciting, with the cursor, between the one before and the one after. Set the speed with the slider: while you move it you see a preview.\n\nEach time you open the app you find the quote of the day, from the writings of Nichiren Daishonin, the Lotus Sutra or the presidents of the Soka Gakkai. The arrows (or a swipe) show the other days’ quotes; “Enter” takes you into the app.',
       ],
       ja: [
         'メニュー',
-        '左上の ☰ をタップするか、画面の左半分から右へスワイプするとメニューが開きます。カウンター、リマインダー、鈴、仏法用語集、寄付、この使い方、プライバシーに移動できます。閉じるには左へスワイプするか、外側をタップします。\n\nアプリを開くたびに、日蓮大聖人の御書、法華経、創価学会の歴代会長の言葉から「今日の言葉」が表示されます。矢印（またはスワイプ）でほかの日の言葉を読み、「はじめる」でアプリに入ります。',
+        '左上の ☰ をタップするか、画面の左半分から右へスワイプするとメニューが開きます。カウンター、勤行、達成バッジ、リマインダー、鈴、仏法用語集、寄付、この使い方、プライバシーに移動できます。閉じるには左へスワイプするか、外側をタップします。\n\n「勤行」では、カラオケのように読んでいる行がカーソル付きで表示され、前後の行も見えます。速さはスライダーで調整でき、動かしている間はプレビューが表示されます。\n\nアプリを開くたびに、日蓮大聖人の御書、法華経、創価学会の歴代会長の言葉から「今日の言葉」が表示されます。矢印（またはスワイプ）でほかの日の言葉を読み、「はじめる」でアプリに入ります。',
       ],
     },
   },

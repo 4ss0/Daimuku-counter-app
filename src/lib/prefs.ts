@@ -27,7 +27,16 @@ export interface Prefs {
   background: Background;
   /** The bell button on the Count screen. */
   bell: { on: boolean; kind: BellKind; volume: number };
+  /** The period the Stats page opens on. */
+  statsPeriod: StatsPeriod;
+  /** Speed of the Gongyo page's cursor, in syllables a second. */
+  gongyoSpeed: number;
 }
+
+export type StatsPeriod = 'day' | 'week' | 'month' | 'year' | 'all';
+export const STATS_PERIODS: StatsPeriod[] = ['day', 'week', 'month', 'year', 'all'];
+/** Range of the Gongyo speed slider (syllables a second). */
+export const GONGYO_SPEED = { min: 1.5, max: 8, default: 4.5 };
 
 const DEFAULTS: Prefs = {
   lang: 'auto',
@@ -40,6 +49,8 @@ const DEFAULTS: Prefs = {
   badgesSeen: [],
   background: 'lotus',
   bell: { on: false, kind: 'high', volume: 0.8 },
+  statsPeriod: 'week',
+  gongyoSpeed: GONGYO_SPEED.default,
 };
 
 /** Strings matching `re`, at most `max` of them. */
@@ -132,6 +143,9 @@ function sanitize(p: Partial<Prefs> | null | undefined): Partial<Prefs> {
       volume: typeof b.volume === 'number' && Number.isFinite(b.volume) ? Math.min(1, Math.max(0, b.volume)) : DEFAULTS.bell.volume,
     };
   }
+  if (p.statsPeriod && (STATS_PERIODS as string[]).includes(p.statsPeriod)) out.statsPeriod = p.statsPeriod;
+  if (typeof p.gongyoSpeed === 'number' && Number.isFinite(p.gongyoSpeed))
+    out.gongyoSpeed = Math.min(GONGYO_SPEED.max, Math.max(GONGYO_SPEED.min, p.gongyoSpeed));
   const forgiven = strings(p.forgiven, /^\d{4}-\d{1,2}-\d{1,2}$/, 2000);
   if (forgiven) out.forgiven = forgiven;
   const seen = strings(p.badgesSeen, /^(total|streak)-\d+$/, 100);

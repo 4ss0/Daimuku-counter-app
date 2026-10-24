@@ -22,6 +22,8 @@
   /** Sections of the side menu; the counter is the four tabs above. */
   const sections: { href: string; key: Key; icon: string; soon?: boolean }[] = [
     { href: '/', key: 'menu.counter', icon: 'count' },
+    { href: '/gongyo', key: 'menu.gongyo', icon: 'scroll' },
+    { href: '/badges', key: 'menu.badges', icon: 'badge' },
     { href: '/reminders', key: 'menu.reminders', icon: 'alarm' },
     { href: '/bell', key: 'menu.bell', icon: 'bell' },
     { href: '/dictionary', key: 'menu.dictionary', icon: 'book' },
@@ -222,7 +224,7 @@
 
 <div role="status">
 {#if banner.length}
-  <a class="badge-banner glass" href="/stats#badges" on:click={closeBanner}>
+  <a class="badge-banner glass" href="/badges" on:click={closeBanner}>
     <BadgeIcon badge={banner[banner.length - 1]} size={46} />
     <span>
       <strong>{banner.length > 1 ? $t('badge.newMany', { n: banner.length }) : $t('badge.new')}</strong>
@@ -274,6 +276,12 @@
             {#if s.icon === 'count'}
               <circle cx="12" cy="12" r="8.5" />
               <circle cx="12" cy="12" r="3" />
+            {:else if s.icon === 'scroll'}
+              <path d="M7 3.5h10a2 2 0 0 1 2 2V20l-2.5-1.5L14 20l-2-1.5L10 20l-2.5-1.5L5 20V5.5a2 2 0 0 1 2-2z" />
+              <path d="M8.5 8h7M8.5 11.5h7M8.5 15h4" />
+            {:else if s.icon === 'badge'}
+              <circle cx="12" cy="9.5" r="5.5" />
+              <path d="M8.5 14l-1.5 7 5-2.5 5 2.5-1.5-7" />
             {:else if s.icon === 'alarm'}
               <circle cx="12" cy="13" r="7.5" />
               <path d="M12 9.5V13l2.5 2M5 4.5L3 6.5M19 4.5l2 2" />

@@ -1,4 +1,6 @@
 <script lang="ts">
+  // The Stats chart: one dot per day (week, month...) joined by a line.
+  // Touching a column shows its value.
   import type { Bucket } from './stats';
   import { fmtNum } from './api';
   import { locale, t } from './i18n';
@@ -13,6 +15,11 @@
   $: shown = selected !== null && selected < buckets.length ? buckets[selected] : null;
   // reset the selection when the period changes
   $: buckets, (selected = null);
+  /** Centre of column i and height of a value, in % of the plot. */
+  $: xs = buckets.map((_, i) => ((i + 0.5) / Math.max(1, buckets.length)) * 100);
+  $: ys = buckets.map((b) => 100 - (b.value / nice) * 100);
+  $: points = buckets.map((_, i) => `${xs[i]},${ys[i]}`).join(' ');
+  $: area = buckets.length ? `${xs[0]},100 ${points} ${xs[xs.length - 1]},100` : '';
 
   function niceMax(v: number): number {
     const p = Math.pow(10, Math.floor(Math.log10(v)));
@@ -33,23 +40,33 @@
   <div class="plot">
     <div class="grid top"><span>{fmtNum(nice, $locale)}</span></div>
     <div class="grid mid"><span>{fmtNum(nice / 2, $locale)}</span></div>
-    <div class="bars" style="--n:{buckets.length}">
+    <div class="area">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        {#if buckets.length > 1}
+          <polygon class="fill" points={area} />
+          <polyline class="line" points={points} />
+        {/if}
+      </svg>
       {#each buckets as b, i}
-        <button
-          class="col"
+        <span
+          class="dot"
+          class:zero={b.value === 0}
+          class:current={b.current}
           class:sel={selected === i}
-          on:click={() => (selected = selected === i ? null : i)}
-          on:mouseenter={() => (selected = i)}
-          aria-label="{b.title}: {b.value} {unit}"
-        >
-          <span
-            class="bar"
-            class:zero={b.value === 0}
-            class:current={b.current}
-            style="height:{b.value === 0 ? 0 : Math.max(2, (b.value / nice) * 100)}%"
-          ></span>
-        </button>
+          style="left:{xs[i]}%;top:{ys[i]}%"
+        ></span>
       {/each}
+      <div class="cols" style="--n:{buckets.length}">
+        {#each buckets as b, i}
+          <button
+            class="col"
+            class:sel={selected === i}
+            on:click={() => (selected = selected === i ? null : i)}
+            on:mouseenter={() => (selected = i)}
+            aria-label="{b.title}: {b.value} {unit}"
+          ></button>
+        {/each}
+      </div>
     </div>
   </div>
   <div class="labels" style="--n:{buckets.length}">
@@ -78,13 +95,6 @@
     height: 150px;
     border-bottom: 1px solid var(--line);
   }
-  /* value labels live in a right-hand gutter, never behind a bar */
-  .bars {
-    right: 38px !important;
-  }
-  .labels {
-    margin-right: 38px;
-  }
   .grid {
     position: absolute;
     left: 0;
@@ -110,45 +120,76 @@
   .grid.mid {
     top: 50%;
   }
-  .bars,
-  .labels {
-    display: grid;
-    grid-template-columns: repeat(var(--n), 1fr);
-    column-gap: 2px;
+  /* value labels live in a right-hand gutter, never behind the line */
+  .area {
+    position: absolute;
+    inset: 0 38px 0 0;
   }
-  .bars {
+  svg {
     position: absolute;
     inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+  .line {
+    fill: none;
+    stroke: var(--mark);
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    vector-effect: non-scaling-stroke;
+  }
+  .fill {
+    fill: var(--accent-soft);
+    stroke: none;
+  }
+  .dot {
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    margin: -4.5px 0 0 -4.5px;
+    border-radius: 50%;
+    background: var(--mark);
+    border: 2px solid var(--surface-solid);
+    box-sizing: content-box;
+    pointer-events: none;
+    transition: top 0.35s ease, transform 0.15s, background 0.15s;
+  }
+  .dot.zero {
+    background: var(--surface-solid);
+    border-color: var(--mark);
+    width: 5px;
+    height: 5px;
+    margin: -4.5px 0 0 -4.5px;
+  }
+  .dot.current {
+    background: var(--mark-current);
+  }
+  .dot.sel {
+    background: var(--text);
+    transform: scale(1.35);
+  }
+  .cols {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template-columns: repeat(var(--n), 1fr);
   }
   .col {
-    height: 100%;
-    display: flex;
-    align-items: flex-end;
-    justify-content: center;
     padding: 0;
     border: none;
     background: transparent;
     cursor: pointer;
-  }
-  .bar {
-    width: 100%;
-    max-width: 26px;
-    background: var(--mark);
-    border-radius: 4px 4px 0 0;
-    transition: height 0.35s ease, background 0.15s;
-  }
-  .bar.current {
-    background: var(--mark-current);
-  }
-  .col.sel .bar {
-    background: var(--text);
   }
   .col.sel {
     background: rgba(255, 255, 255, 0.04);
     border-radius: 4px;
   }
   .labels {
-    margin-top: 6px;
+    display: grid;
+    grid-template-columns: repeat(var(--n), 1fr);
+    margin: 6px 38px 0 0;
   }
   .labels span {
     text-align: center;

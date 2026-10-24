@@ -4,7 +4,7 @@
   import { api, errText, fmtNum } from '$lib/api';
   import { splitGoal, type GoalPeriod } from '$lib/stats';
   import { LANGS, locale, t, type Key } from '$lib/i18n';
-  import { ACCENTS, initPrefs, prefs, resolvedTheme, updatePrefs, type Accent, type ThemePref } from '$lib/prefs';
+  import { ACCENTS, STATS_PERIODS, initPrefs, prefs, resolvedTheme, updatePrefs, type Accent, type ThemePref } from '$lib/prefs';
   import { BACKGROUNDS, backgroundUrl, customBackgroundUrl, loadCustomBackground, setCustomBackground, type Background } from '$lib/background';
   import { hasNative, saveFile, shareFile, type ExportedFile } from '$lib/native';
 
@@ -262,6 +262,15 @@
   </section>
 
   <section class="card glass">
+    <div class="label">{$t('set.statsPeriod')}</div>
+    <div class="options five">
+      {#each STATS_PERIODS as sp}
+        <button class:on={$prefs.statsPeriod === sp} on:click={() => updatePrefs({ statsPeriod: sp })}>{$t(`stats.${sp}` as Key)}</button>
+      {/each}
+    </div>
+  </section>
+
+  <section class="card glass">
     <div class="label">{$t('goal.title')}</div>
     <div class="row goal-row">
       <span>{$t('goal.daily')}</span>
@@ -390,6 +399,9 @@
   }
   .options.three {
     grid-template-columns: repeat(3, 1fr);
+  }
+  .options.five {
+    grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
   }
   .options button,
   .options a {

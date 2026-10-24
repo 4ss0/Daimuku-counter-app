@@ -202,3 +202,8 @@ export async function donate(productId: string): Promise<DonationResult> {
   const d = r.data as DonationResult | null;
   return d && ['thanks', 'pending', 'cancelled', 'unavailable', 'error'].includes(d) ? d : r.ok ? 'thanks' : 'error';
 }
+
+/** Keeps the screen on (Android), e.g. while reciting Gongyo. */
+export function keepScreen(on: boolean) {
+  safe((b) => b.keepScreenOn(on));
+}
