@@ -1,16 +1,30 @@
-// The text of Gongyo in the international pronunciation, and the timing of
-// the Gongyo page's cursor.
+// The text of Gongyo in the international pronunciation, and its rhythm.
+//
+// Gongyo is recited one character of the sutra (one kanji) per beat, every
+// beat the same length, with no pause at the full stops nor between lines:
+// in a recording of slow Gongyo every beat lasts 0.39 s, the Hoben-pon
+// (378 beats) 141 s and the Juryo-hon (523 beats) 202 s. So the text is cut
+// into the readings of the kanji ("toku", "butsu", "shu", "jo"...) and each
+// takes one beat, whatever its length in letters.
 //
 // The Hoben-pon ends with the ten factors ("Sho-i shoho. Nyo ze so...."),
 // recited three times.
 
 export type GongyoPart = 'hoben' | 'juryo';
 
+/** A piece of a line: the reading of one kanji (a beat), or what lies between. */
+export interface Piece {
+  text: string;
+  beat: boolean;
+}
+
 export interface GongyoLine {
   text: string;
   part: GongyoPart;
   /** 1..3 inside the ten factors of the Hoben-pon. */
   repeat?: number;
+  pieces: Piece[];
+  beats: number;
 }
 
 const HOBEN = `Myo ho ren ge kyo.
@@ -67,7 +81,7 @@ Ga jo ju o shi. I sho jin-zu-riki.
 Ryo tendo shujo. Sui gon ni fu ken.
 Shu ken ga metsu-do. Ko kuyo shari.
 Gen kai e renbo. Ni sho katsu-go shin.
-Shujo ki shin-bukui. Shichi-jiki i nyunan.
+Shujo ki shin-buku. Shichi-jiki i nyunan.
 Isshin yok ken butsu. Fu ji shaku shinmyo.
 Ji go gyo shuso. Ku shutsu ryojusen.
 Ga ji go shujo. Jo zai shi fu-metsu.
@@ -109,12 +123,62 @@ Zui o sho ka do. I ses shuju ho.
 Mai ji sa ze nen. I ga ryo shujo.
 Toku nyu mu-jo do. Soku joju busshin.`;
 
+const VOWELS = 'aeiou';
+
+/**
+ * The readings of the kanji in one romanized word: "Shari" -> sha, ri;
+ * "toku" -> toku; "jinjin" -> jin, jin; "Issai" -> is, sai; "butsu" -> butsu.
+ * A reading is consonants and a vowel (ai, ei, ui count as one), closed by an
+ * "n", by the first of a double consonant, by a final k/s/t/p ("but", "das"),
+ * or ending in -ku, -tsu, or -ki/-chi after an i ("riki", "ichi").
+ */
+export function readings(word: string): string[] {
+  const t = word.toLowerCase();
+  const out: string[] = [];
+  let i = 0;
+  while (i < t.length) {
+    let j = i;
+    while (j < t.length && !VOWELS.includes(t[j])) j++;
+    if (j >= t.length) {
+      if (out.length) out[out.length - 1] += word.slice(i);
+      else out.push(word.slice(i));
+      break;
+    }
+    const v = t[j++];
+    if ('aeu'.includes(v) && t[j] === 'i' && !VOWELS.includes(t[j + 1] ?? '#')) j++;
+    const rest = t.slice(j);
+    if (rest === 'tsu' || rest === 'ku' || ((rest === 'ki' || rest === 'chi') && v === 'i')) j = t.length;
+    else if (rest[0] === 'n' && !(VOWELS + 'y').includes(rest[1] ?? '#')) j++;
+    else if (rest.length >= 2 && rest[0] === rest[1] && !VOWELS.includes(rest[0])) j++;
+    else if (rest.length === 1 && 'kstp'.includes(rest)) j++;
+    out.push(word.slice(i, j));
+    i = j;
+  }
+  return out;
+}
+
+/** A line cut into beats and what lies between them (spaces, hyphens, stops). */
+export function pieces(text: string): Piece[] {
+  const out: Piece[] = [];
+  for (const part of text.split(/([\s.\-]+)/)) {
+    if (!part) continue;
+    if (/^[\s.\-]+$/.test(part)) out.push({ text: part, beat: false });
+    else for (const r of readings(part)) out.push({ text: r, beat: true });
+  }
+  return out;
+}
+
 const lines = (s: string) => s.split('\n').map((l) => l.trim()).filter(Boolean);
 
+function line(text: string, part: GongyoPart, repeat?: number): GongyoLine {
+  const p = pieces(text);
+  return { text, part, repeat, pieces: p, beats: p.filter((x) => x.beat).length };
+}
+
 export const GONGYO: GongyoLine[] = [
-  ...lines(HOBEN).map((text) => ({ text, part: 'hoben' as const })),
-  ...[1, 2, 3].flatMap((repeat) => lines(TEN_FACTORS).map((text) => ({ text, part: 'hoben' as const, repeat }))),
-  ...lines(JURYO).map((text) => ({ text, part: 'juryo' as const })),
+  ...lines(HOBEN).map((t) => line(t, 'hoben')),
+  ...[1, 2, 3].flatMap((r) => lines(TEN_FACTORS).map((t) => line(t, 'hoben', r))),
+  ...lines(JURYO).map((t) => line(t, 'juryo')),
 ];
 
 /** Index of the first line of each part. */
@@ -123,38 +187,9 @@ export const PART_START: Record<GongyoPart, number> = {
   juryo: GONGYO.findIndex((l) => l.part === 'juryo'),
 };
 
-/**
- * How long each character of a line takes, in syllables: a vowel is a
- * syllable, an "n" closing a syllable half of one, a full stop a short
- * breath; the rest (consonants, spaces, hyphens) takes no time of its own.
- */
-export function weights(text: string): number[] {
-  const t = text.toLowerCase();
-  const vowel = (c: string | undefined) => !!c && 'aeiou'.includes(c);
-  return [...t].map((c, i) => {
-    if (vowel(c)) return vowel(t[i - 1]) && c === 'u' && t[i - 1] === 'o' ? 0.5 : 1;
-    if (c === 'n' && !vowel(t[i + 1]) && t[i + 1] !== 'y') return 0.5;
-    if (c === '.') return 0.8;
-    return 0;
-  });
-}
+/** Beats before each line, and in all. */
+export const BEATS_BEFORE: number[] = GONGYO.reduce<number[]>((a, l, i) => (a.push(i ? a[i - 1] + GONGYO[i - 1].beats : 0), a), []);
+export const TOTAL_BEATS = BEATS_BEFORE[GONGYO.length - 1] + GONGYO[GONGYO.length - 1].beats;
 
-/** Seconds a line takes at `speed` syllables a second. */
-export function lineSeconds(text: string, speed: number): number {
-  return weights(text).reduce((a, w) => a + w, 0) / speed;
-}
-
-/**
- * How much of a line has been chanted after `elapsed` seconds: the number
- * of characters, with a fraction for the one under way.
- */
-export function cursorAt(text: string, speed: number, elapsed: number): number {
-  const w = weights(text);
-  let left = elapsed * speed;
-  for (let i = 0; i < w.length; i++) {
-    if (w[i] === 0) continue;
-    if (left < w[i]) return i + left / w[i];
-    left -= w[i];
-  }
-  return text.length;
-}
+/** Speeds in beats a second: slow is the recording above. */
+export const PACE = { min: 1.8, slow: 2.6, medium: 3.3, fast: 4.2, max: 5.2 };

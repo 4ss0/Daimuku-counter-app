@@ -66,7 +66,7 @@
   {/if}
 
   <section class="card glass">
-    <div class="c-sub">{$t('badge.have', { n: fmtNum(allTotal, $locale), d: fmtNum(longest, $locale) })}</div>
+    <div class="c-sub">{$t('badge.longest', { d: fmtNum(longest, $locale) })}</div>
     {#each [['total', 'badge.totalGroup'], ['streak', 'badge.streakGroup']] as const as [kind, label]}
       <div class="b-group">{$t(label)}</div>
       <div class="b-grid">

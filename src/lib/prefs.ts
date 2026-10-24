@@ -5,6 +5,7 @@ import { get, writable } from 'svelte/store';
 import { detectLang, lang, type Lang } from './i18n';
 import { BACKGROUNDS, loadCustomBackground, type Background } from './background';
 import { BELLS, type BellKind } from './bell';
+import { PACE } from './gongyo';
 
 export type ThemePref = 'system' | 'light' | 'dark';
 export type Accent = 'lotus' | 'gold' | 'sakura' | 'indigo';
@@ -29,14 +30,12 @@ export interface Prefs {
   bell: { on: boolean; kind: BellKind; volume: number };
   /** The period the Stats page opens on. */
   statsPeriod: StatsPeriod;
-  /** Speed of the Gongyo page's cursor, in syllables a second. */
-  gongyoSpeed: number;
+  /** Pace of the Gongyo page, in beats (kanji) a second. */
+  gongyoPace: number;
 }
 
 export type StatsPeriod = 'day' | 'week' | 'month' | 'year' | 'all';
 export const STATS_PERIODS: StatsPeriod[] = ['day', 'week', 'month', 'year', 'all'];
-/** Range of the Gongyo speed slider (syllables a second). */
-export const GONGYO_SPEED = { min: 1.5, max: 8, default: 4.5 };
 
 const DEFAULTS: Prefs = {
   lang: 'auto',
@@ -50,7 +49,7 @@ const DEFAULTS: Prefs = {
   background: 'lotus',
   bell: { on: false, kind: 'high', volume: 0.8 },
   statsPeriod: 'week',
-  gongyoSpeed: GONGYO_SPEED.default,
+  gongyoPace: PACE.medium,
 };
 
 /** Strings matching `re`, at most `max` of them. */
@@ -144,8 +143,8 @@ function sanitize(p: Partial<Prefs> | null | undefined): Partial<Prefs> {
     };
   }
   if (p.statsPeriod && (STATS_PERIODS as string[]).includes(p.statsPeriod)) out.statsPeriod = p.statsPeriod;
-  if (typeof p.gongyoSpeed === 'number' && Number.isFinite(p.gongyoSpeed))
-    out.gongyoSpeed = Math.min(GONGYO_SPEED.max, Math.max(GONGYO_SPEED.min, p.gongyoSpeed));
+  if (typeof p.gongyoPace === 'number' && Number.isFinite(p.gongyoPace))
+    out.gongyoPace = Math.min(PACE.max, Math.max(PACE.min, p.gongyoPace));
   const forgiven = strings(p.forgiven, /^\d{4}-\d{1,2}-\d{1,2}$/, 2000);
   if (forgiven) out.forgiven = forgiven;
   const seen = strings(p.badgesSeen, /^(total|streak)-\d+$/, 100);
