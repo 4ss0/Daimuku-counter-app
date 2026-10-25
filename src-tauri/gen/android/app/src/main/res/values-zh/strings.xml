@@ -1,0 +1,6 @@
+<resources>
+    <string name="channel_counting">计数</string>
+    <string name="channel_counting_text">计数器聆听时显示（屏幕关闭时也会显示）。</string>
+    <string name="channel_reminders">提醒</string>
+    <string name="channel_reminders_text">早晚唱题提醒。</string>
+</resources>
