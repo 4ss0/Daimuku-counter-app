@@ -111,10 +111,10 @@ export function noteBadges(sessions: SessionRecord[], live = 0) {
   newBadges.update((q) => [...q, ...fresh]);
 }
 
-/** Short text inside a badge: 100, 1K, 10K, 1M... (Japanese: 1万, 100万...). */
+/** Short text inside a badge: 100, 1K, 10K, 1M... (Japanese, Chinese, Korean: 1万, 100万...). */
 export function badgeShort(b: Badge, loc: string): string {
   if (b.kind === 'streak') return '';
-  if (loc.startsWith('ja')) return new Intl.NumberFormat(loc, { notation: 'compact' }).format(b.n);
+  if (/^(ja|zh|ko)/.test(loc)) return new Intl.NumberFormat(loc, { notation: 'compact' }).format(b.n);
   if (b.n >= 1_000_000) return `${b.n / 1_000_000}M`;
   if (b.n >= 1_000) return `${b.n / 1_000}K`;
   return String(b.n);

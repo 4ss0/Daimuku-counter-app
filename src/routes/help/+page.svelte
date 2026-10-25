@@ -1,13 +1,13 @@
 <script lang="ts">
   import { HELP, blocks } from '$lib/help';
-  import { lang } from '$lib/i18n';
+  import { texts } from '$lib/i18n';
 
   let openId: string | null = HELP[0].id;
 </script>
 
 <div class="page">
   {#each HELP as s (s.id)}
-    {@const [title, body] = s.text[$lang]}
+    {@const [title, body] = $texts.help[s.id]}
     <section class="glass">
       <button class="head" on:click={() => (openId = openId === s.id ? null : s.id)} aria-expanded={openId === s.id}>
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">

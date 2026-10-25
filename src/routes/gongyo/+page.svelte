@@ -11,7 +11,7 @@
   // translation) in Italian, English or Japanese.
   import { onDestroy } from 'svelte';
   import { fly } from 'svelte/transition';
-  import { LANGS, lang, t, type Key, type Lang } from '$lib/i18n';
+  import { LANGS, lang, loadLocale, t, texts, type Key, type Lang, type Locale } from '$lib/i18n';
   import { prefs, updatePrefs } from '$lib/prefs';
   import {
     BEATS_BEFORE,
@@ -23,7 +23,7 @@
     type GongyoLine,
     type GongyoPart,
   } from '$lib/gongyo';
-  import { HOBEN_TR, JURYO_TR, TEN_FACTORS_TR, type TrLine } from '$lib/gongyoTranslation';
+  import { ORIGINAL } from '$lib/gongyoTranslation';
   import { keepScreen } from '$lib/native';
   import KaraokeLine from '$lib/KaraokeLine.svelte';
 
@@ -215,22 +215,28 @@
   }
 
   // ---- the translation ----
-  // the app's language until one is picked here
+  // the app's language until another one is picked here
   let picked: Lang | null = null;
   $: trLang = picked ?? $lang;
-  const COLUMN: Record<Lang, 1 | 2 | 3> = { it: 1, en: 2, ja: 3 };
+  let trTexts: Locale = $texts;
+  $: showTranslation(trLang, $texts);
+  async function showTranslation(l: Lang, appTexts: Locale) {
+    const loaded = l === $lang ? appTexts : await loadLocale(l);
+    if (l === trLang) trTexts = loaded;
+  }
   /** The titles need no translation into Japanese. */
   const same = (a: string, b: string) => a.replace(/\s/g, '') === b.replace(/\s/g, '');
-  const zip = (ls: GongyoLine[], tr: TrLine[]) => ls.map((l, i) => ({ text: l.text, tr: tr[i] }));
-  const CHAPTERS: { title: Key; blocks: { label?: Key; lines: { text: string; tr: TrLine }[] }[] }[] = [
+  type Part = keyof typeof ORIGINAL;
+  const lines = (ls: GongyoLine[], part: Part) => ls.map((l, i) => ({ text: l.text, part, i, original: ORIGINAL[part][i] }));
+  const CHAPTERS: { title: Key; blocks: { label?: Key; lines: ReturnType<typeof lines> }[] }[] = [
     {
       title: 'gongyo.hoben',
       blocks: [
-        { lines: zip(GONGYO.filter((l) => l.part === 'hoben' && !l.repeat), HOBEN_TR) },
-        { label: 'gongyo.tenFactors', lines: zip(GONGYO.filter((l) => l.repeat === 1), TEN_FACTORS_TR) },
+        { lines: lines(GONGYO.filter((l) => l.part === 'hoben' && !l.repeat), 'hoben') },
+        { label: 'gongyo.tenFactors', lines: lines(GONGYO.filter((l) => l.repeat === 1), 'tenFactors') },
       ],
     },
-    { title: 'gongyo.juryo', blocks: [{ lines: zip(GONGYO.filter((l) => l.part === 'juryo'), JURYO_TR) }] },
+    { title: 'gongyo.juryo', blocks: [{ lines: lines(GONGYO.filter((l) => l.part === 'juryo'), 'juryo') }] },
   ];
 
   onDestroy(() => {
@@ -334,11 +340,14 @@
       <p class="hint">{$t('gongyo.hint')}</p>
     </section>
   {:else}
-    <div class="langs" role="group" aria-label={$t('gongyo.trLang')}>
-      {#each LANGS as l}
-        <button class:on={trLang === l.id} lang={l.id} on:click={() => (picked = l.id)}>{l.name}</button>
-      {/each}
-    </div>
+    <label class="trlang glass">
+      <span>{$t('gongyo.trLang')}</span>
+      <select value={trLang} on:change={(e) => (picked = e.currentTarget.value)}>
+        {#each LANGS as l}
+          <option value={l.id}>{l.name}{l.name === l.english ? '' : ` · ${l.english}`}</option>
+        {/each}
+      </select>
+    </label>
     <p class="note">{$t('gongyo.trNote')}</p>
 
     {#each CHAPTERS as ch}
@@ -348,10 +357,11 @@
           {#if b.label}<h3>{$t(b.label)}</h3>{/if}
           <ol>
             {#each b.lines as l}
+              {@const tr = trTexts.gongyo[l.part][l.i]}
               <li>
                 <p class="ro">{l.text}</p>
-                <p class="kj" lang="ja">{l.tr[0]}</p>
-                {#if !same(l.tr[0], l.tr[COLUMN[trLang]])}<p class="tx" lang={trLang}>{l.tr[COLUMN[trLang]]}</p>{/if}
+                <p class="kj" lang="ja">{l.original}</p>
+                {#if !same(l.original, tr)}<p class="tx" lang={trLang}>{tr}</p>{/if}
               </li>
             {/each}
           </ol>
@@ -371,8 +381,7 @@
     flex-direction: column;
     gap: 14px;
   }
-  .tabs,
-  .langs {
+  .tabs {
     display: grid;
     grid-auto-flow: column;
     grid-auto-columns: 1fr;
@@ -384,8 +393,7 @@
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
   }
-  .tabs button,
-  .langs button {
+  .tabs button {
     padding: 9px;
     border-radius: 10px;
     border: none;
@@ -394,10 +402,33 @@
     font-weight: 600;
     cursor: pointer;
   }
-  .tabs button.on,
-  .langs button.on {
+  .tabs button.on {
     background: var(--accent);
     color: var(--accent-ink);
+  }
+
+  .trlang {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 8px 8px 14px;
+    border-radius: 14px;
+  }
+  .trlang span {
+    color: var(--muted);
+    font-size: 0.88rem;
+    white-space: nowrap;
+  }
+  .trlang select {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
   }
 
   .reader {
@@ -670,7 +701,9 @@
     line-height: 1.5;
     color: var(--text);
   }
-  .tx:lang(ja) {
+  .tx:lang(ja),
+  .tx:lang(zh),
+  .tx:lang(ko) {
     line-height: 1.7;
   }
 </style>

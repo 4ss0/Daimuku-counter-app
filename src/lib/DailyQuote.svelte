@@ -3,7 +3,7 @@
   // in the app's language. The arrows (or a swipe, or the arrow keys) go
   // through the other days' quotes; "Enter" goes into the app.
   import { fade } from 'svelte/transition';
-  import { lang, locale, t } from '$lib/i18n';
+  import { lang, locale, t, texts } from '$lib/i18n';
   import { DAYS, dayDate, dayIndex, quoteFor } from '$lib/quotes';
 
   export let onenter: () => void;
@@ -11,7 +11,7 @@
   const today = dayIndex(new Date());
   let offset = 0;
   $: day = (((today + offset) % DAYS) + DAYS) % DAYS;
-  $: quote = quoteFor(day, $lang);
+  $: quote = quoteFor(day, $texts);
   $: dateLabel = dayDate(day).toLocaleDateString($locale, { day: 'numeric', month: 'long' });
 
   function move(by: number) {
@@ -160,7 +160,9 @@
     user-select: text;
     -webkit-user-select: text;
   }
-  blockquote:lang(ja) {
+  blockquote:lang(ja),
+  blockquote:lang(zh),
+  blockquote:lang(ko) {
     line-height: 1.75;
   }
   figcaption {

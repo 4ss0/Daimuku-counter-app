@@ -10,7 +10,9 @@
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "i18n:check": "node --experimental-strip-types --no-warnings tools/i18n/check.ts",
+    "i18n:android": "node --experimental-strip-types --no-warnings tools/i18n/android.ts"
   },
   "license": "MIT",
   "dependencies": {

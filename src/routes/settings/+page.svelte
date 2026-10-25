@@ -3,7 +3,7 @@
   import { getVersion } from '@tauri-apps/api/app';
   import { api, errText, fmtNum } from '$lib/api';
   import { splitGoal, type GoalPeriod } from '$lib/stats';
-  import { LANGS, locale, t, type Key } from '$lib/i18n';
+  import { LANGS, detectLang, langName, locale, t, type Key, type Lang } from '$lib/i18n';
   import { ACCENTS, STATS_PERIODS, initPrefs, prefs, resolvedTheme, updatePrefs, type Accent, type ThemePref } from '$lib/prefs';
   import { BACKGROUNDS, backgroundUrl, customBackgroundUrl, loadCustomBackground, setCustomBackground, type Background } from '$lib/background';
   import { hasNative, saveFile, shareFile, type ExportedFile } from '$lib/native';
@@ -22,6 +22,23 @@
   };
 
   let version = '0.1.0';
+
+  // ---- language: the device's ("auto") or one of the list, with a search ----
+  const deviceLang = detectLang();
+  let langOpen = false;
+  let langQuery = '';
+  /** Lower case, without accents, for searching. */
+  const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  $: langWords = fold(langQuery).split(/\s+/).filter(Boolean);
+  $: langsShown = LANGS.filter((l) => {
+    const text = fold(`${l.name} ${l.english} ${l.id}`);
+    return langWords.every((w) => text.includes(w));
+  });
+  function pickLang(l: 'auto' | Lang) {
+    updatePrefs({ lang: l });
+    langOpen = false;
+    langQuery = '';
+  }
   let goal = 100;
   let goalInput = '';
   let errorText = '';
@@ -209,12 +226,31 @@
 
   <section class="card glass">
     <div class="label">{$t('set.language')}</div>
-    <div class="options">
-      <button class:on={$prefs.lang === 'auto'} on:click={() => updatePrefs({ lang: 'auto' })}>{$t('set.langAuto')}</button>
-      {#each LANGS as l}
-        <button class:on={$prefs.lang === l.id} on:click={() => updatePrefs({ lang: l.id })} lang={l.id}>{l.name}</button>
-      {/each}
-    </div>
+    <button class="lang-now" on:click={() => (langOpen = !langOpen)} aria-expanded={langOpen}>
+      <span>{$prefs.lang === 'auto' ? `${$t('set.langAuto')} · ${langName(deviceLang)}` : langName($prefs.lang)}</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true" class:up={langOpen}><path d="M6 9l6 6 6-6" /></svg>
+    </button>
+    {#if langOpen}
+      <input class="lang-search" type="search" placeholder={$t('set.langSearch')} aria-label={$t('set.langSearch')} bind:value={langQuery} />
+      <ul class="lang-list">
+        {#if !langQuery.trim()}
+          <li>
+            <button class:on={$prefs.lang === 'auto'} on:click={() => pickLang('auto')}>
+              <span>{$t('set.langAuto')}</span><small>{$t('set.langAutoHint', { lang: langName(deviceLang) })}</small>
+            </button>
+          </li>
+        {/if}
+        {#each langsShown as l (l.id)}
+          <li>
+            <button class:on={$prefs.lang === l.id} on:click={() => pickLang(l.id)}>
+              <span lang={l.id}>{l.name}</span>{#if l.english !== l.name}<small>{l.english}</small>{/if}
+            </button>
+          </li>
+        {:else}
+          <li class="none">{$t('set.langNone')}</li>
+        {/each}
+      </ul>
+    {/if}
   </section>
 
   <section class="card glass">
@@ -391,6 +427,89 @@
   .label {
     font-weight: 600;
     margin-bottom: 10px;
+  }
+  .lang-now {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 11px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .lang-now svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: transform 0.2s;
+  }
+  .lang-now svg.up {
+    transform: rotate(180deg);
+  }
+  .lang-search {
+    width: 100%;
+    margin-top: 10px;
+    text-align: left;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+  }
+  .lang-list {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+    max-height: 300px;
+    overflow-y: auto;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+  }
+  .lang-list li + li {
+    border-top: 1px solid var(--line);
+  }
+  .lang-list button {
+    width: 100%;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .lang-list button small {
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+  .lang-list button.on {
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-weight: 600;
+  }
+  .lang-list button.on small {
+    color: inherit;
+    opacity: 0.8;
+  }
+  .lang-list .none {
+    padding: 12px;
+    color: var(--muted);
+    font-size: 0.88rem;
   }
   .options {
     display: grid;

@@ -2,7 +2,7 @@
 // prefs.json next to the history, and applied to the document.
 import { invoke } from '@tauri-apps/api/core';
 import { get, writable } from 'svelte/store';
-import { detectLang, lang, type Lang } from './i18n';
+import { detectLang, isLang, setLang, type Lang } from './i18n';
 import { BACKGROUNDS, loadCustomBackground, type Background } from './background';
 import { BELLS, type BellKind } from './bell';
 import { PACE } from './gongyo';
@@ -80,8 +80,13 @@ let loaded = false;
 let customLoaded = false;
 let media: MediaQueryList | null = null;
 
+/** The language to show: the device's if "auto". */
+function chosenLang(p: Prefs): Lang {
+  return p.lang === 'auto' ? detectLang() : p.lang;
+}
+
 function apply(p: Prefs) {
-  lang.set(p.lang === 'auto' ? detectLang() : p.lang);
+  setLang(chosenLang(p));
   const sysDark = media ? media.matches : true;
   const theme = p.theme === 'system' ? (sysDark ? 'dark' : 'light') : p.theme;
   resolvedTheme.set(theme);
@@ -94,7 +99,6 @@ function apply(p: Prefs) {
       customLoaded = true;
       loadCustomBackground();
     }
-    root.lang = get(lang);
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', theme === 'dark' ? '#0c0d0f' : '#eef2ea');
     // cache for app.html, so the next start paints the right theme immediately
@@ -117,6 +121,8 @@ export async function initPrefs() {
   } catch {
     prefs.set({ ...DEFAULTS });
   }
+  // the first screen already in the right language
+  await setLang(chosenLang(get(prefs)));
   loaded = true;
   prefsLoaded.set(true);
   apply(get(prefs));
@@ -125,7 +131,7 @@ export async function initPrefs() {
 function sanitize(p: Partial<Prefs> | null | undefined): Partial<Prefs> {
   const out: Partial<Prefs> = {};
   if (!p || typeof p !== 'object') return out;
-  if (p.lang && ['auto', 'it', 'en', 'ja'].includes(p.lang)) out.lang = p.lang;
+  if (p.lang === 'auto' || isLang(p.lang)) out.lang = p.lang;
   if (p.theme && ['system', 'light', 'dark'].includes(p.theme)) out.theme = p.theme;
   if (p.accent && (ACCENTS as string[]).includes(p.accent)) out.accent = p.accent;
   if (typeof p.keepAwake === 'boolean') out.keepAwake = p.keepAwake;

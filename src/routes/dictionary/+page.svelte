@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { CATS, TERMS, haystack, view, type Cat } from '$lib/dictionary';
-  import { lang, t, type Key } from '$lib/i18n';
+  import { CATS, TERMS, haystack, view, type Cat, type Term } from '$lib/dictionary';
+  import { english, lang, langInfo, locale, t, texts, type Key } from '$lib/i18n';
 
   let query = '';
   let cat: Cat | 'all' = 'all';
@@ -12,14 +12,15 @@
     return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[’‘`]/g, "'");
   }
 
-  const index = TERMS.map((e) => ({ e, text: norm(haystack(e)) }));
-  const byId = new Map(TERMS.map((e) => [e.id, e]));
+  $: index = TERMS.map((e) => ({ e, text: norm(haystack(e, $texts, english)) }));
+  const byId = new Map<string, Term>(TERMS.map((e) => [e.id, e]));
 
   $: words = norm(query).split(/\s+/).filter(Boolean);
   $: list = index
     .filter(({ e, text }) => (cat === 'all' || e.cat === cat) && words.every((w) => text.includes(w)))
-    .map(({ e }) => ({ e, v: view(e, $lang) }))
-    .sort((a, b) => ($lang === 'ja' ? a.e.kana.localeCompare(b.e.kana, 'ja') : a.v.title.localeCompare(b.v.title, $lang)));
+    .map(({ e }) => ({ e, v: view(e, $texts) }))
+    .sort((a, b) => (byGloss ? a.v.sub.localeCompare(b.v.sub, $locale) : a.v.title.localeCompare(b.v.title, $locale)));
+  $: byGloss = !!langInfo($lang)?.sortByGloss;
 
   function toggle(id: string) {
     openId = openId === id ? null : id;
@@ -64,7 +65,7 @@
     <section class="term glass" id="term-{e.id}">
       <button class="head" on:click={() => toggle(e.id)} aria-expanded={openId === e.id}>
         <span class="titles">
-          <span class="title" lang={$lang === 'ja' ? 'ja' : undefined}>{v.title}</span>
+          <span class="title">{v.title}</span>
           <span class="sub">{v.sub}{#if v.jp}{' · '}<span class="jp" lang="ja">{v.jp}</span>{/if}</span>
         </span>
         <svg class="chev" class:open={openId === e.id} viewBox="0 0 24 24" aria-hidden="true"><path d="M8 10l4 4 4-4" /></svg>
@@ -78,7 +79,7 @@
               {#each e.see as id}
                 {@const other = byId.get(id)}
                 {#if other}
-                  <button class="chip" on:click={() => jump(id)}>{view(other, $lang).title}</button>
+                  <button class="chip" on:click={() => jump(id)}>{view(other, $texts).title}</button>
                 {/if}
               {/each}
             </div>
