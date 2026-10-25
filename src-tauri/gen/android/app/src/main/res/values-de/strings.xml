@@ -1,0 +1,6 @@
+<resources>
+    <string name="channel_counting">Zählen</string>
+    <string name="channel_counting_text">Wird angezeigt, während der Zähler zuhört, auch bei ausgeschaltetem Bildschirm.</string>
+    <string name="channel_reminders">Erinnerungen</string>
+    <string name="channel_reminders_text">Erinnerungen am Morgen und am Abend zum Rezitieren.</string>
+</resources>
