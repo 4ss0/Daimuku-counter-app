@@ -1,0 +1,6 @@
+<resources>
+    <string name="channel_counting">Liczenie</string>
+    <string name="channel_counting_text">Widoczne, gdy licznik słucha, także przy wyłączonym ekranie.</string>
+    <string name="channel_reminders">Przypomnienia</string>
+    <string name="channel_reminders_text">Poranne i wieczorne przypomnienia o recytacji.</string>
+</resources>
