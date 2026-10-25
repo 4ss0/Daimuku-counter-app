@@ -127,6 +127,12 @@
         }
         beat -= GONGYO[index].beats;
         index += 1;
+        // but a stop between the two chapters: the Juryo-hon starts on Play
+        if (index === PART_START.juryo) {
+          beat = 0;
+          pause();
+          break;
+        }
       }
     }
     const goal = aim(index, beat);
@@ -146,7 +152,7 @@
 
   function play() {
     if (finished) goTo(0);
-    if (index === 0 && beat === 0) beat = -LEAD_IN;
+    if ((index === PART_START.hoben || index === PART_START.juryo) && beat === 0) beat = -LEAD_IN;
     playing = true;
     keepScreen('gongyo', true);
     run();
