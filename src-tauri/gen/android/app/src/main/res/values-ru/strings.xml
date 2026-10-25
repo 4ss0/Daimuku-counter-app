@@ -1,0 +1,6 @@
+<resources>
+    <string name="channel_counting">Счёт</string>
+    <string name="channel_counting_text">Показывается, пока счётчик слушает, в том числе при выключенном экране.</string>
+    <string name="channel_reminders">Напоминания</string>
+    <string name="channel_reminders_text">Утренние и вечерние напоминания о практике.</string>
+</resources>

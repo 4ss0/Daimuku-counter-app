@@ -243,7 +243,7 @@
     </div>
     <div class="tile glass">
       <div class="t-num">{days}</div>
-      <div class="t-label">{days === 1 ? $t('stats.streak1') : $t('stats.streakN')}</div>
+      <div class="t-label">{$t(days === 1 ? 'stats.streak1' : 'stats.streakN', { n: days })}</div>
     </div>
   </div>
 

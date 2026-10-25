@@ -92,10 +92,33 @@ export function langInfo(l: Lang): LangInfo | undefined {
 
 export type TFn = (key: Key, vars?: Record<string, string | number>) => string;
 
-export const t = derived(current, ({ texts: d }): TFn => {
+/**
+ * A text with its {placeholders} filled in. A placeholder can also choose a
+ * word by the plural rules of the language: "{n:one=year|other=years}"
+ * gives "year" for 1 and "years" otherwise; the categories are those of
+ * Intl.PluralRules (zero, one, two, few, many, other), "other" being the
+ * fallback.
+ */
+function fill(s: string, vars: Record<string, string | number>, rules: Intl.PluralRules): string {
+  s = s.replace(/\{(\w+):([^{}]*)\}/g, (m, k: string, forms: string) => {
+    if (!(k in vars)) return m;
+    // the value may come formatted ("1.234"): its digits are the number
+    const n = typeof vars[k] === 'number' ? (vars[k] as number) : Number(String(vars[k]).replace(/\D/g, ''));
+    const choice: Record<string, string> = {};
+    for (const f of forms.split('|')) {
+      const i = f.indexOf('=');
+      if (i > 0) choice[f.slice(0, i)] = f.slice(i + 1);
+    }
+    return choice[rules.select(n)] ?? choice.other ?? '';
+  });
+  for (const [k, v] of Object.entries(vars)) s = s.split(`{${k}}`).join(String(v));
+  return s;
+}
+
+export const t = derived(current, ({ id, texts: d }): TFn => {
+  const rules = new Intl.PluralRules(BY_ID.get(id)?.intl ?? 'en');
   return (key, vars) => {
-    let s: string = d.ui[key] ?? en.ui[key] ?? key;
-    if (vars) for (const [k, v] of Object.entries(vars)) s = s.split(`{${k}}`).join(String(v));
-    return s;
+    const s: string = d.ui[key] ?? en.ui[key] ?? key;
+    return vars ? fill(s, vars, rules) : s;
   };
 });
