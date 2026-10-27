@@ -28,6 +28,8 @@
             <path d="M5 20V11M12 20V5M19 20v-6" />
           {:else if s.icon === 'goal'}
             <circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="4.5" /><circle cx="12" cy="12" r="1" />
+          {:else if s.icon === 'flag'}
+            <path d="M6 21V3.5" /><path d="M6 4.5h11l-2.4 4.2L17 13H6" />
           {:else if s.icon === 'badge'}
             <circle cx="12" cy="9.5" r="5.5" /><path d="M8.5 14l-1.5 7 5-2.5 5 2.5-1.5-7" />
           {:else if s.icon === 'bell'}

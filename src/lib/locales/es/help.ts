@@ -27,7 +27,11 @@ export default {
   ],
   goals: [
     'Metas y recordatorios',
-    'En Ajustes → Metas elige tu meta diaria y, si quieres, una semanal, una mensual y una anual. La meta diaria se divide en dos sesiones: la mañana (hasta las 14:00) y la tarde; la pantalla Contar muestra cuánto llevas de cada una.\n\nEl contador continúa la sesión actual, partiendo de los daimoku ya entonados. Para continuar la otra (por ejemplo, el daimoku de la mañana hecho por la tarde), tócala antes de pulsar Iniciar. Cada sesión guardada queda en la mañana o en la tarde que elegiste.\n\nEn el menú, Recordatorios te envía una notificación a la hora que elijas para la sesión de la mañana y para la de la tarde.',
+    'En Ajustes → Metas de daimoku elige tu meta diaria y, si quieres, una semanal, una mensual y una anual. La meta diaria se divide en dos sesiones: la mañana (hasta las 14:00) y la tarde; la pantalla Contar muestra cuánto llevas de cada una.\n\nEl contador continúa la sesión actual, partiendo de los daimoku ya entonados. Para continuar la otra (por ejemplo, el daimoku de la mañana hecho por la tarde), tócala antes de pulsar Iniciar. Cada sesión guardada queda en la mañana o en la tarde que elegiste.\n\nEn el menú, Recordatorios te envía una notificación a la hora que elijas para la sesión de la mañana y para la de la tarde.',
+  ],
+  intents: [
+    'Tus objetivos',
+    'En el menú, Objetivos es donde escribes por qué entonas daimoku: uno o varios objetivos, con tus propias palabras. Debajo de cada uno, mueve el control para indicar cuánto has avanzado.\n\nCuando llegue el momento, toca Cerrar y elige el motivo: alcanzaste el objetivo, o te diste cuenta de que había un camino mejor. Los objetivos cerrados quedan al final de la página: puedes releerlos, reabrirlos o borrarlos.',
   ],
   badges: [
     'Logros y el día perdonado',
@@ -39,11 +43,11 @@ export default {
   ],
   backup: [
     'Copia de seguridad y cambio de teléfono',
-    'En Ajustes, en «Tus datos», crea una copia de seguridad: contiene tus sesiones, metas, ajustes y grabaciones de voz. Guárdala fuera del teléfono (Drive, correo) y en el teléfono nuevo usa «Restaurar desde una copia». También puedes exportar tus sesiones a un archivo CSV.',
+    'En Ajustes, en «Tus datos», activa el Guardado automático: la primera vez eliges dónde guardar el archivo (en el teléfono o en Drive) y después la app guarda todo sola tras cada sesión, cada cambio en tus grabaciones de voz y cada logro. En un teléfono nuevo, o si vuelves a instalar la app, elige «Cargar un guardado» al primer inicio y selecciona ese archivo.\n\nEn Ajustes, en «Tus datos», crea una copia de seguridad: contiene tus sesiones, metas, ajustes y grabaciones de voz. Guárdala fuera del teléfono (Drive, correo) y en el teléfono nuevo usa «Restaurar desde una copia». También puedes exportar tus sesiones a un archivo CSV.',
   ],
   menu: [
     'El menú',
-    'Toca ☰ arriba a la izquierda, o desliza hacia la derecha desde la mitad izquierda de la pantalla, para abrir el menú: contador, Gongyo, logros, recordatorios, campana, diccionario de conceptos budistas, donaciones, esta guía y privacidad. Para cerrarlo desliza hacia la izquierda o toca fuera.\n\nEn Gongyo el texto sube como los créditos de una película y las letras se colorean a medida que recitas, como en un karaoke: en el centro las dos líneas que leer, arriba las dos ya recitadas, abajo las siguientes. Ajusta la velocidad con el control: mientras lo mueves ves una muestra. En «Traducción» encuentras los dos capítulos línea por línea, en el idioma que elijas.\n\nCada vez que abres la app encuentras la frase del día, de los escritos de Nichiren Daishonin, del Sutra del loto o de los presidentes de la Soka Gakkai. Las flechas (o deslizar) muestran las frases de otros días; «Entrar» te lleva a la app.',
+    'Toca ☰ arriba a la izquierda, o desliza hacia la derecha desde la mitad izquierda de la pantalla, para abrir el menú: contador, objetivos, Gongyo, logros, recordatorios, campana, diccionario de conceptos budistas, donaciones, esta guía y privacidad. Para cerrarlo desliza hacia la izquierda o toca fuera.\n\nEn Gongyo el texto sube como los créditos de una película y las letras se colorean a medida que recitas, como en un karaoke: en el centro las dos líneas que leer, arriba las dos ya recitadas, abajo las siguientes. Ajusta la velocidad con el control: mientras lo mueves ves una muestra. En «Traducción» encuentras los dos capítulos línea por línea, en el idioma que elijas.\n\nCada vez que abres la app encuentras la frase del día, de los escritos de Nichiren Daishonin, del Sutra del loto o de los presidentes de la Soka Gakkai. Las flechas (o deslizar) muestran las frases de otros días; «Entrar» te lleva a la app.',
   ],
   trouble: [
     'Si algo no funciona',

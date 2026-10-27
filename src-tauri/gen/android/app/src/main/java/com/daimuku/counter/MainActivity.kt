@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -19,11 +20,16 @@ import java.io.File
 /**
  * Exposes `window.DaimokuAndroid` to the web page (src/lib/native.ts):
  * counting service, keep-screen-on, "save as" and "share" screens,
- * reminders and donations. Replies go back through `window.__daimokuNative(event, ok, data)`.
+ * reminders, donations and the automatic save. Replies go back through
+ * `window.__daimokuNative(event, ok, data)`.
  */
 class MainActivity : TauriActivity() {
   private var webView: WebView? = null
   private lateinit var donations: Donations
+  private val autosave by lazy { Autosave(this) }
+
+  /** A save opened from the first-start screen, until the page says whether to keep saving there. */
+  @Volatile private var openedSave: Uri? = null
 
   /** File waiting for the place the user picks in the "save as" screen. */
   private var toSave: File? = null
@@ -50,6 +56,36 @@ class MainActivity : TauriActivity() {
   // the share sheet does not tell whether something was sent
   private val shareSheet = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
     notifyPage(shareEvent, true)
+  }
+
+  // automatic save: the file is chosen in the "save" screen...
+  private val createSave = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+    val data = result.data
+    val uri = data?.data
+    var ok = false
+    if (result.resultCode == RESULT_OK && data != null && uri != null && autosave.hold(uri, data.flags)) {
+      autosave.use(uri)
+      ok = true
+    }
+    notifyPage("autosaveChoose", ok, if (ok) autosave.info() else null)
+  }
+
+  // ...or, on a new install, a save is opened to load it
+  private val openSave = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+    val data = result.data
+    val uri = data?.data
+    if (result.resultCode != RESULT_OK || data == null || uri == null) {
+      notifyPage("autosaveOpen", false)
+    } else {
+      // the right to write there too, for when the page keeps saving to it
+      val writable = autosave.hold(uri, data.flags)
+      Thread {
+        val content = autosave.read(uri)
+        if (content != null && writable) openedSave = uri
+        else if (writable) autosave.release(uri)
+        notifyPage("autosaveOpen", content != null, content ?: "unreadable")
+      }.start()
+    }
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -191,6 +227,76 @@ class MainActivity : TauriActivity() {
     @JavascriptInterface
     fun donate(productId: String) {
       donations.donate(productId)
+    }
+
+    /** Replies "autosaveInfo" with the file of the automatic save (Autosave.info), or null. */
+    @JavascriptInterface
+    fun autosaveInfo() {
+      notifyPage("autosaveInfo", true, autosave.info())
+    }
+
+    /** The "save" screen, to choose the file of the automatic save; replies "autosaveChoose". */
+    @JavascriptInterface
+    fun autosaveChoose(name: String) {
+      runOnUiThread {
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT)
+          .addCategory(Intent.CATEGORY_OPENABLE)
+          .setType("application/json")
+          .putExtra(Intent.EXTRA_TITLE, name)
+          .putExtra(DocumentsContract.EXTRA_INITIAL_URI, Autosave.DOCUMENTS)
+        try {
+          createSave.launch(intent)
+        } catch (e: Exception) {
+          notifyPage("autosaveChoose", false)
+        }
+      }
+    }
+
+    /**
+     * The "open" screen, to load a save on a new install; replies "autosaveOpen" with its text
+     * (not ok: "unreadable", or no data if cancelled).
+     */
+    @JavascriptInterface
+    fun autosaveOpen() {
+      runOnUiThread {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+          .addCategory(Intent.CATEGORY_OPENABLE)
+          .setType("*/*")
+          .putExtra(DocumentsContract.EXTRA_INITIAL_URI, Autosave.DOCUMENTS)
+          .addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+              Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+          )
+        try {
+          openSave.launch(intent)
+        } catch (e: Exception) {
+          notifyPage("autosaveOpen", false)
+        }
+      }
+    }
+
+    /** After "autosaveOpen": keep saving to that file or not; replies "autosaveKeep" with Autosave.info. */
+    @JavascriptInterface
+    fun autosaveKeep(keep: Boolean) {
+      val uri = openedSave
+      openedSave = null
+      if (uri != null) {
+        if (keep) autosave.use(uri) else autosave.release(uri)
+      }
+      val kept = keep && uri != null
+      notifyPage("autosaveKeep", kept, if (kept) autosave.info() else null)
+    }
+
+    /** Copies the backup at `path` to the chosen file; replies "autosaveWrite" with Autosave.info. */
+    @JavascriptInterface
+    fun autosaveWrite(path: String) {
+      autosave.write(File(path)) { ok -> notifyPage("autosaveWrite", ok, autosave.info()) }
+    }
+
+    /** No more automatic saves. */
+    @JavascriptInterface
+    fun autosaveOff() {
+      autosave.forget()
     }
   }
 }

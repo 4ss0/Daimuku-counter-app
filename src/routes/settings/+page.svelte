@@ -6,7 +6,8 @@
   import { LANGS, detectLang, langName, locale, t, type Key, type Lang } from '$lib/i18n';
   import { ACCENTS, STATS_PERIODS, initPrefs, prefs, resolvedTheme, updatePrefs, type Accent, type ThemePref } from '$lib/prefs';
   import { BACKGROUNDS, backgroundUrl, customBackgroundUrl, loadCustomBackground, setCustomBackground, type Background } from '$lib/background';
-  import { hasNative, saveFile, shareFile, type ExportedFile } from '$lib/native';
+  import { canAutosave, hasNative, saveFile, shareFile, type ExportedFile } from '$lib/native';
+  import { autosave, chooseAutosave, stopAutosave } from '$lib/autosave';
 
   const THEMES: { id: ThemePref; label: Key }[] = [
     { id: 'system', label: 'set.themeSystem' },
@@ -50,8 +51,34 @@
   let pendingRestore: { content: string; date: string } | null = null;
   let fileInput: HTMLInputElement;
 
+  // automatic save (Android): the switch asks where, the first time
+  let autosaveAvailable = false;
+  let choosing = false;
+  async function chooseFile() {
+    if (choosing) return;
+    choosing = true;
+    try {
+      await chooseAutosave();
+    } finally {
+      choosing = false;
+    }
+  }
+  async function toggleAutosave(e: Event & { currentTarget: HTMLInputElement }) {
+    const box = e.currentTarget;
+    if (!box.checked) {
+      stopAutosave();
+      return;
+    }
+    await chooseFile();
+    box.checked = $autosave.on;
+  }
+  function when(ms: number): string {
+    return new Date(ms).toLocaleString($locale, { dateStyle: 'medium', timeStyle: 'short' });
+  }
+
   onMount(async () => {
     native = hasNative();
+    autosaveAvailable = canAutosave();
     try {
       version = await getVersion();
     } catch {
@@ -358,6 +385,27 @@
 
   <section class="card glass">
     <div class="label">{$t('set.data')}</div>
+    {#if autosaveAvailable}
+      <label class="toggle">
+        <span>
+          <span class="label">{$t('set.autosave')}</span>
+          <span class="muted small-hint">{$t('set.autosaveHint')}</span>
+        </span>
+        <input type="checkbox" role="switch" checked={$autosave.on} disabled={choosing} on:change={toggleAutosave} />
+      </label>
+      {#if $autosave.on}
+        <div class="autosave-state" class:bad={$autosave.failed}>
+          <span class="as-file">{$t('set.autosaveFile', { name: $autosave.name })}</span>
+          {#if $autosave.failed}
+            <span>{$t('set.autosaveFailed')}</span>
+          {:else if $autosave.saved}
+            <span>{$t('set.autosaveLast', { d: when($autosave.saved) })}</span>
+          {/if}
+          <button class="link-btn" on:click={chooseFile} disabled={choosing}>{$t('set.autosaveChange')}</button>
+        </div>
+      {/if}
+      <div class="data-sep"></div>
+    {/if}
     <p class="muted small-hint">{$t('set.dataHint')}</p>
     <div class="options data-actions">
       {#if native}
@@ -794,5 +842,33 @@
     font-size: 0.85rem;
     margin: 10px 0 0;
     word-break: break-all;
+  }
+  .autosave-state {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    margin-top: 2px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 0.82rem;
+    line-height: 1.4;
+  }
+  .autosave-state.bad {
+    color: var(--red);
+  }
+  .as-file {
+    color: var(--text);
+    word-break: break-all;
+  }
+  .autosave-state .link-btn {
+    margin-top: 4px;
+  }
+  .data-sep {
+    height: 1px;
+    margin: 14px 0 12px;
+    background: var(--line);
   }
 </style>

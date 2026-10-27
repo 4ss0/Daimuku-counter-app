@@ -386,6 +386,27 @@ pub fn create_backup(
     Ok(exported(&path))
 }
 
+/// The backup again, for the automatic save: written in the app's cache
+/// (not in its data, which Android may already copy to the user's Google
+/// account), always under the same name.
+#[tauri::command(async)]
+pub fn prepare_autosave(
+    app: tauri::AppHandle,
+    history: State<'_, History>,
+    profile_state: State<'_, ProfileState>,
+) -> Result<ExportedFile, String> {
+    use tauri::Manager;
+    let version = app.package_info().version.to_string();
+    let json = crate::backup::build(&history, &profile_state, &version)?;
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("cache directory: {e}"))?
+        .join("autosave");
+    let path = crate::backup::write_autosave(&dir, json.as_bytes())?;
+    Ok(exported(&path))
+}
+
 /// Replaces sessions, goal, preferences and voice recordings with those
 /// of a backup file (its text content).
 #[tauri::command(async)]

@@ -1,15 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { getVersion } from '@tauri-apps/api/app';
   import { api, fmtNum } from '$lib/api';
   import { locale, t, type Key } from '$lib/i18n';
   import { liveCount, liveRunning } from '$lib/live';
-  import { initPrefs, prefs } from '$lib/prefs';
+  import { initPrefs, prefs, updatePrefs } from '$lib/prefs';
   import { syncReminders } from '$lib/reminders';
+  import { initAutosave } from '$lib/autosave';
+  import { canAutosave } from '$lib/native';
   import BadgeIcon from '$lib/BadgeIcon.svelte';
   import DailyQuote from '$lib/DailyQuote.svelte';
+  import Welcome from '$lib/Welcome.svelte';
   import { badgeName, newBadges, type Badge } from '$lib/badges';
 
   const tabs = [
@@ -22,6 +26,7 @@
   /** Sections of the side menu; the counter is the four tabs above. */
   const sections: { href: string; key: Key; icon: string; soon?: boolean }[] = [
     { href: '/', key: 'menu.counter', icon: 'count' },
+    { href: '/intents', key: 'menu.intents', icon: 'flag' },
     { href: '/gongyo', key: 'menu.gongyo', icon: 'scroll' },
     { href: '/badges', key: 'menu.badges', icon: 'badge' },
     { href: '/reminders', key: 'menu.reminders', icon: 'alarm' },
@@ -58,6 +63,21 @@
   // the quote of the day, every time the app starts (the language comes
   // with the preferences, so it waits for them)
   let showQuote = true;
+  // the first start, after the quote: a save to load back, or the voice
+  // page with a word on the recordings (Welcome.svelte)
+  let welcome: 'ask' | 'intro' | null = null;
+
+  function toVoice() {
+    welcome = 'intro';
+    if (path !== '/voice') goto('/voice');
+  }
+
+  /** `takes`: voice recordings of a save just loaded (-1: none loaded). */
+  function welcomeDone(takes: number) {
+    if (takes === 0) return toVoice(); // a save without recordings: they are still needed
+    welcome = null;
+    if (takes > 0) goto('/');
+  }
   // the Android side keeps its own copy of the reminders (and their text)
   $: if (prefsReady) syncReminders($prefs), $t;
 
@@ -151,10 +171,15 @@
     getVersion().then((v) => (version = v), () => {});
     await initPrefs();
     prefsReady = true;
-    // First start (no voice recordings yet): open the voice page, so the
-    // app learns the user's voice before counting.
+    void initAutosave();
+    // No voice recordings yet: open the voice page, so the app learns the
+    // user's voice before counting. Nothing at all yet: the first start.
     try {
-      const profile = await api.profile();
+      const [profile, sessions] = await Promise.all([api.profile(), api.listSessions()]);
+      if (!get(prefs).onboarded) {
+        if (profile.takes.length === 0 && sessions.length === 0) welcome = canAutosave() ? 'ask' : 'intro';
+        else void updatePrefs({ onboarded: true }); // someone who had the app before this screen existed
+      }
       if (profile.takes.length === 0 && path === '/') await goto('/voice', { replaceState: true });
     } catch {
       /* keep the counter page */
@@ -172,7 +197,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="app"
-  inert={showQuote && prefsReady}
+  inert={(showQuote || !!welcome) && prefsReady}
   on:touchstart|passive={onTouchStart}
   on:touchmove|passive={onTouchMove}
   on:touchend={onTouchEnd}
@@ -276,6 +301,9 @@
             {#if s.icon === 'count'}
               <circle cx="12" cy="12" r="8.5" />
               <circle cx="12" cy="12" r="3" />
+            {:else if s.icon === 'flag'}
+              <path d="M6 21V3.5" />
+              <path d="M6 4.5h11l-2.4 4.2L17 13H6" />
             {:else if s.icon === 'scroll'}
               <path d="M7 3.5h10a2 2 0 0 1 2 2V20l-2.5-1.5L14 20l-2-1.5L10 20l-2.5-1.5L5 20V5.5a2 2 0 0 1 2-2z" />
               <path d="M8.5 8h7M8.5 11.5h7M8.5 15h4" />
@@ -320,6 +348,8 @@
 
 {#if showQuote && prefsReady}
   <DailyQuote onenter={() => (showQuote = false)} />
+{:else if welcome && prefsReady}
+  <Welcome step={welcome} onvoice={toVoice} ondone={welcomeDone} />
 {/if}
 
 <style>

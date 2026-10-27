@@ -27,7 +27,11 @@ export default {
   ],
   goals: [
     'Goals and reminders',
-    'In Settings → Goals choose your daily goal and, if you like, a weekly, monthly and yearly one. The daily goal is split in two sessions: the morning (until 2 pm) and the evening; the Count screen shows how far you are with each.\n\nThe counter continues the current session, starting from the Daimoku already chanted. To continue the other one (say, the morning chanting done in the afternoon), tap it before pressing Start. Every saved session stays in the morning or the evening you chose.\n\nIn the menu, Reminders sends you a notification at the time you choose for the morning and for the evening session.',
+    'In Settings → Daimoku goals choose your daily goal and, if you like, a weekly, monthly and yearly one. The daily goal is split in two sessions: the morning (until 2 pm) and the evening; the Count screen shows how far you are with each.\n\nThe counter continues the current session, starting from the Daimoku already chanted. To continue the other one (say, the morning chanting done in the afternoon), tap it before pressing Start. Every saved session stays in the morning or the evening you chose.\n\nIn the menu, Reminders sends you a notification at the time you choose for the morning and for the evening session.',
+  ],
+  intents: [
+    'Your goals',
+    'In the menu, Goals is where you write what you are chanting for: one goal or more, in your own words. Under each one, move the slider to show how far along you are.\n\nWhen the time comes, tap Close and choose why: the goal has been achieved, or you realised there was a better way. Closed goals stay at the bottom of the page: you can read them again, reopen them or delete them.',
   ],
   badges: [
     'Milestones and the forgiven day',
@@ -39,11 +43,11 @@ export default {
   ],
   backup: [
     'Backup and changing phone',
-    'In Settings, under "Your data", create a backup: it holds your sessions, goal, settings and voice recordings. Keep it off the phone (Drive, e-mail) and on the new phone use "Restore from a backup". You can also export your sessions to a CSV file.',
+    'In Settings, under "Your data", turn on Automatic save: the first time you choose where to keep the file (on the phone or on Drive), then the app saves everything by itself after every session, every change to your voice recordings and every milestone. On a new phone, or if you install the app again, choose "Load a save" at the first start and pick that file.\n\nYou can also make a backup by hand: it holds your sessions, goals, settings and voice recordings. Keep it off the phone (Drive, e-mail) and on the new phone use "Restore from a backup". You can also export your sessions to a CSV file.',
   ],
   menu: [
     'The menu',
-    'Tap ☰ at the top left, or swipe to the right starting from the left half of the screen, to open the menu: counter, Gongyo, milestones, reminders, bell, dictionary of Buddhist concepts, donations, this guide and privacy. To close it swipe to the left or tap outside.\n\nIn Gongyo the text rolls up like film credits and the letters fill with colour as you recite them, as in karaoke: in the middle the two lines to read, above the two already recited, below the ones that follow. Set the speed with the slider: while you move it you see a preview. “Translation” has both chapters line by line, in the language you choose.\n\nEach time you open the app you find the quote of the day, from the writings of Nichiren Daishonin, the Lotus Sutra or the presidents of the Soka Gakkai. The arrows (or a swipe) show the other days’ quotes; “Enter” takes you into the app.',
+    'Tap ☰ at the top left, or swipe to the right starting from the left half of the screen, to open the menu: counter, goals, Gongyo, milestones, reminders, bell, dictionary of Buddhist concepts, donations, this guide and privacy. To close it swipe to the left or tap outside.\n\nIn Gongyo the text rolls up like film credits and the letters fill with colour as you recite them, as in karaoke: in the middle the two lines to read, above the two already recited, below the ones that follow. Set the speed with the slider: while you move it you see a preview. “Translation” has both chapters line by line, in the language you choose.\n\nEach time you open the app you find the quote of the day, from the writings of Nichiren Daishonin, the Lotus Sutra or the presidents of the Soka Gakkai. The arrows (or a swipe) show the other days’ quotes; “Enter” takes you into the app.',
   ],
   trouble: [
     'If something goes wrong',

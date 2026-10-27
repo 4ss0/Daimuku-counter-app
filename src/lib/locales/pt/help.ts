@@ -27,7 +27,11 @@ export default {
   ],
   goals: [
     'Metas e lembretes',
-    'Em Ajustes → Metas escolha sua meta diária e, se quiser, uma semanal, uma mensal e uma anual. A meta diária é dividida em duas sessões: a manhã (até as 14h) e a noite; a tela Contar mostra quanto você já fez de cada uma.\n\nO contador continua a sessão atual, a partir dos daimoku já recitados. Para continuar a outra (por exemplo, o daimoku da manhã feito à tarde), toque nela antes de tocar em Iniciar. Cada sessão salva fica na manhã ou na noite que você escolheu.\n\nNo menu, Lembretes envia uma notificação no horário que você escolher para a sessão da manhã e para a da noite.',
+    'Em Ajustes → Metas de daimoku escolha sua meta diária e, se quiser, uma semanal, uma mensal e uma anual. A meta diária é dividida em duas sessões: a manhã (até as 14h) e a noite; a tela Contar mostra quanto você já fez de cada uma.\n\nO contador continua a sessão atual, a partir dos daimoku já recitados. Para continuar a outra (por exemplo, o daimoku da manhã feito à tarde), toque nela antes de tocar em Iniciar. Cada sessão salva fica na manhã ou na noite que você escolheu.\n\nNo menu, Lembretes envia uma notificação no horário que você escolher para a sessão da manhã e para a da noite.',
+  ],
+  intents: [
+    'Seus objetivos',
+    'No menu, Objetivos é onde você escreve pelo que recita: um ou mais objetivos, com suas próprias palavras. Embaixo de cada um, mova o controle para mostrar quanto você já avançou.\n\nQuando chegar a hora, toque em Fechar e escolha o motivo: o objetivo foi alcançado, ou você percebeu que havia um caminho melhor. Os objetivos fechados ficam no fim da página: você pode relê-los, reabri-los ou apagá-los.',
   ],
   badges: [
     'Conquistas e o dia perdoado',
@@ -39,11 +43,11 @@ export default {
   ],
   backup: [
     'Backup e troca de celular',
-    'Em Ajustes, em “Seus dados”, crie um backup: ele contém suas sessões, metas, ajustes e gravações de voz. Guarde-o fora do celular (Drive, e-mail) e no celular novo use “Restaurar de um backup”. Você também pode exportar suas sessões para um arquivo CSV.',
+    'Em Ajustes, em “Seus dados”, ative o Salvamento automático: na primeira vez você escolhe onde guardar o arquivo (no celular ou no Drive) e depois o app salva tudo sozinho a cada sessão, a cada mudança nas suas gravações de voz e a cada conquista. Num celular novo, ou se reinstalar o app, escolha “Carregar um salvamento” na primeira abertura e selecione esse arquivo.\n\nEm Ajustes, em “Seus dados”, crie um backup: ele contém suas sessões, metas, ajustes e gravações de voz. Guarde-o fora do celular (Drive, e-mail) e no celular novo use “Restaurar de um backup”. Você também pode exportar suas sessões para um arquivo CSV.',
   ],
   menu: [
     'O menu',
-    'Toque em ☰ no canto superior esquerdo, ou deslize para a direita a partir da metade esquerda da tela, para abrir o menu: contador, Gongyo, conquistas, lembretes, sino, dicionário de conceitos budistas, doações, este guia e privacidade. Para fechá-lo deslize para a esquerda ou toque fora.\n\nNo Gongyo o texto sobe como os créditos de um filme e as letras se colorem à medida que você recita, como num karaokê: no meio as duas linhas a ler, em cima as duas já recitadas, embaixo as seguintes. Ajuste a velocidade com o controle: enquanto o move você vê uma prévia. Em “Tradução” você encontra os dois capítulos linha por linha, no idioma que escolher.\n\nSempre que abre o app você encontra a frase do dia, dos escritos de Nichiren Daishonin, do Sutra de Lótus ou dos presidentes da Soka Gakkai. As setas (ou deslizar) mostram as frases dos outros dias; “Entrar” leva você ao app.',
+    'Toque em ☰ no canto superior esquerdo, ou deslize para a direita a partir da metade esquerda da tela, para abrir o menu: contador, objetivos, Gongyo, conquistas, lembretes, sino, dicionário de conceitos budistas, doações, este guia e privacidade. Para fechá-lo deslize para a esquerda ou toque fora.\n\nNo Gongyo o texto sobe como os créditos de um filme e as letras se colorem à medida que você recita, como num karaokê: no meio as duas linhas a ler, em cima as duas já recitadas, embaixo as seguintes. Ajuste a velocidade com o controle: enquanto o move você vê uma prévia. Em “Tradução” você encontra os dois capítulos linha por linha, no idioma que escolher.\n\nSempre que abre o app você encontra a frase do dia, dos escritos de Nichiren Daishonin, do Sutra de Lótus ou dos presidentes da Soka Gakkai. As setas (ou deslizar) mostram as frases dos outros dias; “Entrar” leva você ao app.',
   ],
   trouble: [
     'Se algo der errado',

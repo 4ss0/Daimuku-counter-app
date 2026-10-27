@@ -27,7 +27,11 @@ export default {
   ],
   goals: [
     'Cele i przypomnienia',
-    'W Ustawienia → Cele wybierz cel dzienny i, jeśli chcesz, tygodniowy, miesięczny i roczny. Cel dzienny jest podzielony na dwie sesje: poranek (do 14:00) i wieczór; ekran Licz pokazuje postęp w każdej z nich.\n\nLicznik kontynuuje bieżącą sesję, zaczynając od już wyrecytowanych daimoku. Aby kontynuować drugą (np. poranne daimoku recytowane po południu), dotknij jej przed naciśnięciem Start. Każda zapisana sesja zostaje w wybranym poranku lub wieczorze.\n\nW menu Przypomnienia wysyłają powiadomienie o wybranej porze na sesję poranną i wieczorną.',
+    'W Ustawienia → Cele daimoku wybierz cel dzienny i, jeśli chcesz, tygodniowy, miesięczny i roczny. Cel dzienny jest podzielony na dwie sesje: poranek (do 14:00) i wieczór; ekran Licz pokazuje postęp w każdej z nich.\n\nLicznik kontynuuje bieżącą sesję, zaczynając od już wyrecytowanych daimoku. Aby kontynuować drugą (np. poranne daimoku recytowane po południu), dotknij jej przed naciśnięciem Start. Każda zapisana sesja zostaje w wybranym poranku lub wieczorze.\n\nW menu Przypomnienia wysyłają powiadomienie o wybranej porze na sesję poranną i wieczorną.',
+  ],
+  intents: [
+    'Twoje cele',
+    'W menu, w sekcji Cele, zapisujesz, w jakiej intencji recytujesz: jeden cel lub kilka, własnymi słowami. Pod każdym przesuwaj suwak, aby pokazać, na jakim jesteś etapie.\n\nGdy nadejdzie czas, dotknij Zamknij i wybierz powód: cel został osiągnięty albo znalazła się lepsza droga. Zamknięte cele zostają na dole strony: możesz je przeczytać, otworzyć ponownie lub usunąć.',
   ],
   badges: [
     'Kamienie milowe i darowany dzień',
@@ -39,11 +43,11 @@ export default {
   ],
   backup: [
     'Kopia zapasowa i zmiana telefonu',
-    'W Ustawieniach, w „Twoich danych”, utwórz kopię zapasową: zawiera twoje sesje, cele, ustawienia i nagrania głosu. Przechowuj ją poza telefonem (Dysk, e-mail), a na nowym telefonie użyj „Przywróć z kopii”. Sesje możesz też wyeksportować do pliku CSV.',
+    'W Ustawieniach, w „Twoich danych”, włącz Automatyczny zapis: za pierwszym razem wybierz, gdzie trzymać plik (w telefonie lub na Dysku), a potem aplikacja sama zapisuje wszystko po każdej sesji, każdej zmianie nagrań głosu i każdym kamieniu milowym. Na nowym telefonie albo po ponownej instalacji aplikacji przy pierwszym uruchomieniu wybierz „Wczytaj zapis” i wskaż ten plik.\n\nW Ustawieniach, w „Twoich danych”, utwórz kopię zapasową: zawiera twoje sesje, cele, ustawienia i nagrania głosu. Przechowuj ją poza telefonem (Dysk, e-mail), a na nowym telefonie użyj „Przywróć z kopii”. Sesje możesz też wyeksportować do pliku CSV.',
   ],
   menu: [
     'Menu',
-    'Dotknij ☰ w lewym górnym rogu albo przesuń w prawo od lewej połowy ekranu, aby otworzyć menu: licznik, Gongyo, kamienie milowe, przypomnienia, dzwonek, słownik pojęć buddyjskich, darowizny, ten poradnik i prywatność. Aby je zamknąć, przesuń w lewo lub dotknij obok.\n\nW Gongyo tekst przesuwa się w górę jak napisy końcowe filmu, a litery zabarwiają się w miarę recytowania, jak w karaoke: pośrodku dwa wiersze do przeczytania, nad nimi dwa już wyrecytowane, pod nimi kolejne. Tempo ustawiasz suwakiem: podczas przesuwania widzisz podgląd. W „Tłumaczeniu” znajdziesz oba rozdziały wiersz po wierszu w wybranym języku.\n\nZa każdym razem, gdy otwierasz aplikację, czeka cytat dnia z pism Nichirena Daishonina, Sutry Lotosu lub słów prezydentów Soka Gakkai. Strzałki (lub przesunięcie) pokazują cytaty z innych dni; „Wejdź” prowadzi do aplikacji.',
+    'Dotknij ☰ w lewym górnym rogu albo przesuń w prawo od lewej połowy ekranu, aby otworzyć menu: licznik, cele, Gongyo, kamienie milowe, przypomnienia, dzwonek, słownik pojęć buddyjskich, darowizny, ten poradnik i prywatność. Aby je zamknąć, przesuń w lewo lub dotknij obok.\n\nW Gongyo tekst przesuwa się w górę jak napisy końcowe filmu, a litery zabarwiają się w miarę recytowania, jak w karaoke: pośrodku dwa wiersze do przeczytania, nad nimi dwa już wyrecytowane, pod nimi kolejne. Tempo ustawiasz suwakiem: podczas przesuwania widzisz podgląd. W „Tłumaczeniu” znajdziesz oba rozdziały wiersz po wierszu w wybranym języku.\n\nZa każdym razem, gdy otwierasz aplikację, czeka cytat dnia z pism Nichirena Daishonina, Sutry Lotosu lub słów prezydentów Soka Gakkai. Strzałki (lub przesunięcie) pokazują cytaty z innych dni; „Wejdź” prowadzi do aplikacji.',
   ],
   trouble: [
     'Gdy coś nie działa',

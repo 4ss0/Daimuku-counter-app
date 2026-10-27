@@ -27,7 +27,11 @@ export default {
   ],
   goals: [
     'Objectifs et rappels',
-    'Dans Réglages → Objectifs, choisissez votre objectif quotidien et, si vous le souhaitez, un objectif hebdomadaire, mensuel et annuel. L’objectif quotidien est réparti en deux séances : le matin (jusqu’à 14 h) et le soir ; l’écran Compter montre où vous en êtes pour chacune.\n\nLe compteur poursuit la séance en cours, à partir des daimoku déjà récités. Pour poursuivre l’autre (par exemple le daimoku du matin fait l’après-midi), touchez-la avant d’appuyer sur Démarrer. Chaque séance enregistrée reste dans le matin ou le soir que vous avez choisi.\n\nDans le menu, Rappels vous envoie une notification à l’heure choisie pour la séance du matin et pour celle du soir.',
+    'Dans Réglages → Objectifs de daimoku, choisissez votre objectif quotidien et, si vous le souhaitez, un objectif hebdomadaire, mensuel et annuel. L’objectif quotidien est réparti en deux séances : le matin (jusqu’à 14 h) et le soir ; l’écran Compter montre où vous en êtes pour chacune.\n\nLe compteur poursuit la séance en cours, à partir des daimoku déjà récités. Pour poursuivre l’autre (par exemple le daimoku du matin fait l’après-midi), touchez-la avant d’appuyer sur Démarrer. Chaque séance enregistrée reste dans le matin ou le soir que vous avez choisi.\n\nDans le menu, Rappels vous envoie une notification à l’heure choisie pour la séance du matin et pour celle du soir.',
+  ],
+  intents: [
+    'Vos objectifs',
+    'Dans le menu, Objectifs est l’endroit où écrire pour quoi vous récitez : un ou plusieurs objectifs, avec vos propres mots. Sous chacun, déplacez le curseur pour indiquer où vous en êtes.\n\nLe moment venu, touchez Fermer et choisissez pourquoi : l’objectif est atteint, ou vous avez compris qu’il existait un meilleur chemin. Les objectifs fermés restent en bas de la page : vous pouvez les relire, les rouvrir ou les supprimer.',
   ],
   badges: [
     'Étapes et jour pardonné',
@@ -39,11 +43,11 @@ export default {
   ],
   backup: [
     'Sauvegarde et changement de téléphone',
-    'Dans Réglages, sous « Vos données », créez une sauvegarde : elle contient vos séances, objectifs, réglages et enregistrements de voix. Conservez-la hors du téléphone (Drive, e-mail) et, sur le nouveau téléphone, utilisez « Restaurer une sauvegarde ». Vous pouvez aussi exporter vos séances dans un fichier CSV.',
+    'Dans Réglages, sous « Vos données », activez la Sauvegarde automatique : la première fois, vous choisissez où garder le fichier (sur le téléphone ou sur Drive), puis l’appli enregistre tout toute seule après chaque séance, chaque modification de vos enregistrements de voix et chaque étape franchie. Sur un nouveau téléphone, ou si vous réinstallez l’appli, choisissez « Charger une sauvegarde » au premier démarrage et sélectionnez ce fichier.\n\nDans Réglages, sous « Vos données », créez une sauvegarde : elle contient vos séances, objectifs, réglages et enregistrements de voix. Conservez-la hors du téléphone (Drive, e-mail) et, sur le nouveau téléphone, utilisez « Restaurer une sauvegarde ». Vous pouvez aussi exporter vos séances dans un fichier CSV.',
   ],
   menu: [
     'Le menu',
-    'Touchez ☰ en haut à gauche, ou glissez vers la droite depuis la moitié gauche de l’écran, pour ouvrir le menu : compteur, Gongyo, étapes, rappels, cloche, dictionnaire des notions bouddhiques, dons, ce mode d’emploi et confidentialité. Pour le fermer, glissez vers la gauche ou touchez à l’extérieur.\n\nDans Gongyo, le texte défile comme un générique de film et les lettres se colorent à mesure que vous récitez, comme au karaoké : au milieu les deux lignes à lire, au-dessus les deux déjà récitées, en dessous les suivantes. Réglez la vitesse avec le curseur : pendant que vous le déplacez, vous voyez un aperçu. Dans « Traduction », vous trouvez les deux chapitres ligne par ligne, dans la langue de votre choix.\n\nÀ chaque ouverture de l’appli, vous trouvez la citation du jour, tirée des écrits de Nichiren Daishonin, du Sûtra du Lotus ou des présidents de la Soka Gakkai. Les flèches (ou un glissement) montrent les citations des autres jours ; « Entrer » vous mène dans l’appli.',
+    'Touchez ☰ en haut à gauche, ou glissez vers la droite depuis la moitié gauche de l’écran, pour ouvrir le menu : compteur, objectifs, Gongyo, étapes, rappels, cloche, dictionnaire des notions bouddhiques, dons, ce mode d’emploi et confidentialité. Pour le fermer, glissez vers la gauche ou touchez à l’extérieur.\n\nDans Gongyo, le texte défile comme un générique de film et les lettres se colorent à mesure que vous récitez, comme au karaoké : au milieu les deux lignes à lire, au-dessus les deux déjà récitées, en dessous les suivantes. Réglez la vitesse avec le curseur : pendant que vous le déplacez, vous voyez un aperçu. Dans « Traduction », vous trouvez les deux chapitres ligne par ligne, dans la langue de votre choix.\n\nÀ chaque ouverture de l’appli, vous trouvez la citation du jour, tirée des écrits de Nichiren Daishonin, du Sûtra du Lotus ou des présidents de la Soka Gakkai. Les flèches (ou un glissement) montrent les citations des autres jours ; « Entrer » vous mène dans l’appli.',
   ],
   trouble: [
     'En cas de problème',

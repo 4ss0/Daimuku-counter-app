@@ -87,6 +87,7 @@ pub fn run() {
             commands::set_prefs,
             // backup & exports
             commands::create_backup,
+            commands::prepare_autosave,
             commands::restore_backup,
             commands::export_voice_profile,
             commands::import_voice_profile,

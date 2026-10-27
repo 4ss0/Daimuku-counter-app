@@ -2,6 +2,7 @@
 // prefs.json next to the history, and applied to the document.
 import { invoke } from '@tauri-apps/api/core';
 import { get, writable } from 'svelte/store';
+import { dataChanged } from './changes';
 import { detectLang, isLang, setLang, type Lang } from './i18n';
 import { BACKGROUNDS, loadCustomBackground, type Background } from './background';
 import { BELLS, type BellKind } from './bell';
@@ -32,7 +33,28 @@ export interface Prefs {
   statsPeriod: StatsPeriod;
   /** Pace of the Gongyo page, in beats (kanji) a second. */
   gongyoPace: number;
+  /** The first start is over (a save loaded, or the voice page explained). */
+  onboarded: boolean;
+  /** What the user chants for (menu "Goals", intents.ts). */
+  intents: Intent[];
 }
+
+/** A goal the user chants for, written in the "Goals" page of the menu. */
+export interface Intent {
+  id: string;
+  text: string;
+  /** How far along the user feels, 0-100. */
+  progress: number;
+  /** When it was written (ISO 8601). */
+  created: string;
+  /** When it was closed (ISO 8601), and why: reached, or a better way was found. */
+  closed?: string;
+  reason?: IntentReason;
+}
+export type IntentReason = 'achieved' | 'changed';
+export const INTENT_REASONS: IntentReason[] = ['achieved', 'changed'];
+export const MAX_INTENT_TEXT = 500;
+const MAX_INTENTS = 300;
 
 export type StatsPeriod = 'day' | 'week' | 'month' | 'year' | 'all';
 export const STATS_PERIODS: StatsPeriod[] = ['day', 'week', 'month', 'year', 'all'];
@@ -50,6 +72,8 @@ const DEFAULTS: Prefs = {
   bell: { on: false, kind: 'high', volume: 0.8 },
   statsPeriod: 'week',
   gongyoPace: PACE.medium,
+  onboarded: false,
+  intents: [],
 };
 
 /** Strings matching `re`, at most `max` of them. */
@@ -68,6 +92,33 @@ function reminder(v: unknown, fallback: { on: boolean; time: string }) {
 /** A whole number in 0..max, or `fallback`. */
 function count(v: unknown, max: number, fallback: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(0, Math.round(v))) : fallback;
+}
+
+function isDate(v: unknown): v is string {
+  return typeof v === 'string' && Number.isFinite(Date.parse(v));
+}
+
+/** The goals that make sense, at most MAX_INTENTS. */
+function intents(v: unknown): Intent[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: Intent[] = [];
+  for (const x of v) {
+    const g = (x && typeof x === 'object' ? x : {}) as Partial<Intent>;
+    if (typeof g.id !== 'string' || !/^[\w-]{1,40}$/.test(g.id) || out.some((o) => o.id === g.id)) continue;
+    if (typeof g.text !== 'string' || !g.text.trim()) continue;
+    const it: Intent = {
+      id: g.id,
+      text: g.text.slice(0, MAX_INTENT_TEXT),
+      progress: count(g.progress, 100, 0),
+      created: isDate(g.created) ? g.created : new Date().toISOString(),
+    };
+    if (isDate(g.closed) && g.reason && INTENT_REASONS.includes(g.reason)) {
+      it.closed = g.closed;
+      it.reason = g.reason;
+    }
+    out.push(it);
+  }
+  return out.slice(-MAX_INTENTS);
 }
 
 export const prefs = writable<Prefs>({ ...DEFAULTS });
@@ -155,6 +206,9 @@ function sanitize(p: Partial<Prefs> | null | undefined): Partial<Prefs> {
   if (forgiven) out.forgiven = forgiven;
   const seen = strings(p.badgesSeen, /^(total|streak)-\d+$/, 100);
   if (seen) out.badgesSeen = seen;
+  if (typeof p.onboarded === 'boolean') out.onboarded = p.onboarded;
+  const list = intents(p.intents);
+  if (list) out.intents = list;
   if (p.reminders && typeof p.reminders === 'object') {
     out.reminders = {
       morning: reminder(p.reminders.morning, DEFAULTS.reminders.morning),
@@ -171,6 +225,7 @@ export async function updatePrefs(patch: Partial<Prefs>) {
   if (!loaded) return;
   try {
     await invoke('set_prefs', { prefs: next });
+    dataChanged();
   } catch {
     /* not fatal: the choice still applies until the app is closed */
   }

@@ -1,8 +1,16 @@
 // Typed wrappers around the Rust commands (src-tauri/src/commands.rs).
 import { invoke } from '@tauri-apps/api/core';
 import { get } from 'svelte/store';
+import { dataChanged } from './changes';
 import { locale, t, type TFn } from './i18n';
 import type { ExportedFile } from './native';
+
+/** A command that changes the saved data: once it is done, says so (the automatic save listens). */
+async function change<T>(p: Promise<T>): Promise<T> {
+  const r = await p;
+  dataChanged();
+  return r;
+}
 
 export interface RestoreSummary {
   sessions: number;
@@ -76,40 +84,48 @@ export interface ValidationResult {
 export const api = {
   startLive: () => invoke<void>('start_live_session'),
   /** `half`: the session of the day this one continues. */
-  stopLive: (half?: 'morning' | 'evening') => invoke<LiveSessionSummary>('stop_live_session', { half: half ?? null }),
+  stopLive: async (half?: 'morning' | 'evening') => {
+    const r = await invoke<LiveSessionSummary>('stop_live_session', { half: half ?? null });
+    if (r.session) dataChanged();
+    return r;
+  },
   liveView: () => invoke<LiveView>('live_view'),
   exportLiveWav: () => invoke<ExportedFile>('export_live_session_wav'),
 
   listSessions: () => invoke<SessionRecord[]>('list_sessions'),
   updateSessionCount: (id: number, count: number) =>
-    invoke<SessionRecord>('update_session_count', { id, count }),
-  deleteSession: (id: number) => invoke<void>('delete_session', { id }),
+    change(invoke<SessionRecord>('update_session_count', { id, count })),
+  deleteSession: (id: number) => change(invoke<void>('delete_session', { id })),
   /** Now, or at `startedAt` (ISO 8601) lasting `durationSecs`, for the session `half` of that day. */
   addManual: (count: number, startedAt?: string, durationSecs?: number, half?: 'morning' | 'evening') =>
-    invoke<SessionRecord>('add_manual_session', {
-      count,
-      startedAt: startedAt ?? null,
-      durationSecs: durationSecs ?? null,
-      half: half ?? null,
-    }),
+    change(
+      invoke<SessionRecord>('add_manual_session', {
+        count,
+        startedAt: startedAt ?? null,
+        durationSecs: durationSecs ?? null,
+        half: half ?? null,
+      }),
+    ),
   getGoal: () => invoke<number>('get_daily_goal'),
-  setGoal: (goal: number) => invoke<number>('set_daily_goal', { goal }),
+  setGoal: (goal: number) => change(invoke<number>('set_daily_goal', { goal })),
 
   profile: () => invoke<PersonalProfile>('get_personal_profile'),
-  clearProfile: () => invoke<void>('clear_personal_profile'),
-  deleteTake: (id: number) => invoke<PersonalProfile>('delete_profile_take', { id }),
+  clearProfile: () => change(invoke<void>('clear_personal_profile')),
+  deleteTake: (id: number) => change(invoke<PersonalProfile>('delete_profile_take', { id })),
   startRecording: () => invoke<void>('start_recording'),
   stopRecording: (expected: number) =>
     invoke<TrainingTakeMeta>('stop_recording', { expectedDaimokuCount: expected }),
   validateTake: (index: number) => invoke<ValidationResult>('validate_training_take', { index }),
   addTakeToProfile: (index: number, speed?: string) =>
-    invoke<PersonalProfile>('add_take_to_profile', { index, speed: speed ?? null }),
+    change(invoke<PersonalProfile>('add_take_to_profile', { index, speed: speed ?? null })),
   clearTrainingTakes: () => invoke<number>('clear_training_takes'),
 
   createBackup: () => invoke<ExportedFile>('create_backup'),
-  restoreBackup: (content: string) => invoke<RestoreSummary>('restore_backup', { content }),
+  /** The backup for the automatic save (always the same file, in the app's cache). */
+  prepareAutosave: () => invoke<ExportedFile>('prepare_autosave'),
+  restoreBackup: (content: string) => change(invoke<RestoreSummary>('restore_backup', { content })),
   exportVoice: () => invoke<ExportedFile>('export_voice_profile'),
-  importVoice: (content: string) => invoke<RestoreSummary>('import_voice_profile', { content }),
+  importVoice: (content: string) => change(invoke<RestoreSummary>('import_voice_profile', { content })),
   writeTextExport: (name: string, content: string) => invoke<ExportedFile>('write_text_export', { name, content }),
   writeBinaryExport: (name: string, base64: string) => invoke<ExportedFile>('write_binary_export', { name, base64 }),
   exportTake: (id: number) => invoke<ExportedFile>('export_profile_take', { id }),

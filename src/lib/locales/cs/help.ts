@@ -27,7 +27,11 @@ export default {
   ],
   goals: [
     'Cíle a připomínky',
-    'V Nastavení → Cíle vyber denní cíl a podle chuti i týdenní, měsíční a roční. Denní cíl je rozdělen do dvou relací: ráno (do 14:00) a večer; obrazovka Počítání ukazuje, jak daleko jsi v každé z nich.\n\nPočítadlo pokračuje v aktuální relaci a začíná od už zarecitovaných daimoku. Chceš-li pokračovat v té druhé (třeba v ranním daimoku recitovaném odpoledne), klepni na ni před stisknutím Start. Každá uložená relace zůstane v ránu nebo večeru, které jsi zvolil(a).\n\nV nabídce ti Připomínky pošlou oznámení ve zvolený čas pro ranní i večerní relaci.',
+    'V Nastavení → Cíle daimoku vyber denní cíl a podle chuti i týdenní, měsíční a roční. Denní cíl je rozdělen do dvou relací: ráno (do 14:00) a večer; obrazovka Počítání ukazuje, jak daleko jsi v každé z nich.\n\nPočítadlo pokračuje v aktuální relaci a začíná od už zarecitovaných daimoku. Chceš-li pokračovat v té druhé (třeba v ranním daimoku recitovaném odpoledne), klepni na ni před stisknutím Start. Každá uložená relace zůstane v ránu nebo večeru, které jsi zvolil(a).\n\nV nabídce ti Připomínky pošlou oznámení ve zvolený čas pro ranní i večerní relaci.',
+  ],
+  intents: [
+    'Tvoje cíle',
+    'V nabídce v sekci Cíle píšeš, za co recituješ: jeden cíl nebo více, vlastními slovy. Pod každým posouvej posuvník, abys ukázal(a), jak daleko jsi.\n\nAž přijde čas, klepni na Uzavřít a vyber důvod: cíle bylo dosaženo, nebo se našla lepší cesta. Uzavřené cíle zůstávají dole na stránce: můžeš si je znovu přečíst, znovu otevřít nebo smazat.',
   ],
   badges: [
     'Milníky a odpuštěný den',
@@ -39,11 +43,11 @@ export default {
   ],
   backup: [
     'Záloha a výměna telefonu',
-    'V Nastavení v sekci „Tvoje data“ vytvoř zálohu: obsahuje tvé relace, cíl, nastavení a nahrávky hlasu. Uchovávej ji mimo telefon (Drive, e-mail) a v novém telefonu použij „Obnovit ze zálohy“. Relace můžeš také exportovat do souboru CSV.',
+    'V Nastavení v sekci „Tvoje data“ zapni Automatické ukládání: poprvé vybereš, kde má soubor být (v telefonu nebo na Drive), a pak aplikace sama ukládá vše po každé relaci, každé změně nahrávek hlasu a každém milníku. V novém telefonu nebo po přeinstalování aplikace zvol při prvním spuštění „Načíst uložená data“ a vyber ten soubor.\n\nV Nastavení v sekci „Tvoje data“ vytvoř zálohu: obsahuje tvé relace, cíl, nastavení a nahrávky hlasu. Uchovávej ji mimo telefon (Drive, e-mail) a v novém telefonu použij „Obnovit ze zálohy“. Relace můžeš také exportovat do souboru CSV.',
   ],
   menu: [
     'Nabídka',
-    'Klepni na ☰ vlevo nahoře nebo přejeď doprava z levé poloviny obrazovky a otevřeš nabídku: počítadlo, Gongyo, milníky, připomínky, zvonek, slovník buddhistických pojmů, dary, tento návod a soukromí. Zavřeš ji přejetím doleva nebo klepnutím mimo ni.\n\nV Gongyo text stoupá vzhůru jako titulky na konci filmu a písmena se plní barvou, jak je recituješ, jako při karaoke: uprostřed dva řádky ke čtení, nad nimi dva už zarecitované, pod nimi ty následující. Rychlost nastavíš posuvníkem: když jím pohybuješ, vidíš náhled. „Překlad“ obsahuje obě kapitoly řádek po řádku ve zvoleném jazyce.\n\nPokaždé, když aplikaci otevřeš, čeká tě citát dne ze spisů Nichirena Daishonina, z Lotosové sútry nebo od prezidentů Soka Gakkai. Šipky (nebo přejetí) ukazují citáty jiných dní; „Vstoupit“ tě vezme do aplikace.',
+    'Klepni na ☰ vlevo nahoře nebo přejeď doprava z levé poloviny obrazovky a otevřeš nabídku: počítadlo, cíle, Gongyo, milníky, připomínky, zvonek, slovník buddhistických pojmů, dary, tento návod a soukromí. Zavřeš ji přejetím doleva nebo klepnutím mimo ni.\n\nV Gongyo text stoupá vzhůru jako titulky na konci filmu a písmena se plní barvou, jak je recituješ, jako při karaoke: uprostřed dva řádky ke čtení, nad nimi dva už zarecitované, pod nimi ty následující. Rychlost nastavíš posuvníkem: když jím pohybuješ, vidíš náhled. „Překlad“ obsahuje obě kapitoly řádek po řádku ve zvoleném jazyce.\n\nPokaždé, když aplikaci otevřeš, čeká tě citát dne ze spisů Nichirena Daishonina, z Lotosové sútry nebo od prezidentů Soka Gakkai. Šipky (nebo přejetí) ukazují citáty jiných dní; „Vstoupit“ tě vezme do aplikace.',
   ],
   trouble: [
     'Když něco nefunguje',

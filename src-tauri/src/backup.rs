@@ -238,6 +238,18 @@ pub fn safe_name(name: &str) -> String {
     if s.is_empty() { "export".to_string() } else { s.chars().take(80).collect() }
 }
 
+/// Writes the backup of the automatic save in `dir`: always the same file,
+/// replaced whole, which the Android side then copies to the file the user
+/// chose (src/lib/autosave.ts).
+pub fn write_autosave(dir: &std::path::Path, bytes: &[u8]) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let path = dir.join("autosave.json");
+    let tmp = dir.join("autosave.json.tmp");
+    std::fs::write(&tmp, bytes).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("rename {}: {e}", path.display()))?;
+    Ok(path)
+}
+
 /// Writes an export file where the user can find it (desktop) or where the
 /// Android side can pick it up to save/share it (mobile).
 pub fn write_export(name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
@@ -256,6 +268,18 @@ mod tests {
         assert_eq!(safe_name("daimoku-backup-2026-09-28.json"), "daimoku-backup-2026-09-28.json");
         assert_eq!(safe_name("../../etc/passwd"), "_.._etc_passwd");
         assert_eq!(safe_name(""), "export");
+    }
+
+    #[test]
+    fn autosave_replaces_the_same_file() {
+        let dir = std::env::temp_dir().join(format!("daimuku-test-as-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let a = write_autosave(&dir, b"{\"sessions\":[1,2,3]}").unwrap();
+        let b = write_autosave(&dir, b"{}").unwrap();
+        assert_eq!(a, b);
+        assert_eq!(std::fs::read(&b).unwrap(), b"{}");
+        assert!(!dir.join("autosave.json.tmp").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 // Bridge to the Android side (MainActivity.kt): counting with the screen
-// off, keep-screen-on, the system "save as" / "share" screens and
-// donations through Google Play.
+// off, keep-screen-on, the system "save as" / "share" screens, donations
+// through Google Play and the automatic save.
 // On desktop there is no bridge and every call is a harmless no-op.
 
 export interface ExportedFile {
@@ -20,6 +20,12 @@ interface Bridge {
   setReminder?(kind: string, on: boolean, hour: number, minute: number, title: string, text: string): void;
   donationProducts?(ids: string): void;
   donate?(productId: string): void;
+  autosaveInfo?(): void;
+  autosaveChoose?(name: string): void;
+  autosaveOpen?(): void;
+  autosaveKeep?(keep: boolean): void;
+  autosaveWrite?(path: string): void;
+  autosaveOff?(): void;
 }
 
 function bridge(): Bridge | undefined {
@@ -217,6 +223,81 @@ export async function donate(productId: string): Promise<DonationResult> {
   const r = await p;
   const d = r.data as DonationResult | null;
   return d && ['thanks', 'pending', 'cancelled', 'unavailable', 'error'].includes(d) ? d : r.ok ? 'thanks' : 'error';
+}
+
+// ---------------------------------------------------------- automatic save
+
+/** The file of the automatic save (MainActivity / Autosave.kt). */
+export interface AutosaveFile {
+  name: string;
+  /** Last written, in ms, if the place where it is says so. */
+  modified: number | null;
+  /** False if it can no longer be written (deleted, permission gone). */
+  ok: boolean;
+}
+
+function autosaveFile(data: string | null): AutosaveFile | null {
+  if (!data) return null;
+  try {
+    const f = JSON.parse(data) as Partial<AutosaveFile>;
+    return { name: String(f.name ?? ''), modified: typeof f.modified === 'number' ? f.modified : null, ok: f.ok === true };
+  } catch {
+    return null;
+  }
+}
+
+/** True inside an Android app that can save by itself (older APKs cannot). */
+export function canAutosave(): boolean {
+  return typeof bridge()?.autosaveWrite === 'function';
+}
+
+/** Calls `fn` on the bridge and waits for the reply `ev` (a failed call: no reply). */
+async function ask(ev: string, fn: (b: Bridge) => void): Promise<Reply> {
+  const b = bridge();
+  if (!b) return { ok: false, data: null };
+  const p = reply(ev);
+  try {
+    fn(b);
+  } catch {
+    return { ok: false, data: null };
+  }
+  return p;
+}
+
+/** The file chosen for the automatic save, or null. */
+export async function autosaveInfo(): Promise<AutosaveFile | null> {
+  return autosaveFile((await ask('autosaveInfo', (b) => b.autosaveInfo?.())).data);
+}
+
+/** The system "save" screen, suggesting `name`: the file where to save from now on. Null if cancelled. */
+export async function autosaveChoose(name: string): Promise<AutosaveFile | null> {
+  const r = await ask('autosaveChoose', (b) => b.autosaveChoose?.(name));
+  return r.ok ? autosaveFile(r.data) : null;
+}
+
+/** The system "open" screen: the text of a save to load, or null if cancelled. Throws if the file cannot be read. */
+export async function autosaveOpen(): Promise<string | null> {
+  const r = await ask('autosaveOpen', (b) => b.autosaveOpen?.());
+  if (r.ok) return r.data;
+  if (r.data === 'unreadable') throw new Error('unreadable');
+  return null;
+}
+
+/** After `autosaveOpen`: keep saving to that file (its details), or let it go. */
+export async function autosaveKeep(keep: boolean): Promise<AutosaveFile | null> {
+  const r = await ask('autosaveKeep', (b) => b.autosaveKeep?.(keep));
+  return r.ok ? autosaveFile(r.data) : null;
+}
+
+/** Copies the backup written at `path` to the chosen file. */
+export async function autosaveWrite(path: string): Promise<{ ok: boolean; file: AutosaveFile | null }> {
+  const r = await ask('autosaveWrite', (b) => b.autosaveWrite?.(path));
+  return { ok: r.ok, file: autosaveFile(r.data) };
+}
+
+/** No more automatic saves. */
+export function autosaveOff() {
+  safe((b) => b.autosaveOff?.());
 }
 
 // The screen is kept on while counting (if chosen in Settings) and while

@@ -2,7 +2,7 @@
 // language, are in src/lib/locales/<code>/help.ts. In a body, a blank line
 // starts a new paragraph and a line starting with "• " is a list item.
 
-export type HelpIcon = 'voice' | 'count' | 'coin' | 'moon' | 'tips' | 'stats' | 'goal' | 'badge' | 'bell' | 'backup' | 'menu' | 'help';
+export type HelpIcon = 'voice' | 'count' | 'coin' | 'moon' | 'tips' | 'stats' | 'goal' | 'flag' | 'badge' | 'bell' | 'backup' | 'menu' | 'help';
 
 export const HELP = [
   { id: 'voice', icon: 'voice' },
@@ -12,6 +12,7 @@ export const HELP = [
   { id: 'tips', icon: 'tips' },
   { id: 'stats', icon: 'stats' },
   { id: 'goals', icon: 'goal' },
+  { id: 'intents', icon: 'flag' },
   { id: 'badges', icon: 'badge' },
   { id: 'bell', icon: 'bell' },
   { id: 'backup', icon: 'backup' },

@@ -27,7 +27,11 @@ export default {
   ],
   goals: [
     'Obiective și mementouri',
-    'În Setări → Obiective alege obiectivul zilnic și, dacă vrei, unul săptămânal, lunar și anual. Obiectivul zilnic este împărțit în două sesiuni: dimineața (până la ora 14) și seara; ecranul Numărare arată cât ai avansat în fiecare.\n\nContorul continuă sesiunea curentă, pornind de la daimoku deja recitate. Pentru a o continua pe cealaltă (de exemplu daimoku de dimineață recitate după-amiaza), atinge-o înainte de a apăsa Start. Fiecare sesiune salvată rămâne în dimineața sau seara aleasă.\n\nÎn meniu, Mementouri îți trimite o notificare la ora aleasă pentru sesiunea de dimineață și cea de seară.',
+    'În Setări → Obiective de daimoku alege obiectivul zilnic și, dacă vrei, unul săptămânal, lunar și anual. Obiectivul zilnic este împărțit în două sesiuni: dimineața (până la ora 14) și seara; ecranul Numărare arată cât ai avansat în fiecare.\n\nContorul continuă sesiunea curentă, pornind de la daimoku deja recitate. Pentru a o continua pe cealaltă (de exemplu daimoku de dimineață recitate după-amiaza), atinge-o înainte de a apăsa Start. Fiecare sesiune salvată rămâne în dimineața sau seara aleasă.\n\nÎn meniu, Mementouri îți trimite o notificare la ora aleasă pentru sesiunea de dimineață și cea de seară.',
+  ],
+  intents: [
+    'Obiectivele tale',
+    'În meniu, la Obiective scrii pentru ce reciți: unul sau mai multe obiective, cu propriile cuvinte. Sub fiecare, mută cursorul ca să arăți cât ai avansat.\n\nCând vine momentul, atinge Închide și alege motivul: obiectivul a fost atins sau ți-ai dat seama că exista o cale mai bună. Obiectivele închise rămân jos pe pagină: le poți reciti, redeschide sau șterge.',
   ],
   badges: [
     'Repere și ziua iertată',
@@ -39,11 +43,11 @@ export default {
   ],
   backup: [
     'Copie de rezervă și schimbarea telefonului',
-    'În Setări, la „Datele tale”, creează o copie de rezervă: conține sesiunile, obiectivul, setările și înregistrările vocii tale. Păstreaz-o în afara telefonului (Drive, e-mail), iar pe telefonul nou folosește „Restaurează dintr-o copie de rezervă”. Poți și exporta sesiunile într-un fișier CSV.',
+    'În Setări, la „Datele tale”, activează Salvarea automată: prima dată alegi unde să stea fișierul (pe telefon sau pe Drive), apoi aplicația salvează totul singură după fiecare sesiune, fiecare schimbare a înregistrărilor vocii și fiecare reper. Pe un telefon nou sau dacă reinstalezi aplicația, la prima pornire alege „Încarcă o salvare” și selectează acel fișier.\n\nÎn Setări, la „Datele tale”, creează o copie de rezervă: conține sesiunile, obiectivul, setările și înregistrările vocii tale. Păstreaz-o în afara telefonului (Drive, e-mail), iar pe telefonul nou folosește „Restaurează dintr-o copie de rezervă”. Poți și exporta sesiunile într-un fișier CSV.',
   ],
   menu: [
     'Meniul',
-    'Atinge ☰ din stânga sus sau glisează spre dreapta pornind din jumătatea stângă a ecranului pentru a deschide meniul: contor, Gongyo, repere, mementouri, clopoțel, dicționarul conceptelor budiste, donații, acest ghid și confidențialitate. Pentru a-l închide glisează spre stânga sau atinge în afara lui.\n\nÎn Gongyo textul urcă precum genericul unui film, iar literele se umplu de culoare pe măsură ce le reciți, ca la karaoke: la mijloc cele două rânduri de citit, deasupra cele două deja recitate, dedesubt cele care urmează. Setează viteza cu cursorul: cât îl miști vezi o previzualizare. „Traducere” conține ambele capitole rând cu rând, în limba pe care o alegi.\n\nDe fiecare dată când deschizi aplicația te așteaptă citatul zilei, din scrierile lui Nichiren Daishonin, din Sutra Lotusului sau de la președinții Soka Gakkai. Săgețile (sau o glisare) arată citatele altor zile; „Intră” te duce în aplicație.',
+    'Atinge ☰ din stânga sus sau glisează spre dreapta pornind din jumătatea stângă a ecranului pentru a deschide meniul: contor, obiective, Gongyo, repere, mementouri, clopoțel, dicționarul conceptelor budiste, donații, acest ghid și confidențialitate. Pentru a-l închide glisează spre stânga sau atinge în afara lui.\n\nÎn Gongyo textul urcă precum genericul unui film, iar literele se umplu de culoare pe măsură ce le reciți, ca la karaoke: la mijloc cele două rânduri de citit, deasupra cele două deja recitate, dedesubt cele care urmează. Setează viteza cu cursorul: cât îl miști vezi o previzualizare. „Traducere” conține ambele capitole rând cu rând, în limba pe care o alegi.\n\nDe fiecare dată când deschizi aplicația te așteaptă citatul zilei, din scrierile lui Nichiren Daishonin, din Sutra Lotusului sau de la președinții Soka Gakkai. Săgețile (sau o glisare) arată citatele altor zile; „Intră” te duce în aplicație.',
   ],
   trouble: [
     'Dacă ceva nu merge',

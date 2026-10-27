@@ -27,7 +27,11 @@ export default {
   ],
   goals: [
     'Ziele und Erinnerungen',
-    'Wähle unter Einstellungen → Ziele dein Tagesziel und, wenn du willst, ein Wochen-, Monats- und Jahresziel. Das Tagesziel ist in zwei Sitzungen aufgeteilt: den Morgen (bis 14 Uhr) und den Abend; der Bildschirm Zählen zeigt, wie weit du bei jeder bist.\n\nDer Zähler setzt die aktuelle Sitzung fort, ausgehend von den bereits rezitierten Daimoku. Um die andere fortzusetzen (etwa das Morgen-Daimoku, das du am Nachmittag rezitierst), tippe sie an, bevor du auf Start tippst. Jede gespeicherte Sitzung bleibt im gewählten Morgen oder Abend.\n\nIm Menü schickt dir Erinnerungen eine Benachrichtigung zu der Zeit, die du für die Morgen- und die Abendsitzung wählst.',
+    'Wähle unter Einstellungen → Daimoku-Ziele dein Tagesziel und, wenn du willst, ein Wochen-, Monats- und Jahresziel. Das Tagesziel ist in zwei Sitzungen aufgeteilt: den Morgen (bis 14 Uhr) und den Abend; der Bildschirm Zählen zeigt, wie weit du bei jeder bist.\n\nDer Zähler setzt die aktuelle Sitzung fort, ausgehend von den bereits rezitierten Daimoku. Um die andere fortzusetzen (etwa das Morgen-Daimoku, das du am Nachmittag rezitierst), tippe sie an, bevor du auf Start tippst. Jede gespeicherte Sitzung bleibt im gewählten Morgen oder Abend.\n\nIm Menü schickt dir Erinnerungen eine Benachrichtigung zu der Zeit, die du für die Morgen- und die Abendsitzung wählst.',
+  ],
+  intents: [
+    'Deine Ziele',
+    'Im Menü schreibst du unter Ziele auf, wofür du rezitierst: ein Ziel oder mehrere, in deinen eigenen Worten. Unter jedem zeigst du mit dem Regler, wie weit du bist.\n\nWenn es so weit ist, tippe auf Schließen und wähle den Grund: Das Ziel ist erreicht, oder du hast erkannt, dass es einen besseren Weg gab. Geschlossene Ziele bleiben unten auf der Seite: Du kannst sie nachlesen, wieder öffnen oder löschen.',
   ],
   badges: [
     'Meilensteine und der verziehene Tag',
@@ -39,11 +43,11 @@ export default {
   ],
   backup: [
     'Sicherung und Handywechsel',
-    'Erstelle in den Einstellungen unter „Deine Daten“ eine Sicherung: Sie enthält deine Sitzungen, Ziele, Einstellungen und Stimmaufnahmen. Bewahre sie außerhalb des Handys auf (Drive, E-Mail) und verwende auf dem neuen Handy „Aus Sicherung wiederherstellen“. Du kannst deine Sitzungen auch als CSV-Datei exportieren.',
+    'Schalte in den Einstellungen unter „Deine Daten“ Automatisch speichern ein: Beim ersten Mal wählst du, wo die Datei liegen soll (auf dem Handy oder in Drive), danach speichert die App alles von selbst nach jeder Sitzung, jeder Änderung an deinen Stimmaufnahmen und jedem Meilenstein. Auf einem neuen Handy oder nach einer Neuinstallation wählst du beim ersten Start „Gespeicherte Daten laden“ und dann diese Datei.\n\nErstelle in den Einstellungen unter „Deine Daten“ eine Sicherung: Sie enthält deine Sitzungen, Ziele, Einstellungen und Stimmaufnahmen. Bewahre sie außerhalb des Handys auf (Drive, E-Mail) und verwende auf dem neuen Handy „Aus Sicherung wiederherstellen“. Du kannst deine Sitzungen auch als CSV-Datei exportieren.',
   ],
   menu: [
     'Das Menü',
-    'Tippe oben links auf ☰ oder wische von der linken Bildschirmhälfte nach rechts, um das Menü zu öffnen: Zähler, Gongyo, Meilensteine, Erinnerungen, Glocke, Wörterbuch buddhistischer Begriffe, Spenden, diese Anleitung und Datenschutz. Zum Schließen wische nach links oder tippe daneben.\n\nIm Gongyo läuft der Text wie ein Filmabspann nach oben und die Buchstaben färben sich, während du rezitierst, wie beim Karaoke: in der Mitte die zwei zu lesenden Zeilen, darüber die zwei schon rezitierten, darunter die folgenden. Stelle das Tempo mit dem Regler ein: Während du ihn bewegst, siehst du eine Vorschau. Unter „Übersetzung“ findest du beide Kapitel Zeile für Zeile, in der Sprache deiner Wahl.\n\nJedes Mal, wenn du die App öffnest, findest du das Zitat des Tages aus den Schriften Nichiren Daishonins, dem Lotos-Sutra oder von den Präsidenten der Soka Gakkai. Die Pfeile (oder Wischen) zeigen die Zitate anderer Tage; „Weiter“ führt dich in die App.',
+    'Tippe oben links auf ☰ oder wische von der linken Bildschirmhälfte nach rechts, um das Menü zu öffnen: Zähler, Ziele, Gongyo, Meilensteine, Erinnerungen, Glocke, Wörterbuch buddhistischer Begriffe, Spenden, diese Anleitung und Datenschutz. Zum Schließen wische nach links oder tippe daneben.\n\nIm Gongyo läuft der Text wie ein Filmabspann nach oben und die Buchstaben färben sich, während du rezitierst, wie beim Karaoke: in der Mitte die zwei zu lesenden Zeilen, darüber die zwei schon rezitierten, darunter die folgenden. Stelle das Tempo mit dem Regler ein: Während du ihn bewegst, siehst du eine Vorschau. Unter „Übersetzung“ findest du beide Kapitel Zeile für Zeile, in der Sprache deiner Wahl.\n\nJedes Mal, wenn du die App öffnest, findest du das Zitat des Tages aus den Schriften Nichiren Daishonins, dem Lotos-Sutra oder von den Präsidenten der Soka Gakkai. Die Pfeile (oder Wischen) zeigen die Zitate anderer Tage; „Weiter“ führt dich in die App.',
   ],
   trouble: [
     'Wenn etwas nicht klappt',

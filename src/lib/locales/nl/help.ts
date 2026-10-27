@@ -27,7 +27,11 @@ export default {
   ],
   goals: [
     'Doelen en herinneringen',
-    'Kies in Instellingen → Doelen je dagdoel en, als je wilt, een week-, maand- en jaardoel. Het dagdoel is verdeeld over twee sessies: de ochtend (tot 14.00 uur) en de avond; het scherm Tellen laat zien hoe ver je bij elk bent.\n\nDe teller zet de huidige sessie voort, vanaf de daimoku die al gereciteerd zijn. Om de andere voort te zetten (bijvoorbeeld de ochtenddaimoku die je ’s middags reciteert), tik je erop voordat je op Start drukt. Elke opgeslagen sessie blijft in de ochtend of de avond die je hebt gekozen.\n\nIn het menu stuurt Herinneringen je een melding op het tijdstip dat je kiest voor de ochtend- en de avondsessie.',
+    'Kies in Instellingen → Daimoku-doelen je dagdoel en, als je wilt, een week-, maand- en jaardoel. Het dagdoel is verdeeld over twee sessies: de ochtend (tot 14.00 uur) en de avond; het scherm Tellen laat zien hoe ver je bij elk bent.\n\nDe teller zet de huidige sessie voort, vanaf de daimoku die al gereciteerd zijn. Om de andere voort te zetten (bijvoorbeeld de ochtenddaimoku die je ’s middags reciteert), tik je erop voordat je op Start drukt. Elke opgeslagen sessie blijft in de ochtend of de avond die je hebt gekozen.\n\nIn het menu stuurt Herinneringen je een melding op het tijdstip dat je kiest voor de ochtend- en de avondsessie.',
+  ],
+  intents: [
+    'Je doelen',
+    'In het menu schrijf je bij Doelen op waarvoor je reciteert: één doel of meer, in je eigen woorden. Verschuif onder elk doel de schuifregelaar om te laten zien hoe ver je bent.\n\nAls het zover is, tik je op Sluiten en kies je de reden: het doel is bereikt, of je hebt ingezien dat er een betere weg was. Gesloten doelen blijven onderaan de pagina staan: je kunt ze teruglezen, heropenen of verwijderen.',
   ],
   badges: [
     'Mijlpalen en de vergeven dag',
@@ -39,11 +43,11 @@ export default {
   ],
   backup: [
     'Back-up en een nieuwe telefoon',
-    'Maak in Instellingen, onder "Je gegevens", een back-up: die bevat je sessies, doel, instellingen en stemopnames. Bewaar hem buiten de telefoon (Drive, e-mail) en gebruik op de nieuwe telefoon "Herstellen vanaf een back-up". Je kunt je sessies ook exporteren naar een CSV-bestand.',
+    'Zet in Instellingen, onder "Je gegevens", Automatisch opslaan aan: de eerste keer kies je waar het bestand komt (op de telefoon of in Drive), daarna slaat de app alles vanzelf op na elke sessie, elke wijziging in je stemopnames en elke mijlpaal. Op een nieuwe telefoon, of als je de app opnieuw installeert, kies je bij de eerste start "Opgeslagen gegevens laden" en selecteer je dat bestand.\n\nMaak in Instellingen, onder "Je gegevens", een back-up: die bevat je sessies, doel, instellingen en stemopnames. Bewaar hem buiten de telefoon (Drive, e-mail) en gebruik op de nieuwe telefoon "Herstellen vanaf een back-up". Je kunt je sessies ook exporteren naar een CSV-bestand.',
   ],
   menu: [
     'Het menu',
-    'Tik op ☰ linksboven, of veeg naar rechts vanaf de linkerhelft van het scherm, om het menu te openen: teller, Gongyo, mijlpalen, herinneringen, bel, woordenboek van boeddhistische begrippen, donaties, deze handleiding en privacy. Veeg naar links of tik ernaast om het te sluiten.\n\nIn Gongyo rolt de tekst omhoog zoals de aftiteling van een film en kleuren de letters in terwijl je reciteert, zoals bij karaoke: in het midden de twee regels om te lezen, erboven de twee die al gereciteerd zijn, eronder de volgende. Stel de snelheid in met de schuifregelaar: terwijl je hem verschuift, zie je een voorbeeld. “Vertaling” bevat beide hoofdstukken regel voor regel, in de taal die je kiest.\n\nElke keer dat je de app opent, vind je het citaat van de dag, uit de geschriften van Nichiren Daishonin, de Lotussoetra of de presidenten van de Soka Gakkai. De pijlen (of vegen) tonen de citaten van andere dagen; “Verder” brengt je in de app.',
+    'Tik op ☰ linksboven, of veeg naar rechts vanaf de linkerhelft van het scherm, om het menu te openen: teller, doelen, Gongyo, mijlpalen, herinneringen, bel, woordenboek van boeddhistische begrippen, donaties, deze handleiding en privacy. Veeg naar links of tik ernaast om het te sluiten.\n\nIn Gongyo rolt de tekst omhoog zoals de aftiteling van een film en kleuren de letters in terwijl je reciteert, zoals bij karaoke: in het midden de twee regels om te lezen, erboven de twee die al gereciteerd zijn, eronder de volgende. Stel de snelheid in met de schuifregelaar: terwijl je hem verschuift, zie je een voorbeeld. “Vertaling” bevat beide hoofdstukken regel voor regel, in de taal die je kiest.\n\nElke keer dat je de app opent, vind je het citaat van de dag, uit de geschriften van Nichiren Daishonin, de Lotussoetra of de presidenten van de Soka Gakkai. De pijlen (of vegen) tonen de citaten van andere dagen; “Verder” brengt je in de app.',
   ],
   trouble: [
     'Als er iets misgaat',

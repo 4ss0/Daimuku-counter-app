@@ -27,7 +27,11 @@ export default {
   ],
   goals: [
     'Obiettivi e promemoria',
-    'In Impostazioni → Obiettivi scegli l’obiettivo giornaliero e, se vuoi, uno settimanale, mensile e annuale. L’obiettivo del giorno è diviso in due sessioni: la mattina (fino alle 14:00) e la sera; nella schermata Conta vedi a che punto sei con ciascuna.\n\nIl contatore continua la sessione in corso, partendo dai Daimoku già fatti. Per continuare l’altra (per esempio la recitazione del mattino fatta nel pomeriggio), toccala prima di premere Inizia. Ogni sessione salvata resta della mattina o della sera che hai scelto.\n\nNel menù, Promemoria ti manda una notifica all’ora che scegli per la sessione del mattino e per quella della sera.',
+    'In Impostazioni → Obiettivi di daimoku scegli l’obiettivo giornaliero e, se vuoi, uno settimanale, mensile e annuale. L’obiettivo del giorno è diviso in due sessioni: la mattina (fino alle 14:00) e la sera; nella schermata Conta vedi a che punto sei con ciascuna.\n\nIl contatore continua la sessione in corso, partendo dai Daimoku già fatti. Per continuare l’altra (per esempio la recitazione del mattino fatta nel pomeriggio), toccala prima di premere Inizia. Ogni sessione salvata resta della mattina o della sera che hai scelto.\n\nNel menù, Promemoria ti manda una notifica all’ora che scegli per la sessione del mattino e per quella della sera.',
+  ],
+  intents: [
+    'I tuoi obiettivi',
+    'Nel menù, Obiettivi è il posto dove scrivere per cosa reciti: uno o più obiettivi, con parole tue. Sotto ciascuno sposta il cursore per indicare a che punto sei.\n\nQuando è il momento tocca Chiudi e scegli il motivo: l’obiettivo è stato raggiunto, oppure hai capito che c’era una strada migliore. Gli obiettivi chiusi restano in fondo alla pagina: puoi rileggerli, riaprirli o eliminarli.',
   ],
   badges: [
     'Traguardi e giorno abbuonato',
@@ -39,11 +43,11 @@ export default {
   ],
   backup: [
     'Backup e cambio di telefono',
-    'In Impostazioni, alla voce «I tuoi dati», crea un backup: contiene sessioni, obiettivo, impostazioni e le registrazioni della tua voce. Conservalo fuori dal telefono (Drive, e-mail) e sul nuovo telefono usa «Ripristina da un backup». Puoi anche esportare le sessioni in un file CSV.',
+    'In Impostazioni, alla voce «I tuoi dati», attiva il Salvataggio automatico: la prima volta scegli dove tenere il file (sul telefono o su Drive), poi l’app salva tutto da sola dopo ogni sessione, ogni modifica alle registrazioni della voce e ogni traguardo. Su un nuovo telefono, o se reinstalli l’app, al primo avvio scegli «Carica un salvataggio» e seleziona quel file.\n\nPuoi anche fare un backup a mano: contiene sessioni, obiettivi, impostazioni e le registrazioni della tua voce. Conservalo fuori dal telefono (Drive, e-mail) e sul nuovo telefono usa «Ripristina da un backup». Puoi anche esportare le sessioni in un file CSV.',
   ],
   menu: [
     'Il menù',
-    'Tocca ☰ in alto a sinistra, oppure scorri verso destra partendo dalla metà sinistra dello schermo, per aprire il menù: contatore, Gongyo, traguardi, promemoria, campana, dizionario dei concetti buddisti, donazioni, questa guida e privacy. Per chiuderlo scorri verso sinistra o tocca fuori.\n\nIn Gongyo il testo scorre come i titoli di coda e le lettere si colorano mentre le reciti, come in un karaoke: al centro le due righe da leggere, sopra le due già recitate, sotto quelle che seguono. Regola la velocità con la barra: mentre la muovi vedi un’anteprima. In «Traduzione» trovi i due capitoli riga per riga, nella lingua che preferisci.\n\nOgni volta che apri l’app trovi la citazione del giorno, dai Gosho di Nichiren Daishonin, dal Sutra del Loto o dai presidenti della Soka Gakkai. Con le frecce (o scorrendo) leggi quelle degli altri giorni; con «Entra» vai all’app.',
+    'Tocca ☰ in alto a sinistra, oppure scorri verso destra partendo dalla metà sinistra dello schermo, per aprire il menù: contatore, obiettivi, Gongyo, traguardi, promemoria, campana, dizionario dei concetti buddisti, donazioni, questa guida e privacy. Per chiuderlo scorri verso sinistra o tocca fuori.\n\nIn Gongyo il testo scorre come i titoli di coda e le lettere si colorano mentre le reciti, come in un karaoke: al centro le due righe da leggere, sopra le due già recitate, sotto quelle che seguono. Regola la velocità con la barra: mentre la muovi vedi un’anteprima. In «Traduzione» trovi i due capitoli riga per riga, nella lingua che preferisci.\n\nOgni volta che apri l’app trovi la citazione del giorno, dai Gosho di Nichiren Daishonin, dal Sutra del Loto o dai presidenti della Soka Gakkai. Con le frecce (o scorrendo) leggi quelle degli altri giorni; con «Entra» vai all’app.',
   ],
   trouble: [
     'Se qualcosa non va',
