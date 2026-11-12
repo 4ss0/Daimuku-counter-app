@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.clean": "Senza rumore",
+  "voice.noisy": "Con rumore",
+  "voice.juzu": "Juzu",
+  "voice.bell": "Campana",
+  "voice.both": "Juzu e campana",
+  "voice.noisyInstruction": "Attendi 3 secondi in silenzio. Poi recita il numero indicato di daimoku producendo il rumore scelto. Usa un volume naturale e varia il momento dei colpi: non serve un colpo per ogni daimoku.",
   "voice.noiseInstruction": "Dopo aver premuto Registra, resta in silenzio per 3 secondi per misurare il rumore ambientale. Poi inizia a recitare.",
   "voice.noiseWait": "Resta in silenzio: {n} s",
   "voice.noiseReady": "Ora puoi iniziare a recitare.",

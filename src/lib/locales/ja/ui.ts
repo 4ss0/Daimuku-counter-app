@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.clean": "雑音なし",
+  "voice.noisy": "雑音あり",
+  "voice.juzu": "数珠",
+  "voice.bell": "鐘",
+  "voice.both": "数珠と鐘",
+  "voice.noisyInstruction": "3秒間静かに待ってから、選んだ音を鳴らしながら指定回数の題目を唱えてください。普段どおりの音量で、音を鳴らすタイミングを変えてください。題目1回につき1回鳴らす必要はありません。",
   "voice.noiseInstruction": "録音を開始したら、周囲の雑音を測定するため3秒間静かにしてください。その後、唱題を始めてください。",
   "voice.noiseWait": "静かにしてください：あと{n}秒",
   "voice.noiseReady": "唱題を始めてください。",

@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.clean": "Bez hluku",
+  "voice.noisy": "S hlukem",
+  "voice.juzu": "Juzu",
+  "voice.bell": "Zvonek",
+  "voice.both": "Juzu a zvonek",
+  "voice.noisyInstruction": "Počkej 3 sekundy v tichu. Potom recituj uvedený počet daimoku a vytvářej zvolený zvuk. Používej přirozenou hlasitost a měň načasování: jeden zvuk na každý daimoku není nutný.",
   "voice.noiseInstruction": "Po zahájení nahrávání zůstaňte 3 sekundy potichu pro změření okolního hluku. Poté začněte recitovat.",
   "voice.noiseWait": "Zůstaňte potichu: {n} s",
   "voice.noiseReady": "Nyní můžete začít recitovat.",

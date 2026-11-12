@@ -1,5 +1,6 @@
 use crate::audio::RecordedAudio;
 use crate::features::{calibrate_voice, VoiceBand};
+use crate::profile::TrainingNoise;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::sync::Mutex;
@@ -14,6 +15,7 @@ pub struct TrainingTakeMeta {
 }
 
 struct TrainingTake {
+    noise: Option<TrainingNoise>,
     voice_band: Option<VoiceBand>,
     audio: RecordedAudio,
     expected_daimoku_count: u32,
@@ -32,13 +34,30 @@ impl TrainingStore {
     }
 
     pub fn add(&self, audio: RecordedAudio, expected_daimoku_count: u32) -> TrainingTakeMeta {
-        self.add_with_band(audio, expected_daimoku_count, None)
+        self.add_with_band(audio, expected_daimoku_count, None, None)
     }
 
     pub fn add_calibrated(&self, mut audio: RecordedAudio, expected: u32) -> Result<TrainingTakeMeta, String> {
         let (start, band) = calibrate_voice(&audio.samples, audio.sample_rate)?;
         audio.samples.drain(..start);
-        Ok(self.add_with_band(audio, expected, Some(band)))
+        Ok(self.add_with_band(audio, expected, Some(band), None))
+    }
+
+    /// Keep the same countdown/pre-roll as clean training, but do not infer
+    /// the voice band from a mixture containing bell or bead frequencies.
+    pub fn add_noisy(&self, mut audio: RecordedAudio, expected: u32, noise: TrainingNoise) -> Result<TrainingTakeMeta, String> {
+        let sr = audio.sample_rate as usize;
+        let boundary = sr * crate::features::NOISE_SECONDS as usize;
+        if sr < 8000 || audio.samples.len() < boundary + sr / 2 {
+            return Err("calibration-too-short".into());
+        }
+        audio.samples.drain(..boundary.saturating_sub(sr / 4));
+        Ok(self.add_with_band(audio, expected, None, Some(noise)))
+    }
+
+    pub fn noise(&self, index: usize) -> Result<Option<TrainingNoise>, String> {
+        self.takes.lock().unwrap().get(index).map(|t| t.noise)
+            .ok_or_else(|| format!("training take {index} not found"))
     }
 
     pub fn voice_band(&self, index: usize) -> Result<Option<VoiceBand>, String> {
@@ -46,12 +65,13 @@ impl TrainingStore {
             .ok_or_else(|| format!("training take {index} not found"))
     }
 
-    fn add_with_band(&self, audio: RecordedAudio, expected_daimoku_count: u32, voice_band: Option<VoiceBand>) -> TrainingTakeMeta {
+    fn add_with_band(&self, audio: RecordedAudio, expected_daimoku_count: u32, voice_band: Option<VoiceBand>, noise: Option<TrainingNoise>) -> TrainingTakeMeta {
         let mut takes = self.takes.lock().unwrap();
         let id = takes.len();
         let created_at = Utc::now();
         let meta = meta_for(id, &audio, expected_daimoku_count, created_at);
         takes.push(TrainingTake {
+            noise,
             voice_band,
             audio,
             expected_daimoku_count,

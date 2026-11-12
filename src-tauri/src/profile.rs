@@ -32,8 +32,19 @@ const MIN_TAKE_SECS: f32 = 0.5;
 // Data model
 // ===========================================================================
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrainingNoise {
+    Juzu,
+    Bell,
+    Both,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TakeRecord {
+    /// Missing on existing takes, which retain their clean-training behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub noise: Option<TrainingNoise>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice_band: Option<VoiceBand>,
     pub id: usize,
@@ -284,6 +295,13 @@ impl ProfileState {
         &self, samples: &[f32], sample_rate: u32, n_daimoku: u32,
         speed: Option<String>, voice_band: Option<VoiceBand>,
     ) -> Result<usize, String> {
+        self.add_conditioned_take(samples, sample_rate, n_daimoku, speed, voice_band, None)
+    }
+
+    pub fn add_conditioned_take(
+        &self, samples: &[f32], sample_rate: u32, n_daimoku: u32,
+        speed: Option<String>, voice_band: Option<VoiceBand>, noise: Option<TrainingNoise>,
+    ) -> Result<usize, String> {
         let speed = speed.filter(|s| matches!(s.as_str(), "slow" | "medium" | "fast"));
         if n_daimoku == 0 {
             return Err("n_daimoku must be >= 1".to_string());
@@ -306,7 +324,8 @@ impl ProfileState {
             write_wav_f32(&path, samples, sample_rate)?;
         }
         g.index.takes.push(TakeRecord {
-            voice_band: voice_band.and_then(VoiceBand::valid),
+            noise,
+            voice_band: if noise.is_none() { voice_band.and_then(VoiceBand::valid) } else { None },
             id,
             n_daimoku,
             duration_secs,
@@ -420,7 +439,7 @@ impl Default for ProfileState {
 /// callers that don't have a [`PersonalProfile`] on hand.
 pub fn base_only_model() -> Model {
     let base = load_base_items();
-    retrain(&base, &[]).unwrap_or_else(base_only_fallback)
+    retrain(&base, &[], &[]).unwrap_or_else(base_only_fallback)
 }
 
 fn load_base_items() -> Vec<TrainItem> {
@@ -440,7 +459,7 @@ fn load_base_items() -> Vec<TrainItem> {
 /// Model for the slow checker (see `engine::build_slow_model`): the slow
 /// built-in examples and the user's slow takes.
 fn retrain_slow(base: &[TrainItem], user: &[TrainItem], takes: &[TakeRecord]) -> Option<Model> {
-    let user: Vec<(TrainItem, f32)> = weighted(user)
+    let user: Vec<(TrainItem, f32)> = weighted(user, takes)
         .into_iter()
         .zip(takes)
         .map(|(item, take)| (item, take.duration_secs / take.n_daimoku.max(1) as f32))
@@ -448,20 +467,25 @@ fn retrain_slow(base: &[TrainItem], user: &[TrainItem], takes: &[TakeRecord]) ->
     crate::engine::build_slow_model(base, &user)
 }
 
-fn retrain(base: &[TrainItem], user: &[TrainItem]) -> Option<Model> {
+fn retrain(base: &[TrainItem], user: &[TrainItem], takes: &[TakeRecord]) -> Option<Model> {
     let mut all: Vec<TrainItem> = Vec::with_capacity(base.len() + user.len());
     all.extend(base.iter().cloned());
-    all.extend(weighted(user));
+    all.extend(weighted(user, takes));
     train_model(&all, &[], None, 8).map(|t| t.model)
 }
 
 /// The user's takes with their share of the training weight.
-fn weighted(user: &[TrainItem]) -> Vec<TrainItem> {
-    let w = user_take_weight(user.len());
+fn weighted(user: &[TrainItem], takes: &[TakeRecord]) -> Vec<TrainItem> {
+    let noisy = takes.iter().filter(|t| t.noise.is_some()).count();
+    let w = user_take_weight(user.len().saturating_sub(noisy));
+    // Noisy takes supplement the clean references without diluting their
+    // weights. Bound their total influence even if many noisy takes are added.
+    let noise_weight = (1.25 / noisy.max(1) as f32).min(0.5);
     user.iter()
         .cloned()
-        .map(|mut item| {
-            item.weight = w;
+        .enumerate()
+        .map(|(i, mut item)| {
+            item.weight = if takes.get(i).is_some_and(|t| t.noise.is_some()) { noise_weight } else { w };
             item
         })
         .collect()
@@ -499,7 +523,7 @@ fn base_only_fallback() -> Model {
 /// Rebuild all feature sets with one common band. Read one saved recording at
 /// a time, rather than retaining full-rate WAV buffers for the app lifetime.
 fn refresh_model(g: &mut ProfileInner) {
-    let requested = VoiceBand::union(g.index.takes.iter().filter_map(|t| t.voice_band));
+    let requested = VoiceBand::union(g.index.takes.iter().filter(|t| t.noise.is_none()).filter_map(|t| t.voice_band));
     for band in [requested, None] {
         let base: Option<Vec<TrainItem>> = BASE_CLIPS.iter().map(|clip| {
             let (samples, sr) = decode_wav(clip.wav).ok()?;
@@ -511,7 +535,7 @@ fn refresh_model(g: &mut ProfileInner) {
             build_item_with_band(&samples, sr, take.n_daimoku as usize, TAKE_WEIGHT, band)
         }).collect();
         if let (Some(base), Some(user)) = (base, user) {
-            if let Some(mut model) = retrain(&base, &user) {
+            if let Some(mut model) = retrain(&base, &user, &g.index.takes) {
                 model.voice_band = band;
                 let mut slow = retrain_slow(&base, &user, &g.index.takes);
                 if let Some(slow) = &mut slow { slow.voice_band = band; }
@@ -525,7 +549,7 @@ fn refresh_model(g: &mut ProfileInner) {
     }
     // An unusable imported take must not install a model/filter mismatch.
     g.base_items = load_base_items();
-    g.model = retrain(&g.base_items, &[]).unwrap_or_else(base_only_fallback);
+    g.model = retrain(&g.base_items, &[], &[]).unwrap_or_else(base_only_fallback);
     g.slow_model = retrain_slow(&g.base_items, &[], &[]);
 }
 

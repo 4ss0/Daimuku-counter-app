@@ -29,12 +29,15 @@ pub async fn stop_recording(
     training_store: State<'_, TrainingStore>,
     expected_daimoku_count: u32,
     calibrate: Option<bool>,
+    noise: Option<crate::profile::TrainingNoise>,
 ) -> Result<TrainingTakeMeta, String> {
     let rx = audio_state.stop()?;
     let audio = rx
         .await
         .map_err(|e| format!("audio thread dropped reply: {e}"))?;
-    if calibrate.unwrap_or(false) {
+    if let Some(noise) = noise {
+        training_store.add_noisy(audio, expected_daimoku_count, noise)
+    } else if calibrate.unwrap_or(false) {
         training_store.add_calibrated(audio, expected_daimoku_count)
     } else {
         Ok(training_store.add(audio, expected_daimoku_count))
@@ -324,7 +327,7 @@ pub fn add_take_to_profile(
         return Err("take has no declared Daimoku count".to_string());
     }
 
-    profile_state.add_calibrated_take(&audio.samples, audio.sample_rate, expected as u32, speed, store.voice_band(index)?)?;
+    profile_state.add_conditioned_take(&audio.samples, audio.sample_rate, expected as u32, speed, store.voice_band(index)?, store.noise(index)?)?;
     let new_profile = profile_state.snapshot();
     audio_state.live_set_profile(Some(new_profile.clone()));
 

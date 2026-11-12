@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.clean": "소음 없음",
+  "voice.noisy": "소음 있음",
+  "voice.juzu": "염주",
+  "voice.bell": "종",
+  "voice.both": "염주와 종",
+  "voice.noisyInstruction": "3초 동안 조용히 기다린 다음, 선택한 소리를 내면서 표시된 횟수만큼 제목을 부르세요. 평소 음량으로 소리를 내고 시점을 바꾸세요. 제목마다 한 번씩 소리를 낼 필요는 없습니다.",
   "voice.noiseInstruction": "녹음을 시작한 후 주변 소음을 측정할 수 있도록 3초 동안 조용히 기다린 다음 창제를 시작하세요.",
   "voice.noiseWait": "조용히 기다려 주세요: {n}초",
   "voice.noiseReady": "이제 창제를 시작하세요.",

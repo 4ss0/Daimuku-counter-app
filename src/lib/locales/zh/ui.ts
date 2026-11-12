@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.clean": "无噪声",
+  "voice.noisy": "有噪声",
+  "voice.juzu": "念珠",
+  "voice.bell": "钟",
+  "voice.both": "念珠和钟",
+  "voice.noisyInstruction": "先安静等待3秒，然后一边发出所选声音，一边唱诵指定次数的题目。使用平常的音量，并变换发出声音的时机，不必每唱一遍就发出一次声音。",
   "voice.noiseInstruction": "开始录音后，请保持安静3秒以测量环境噪声，然后开始唱题。",
   "voice.noiseWait": "请保持安静：{n}秒",
   "voice.noiseReady": "现在可以开始唱题。",

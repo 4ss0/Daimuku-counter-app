@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.clean": "Bez hałasu",
+  "voice.noisy": "Z hałasem",
+  "voice.juzu": "Juzu",
+  "voice.bell": "Dzwonek",
+  "voice.both": "Juzu i dzwonek",
+  "voice.noisyInstruction": "Odczekaj 3 sekundy w ciszy. Następnie recytuj podaną liczbę daimoku, wydając wybrany dźwięk. Zachowaj naturalną głośność i zmieniaj momenty dźwięków: jeden dźwięk na każde daimoku nie jest wymagany.",
   "voice.noiseInstruction": "Po rozpoczęciu nagrywania zachowaj ciszę przez 3 sekundy, aby zmierzyć hałas otoczenia. Następnie zacznij recytować.",
   "voice.noiseWait": "Zachowaj ciszę: {n} s",
   "voice.noiseReady": "Możesz teraz zacząć recytować.",

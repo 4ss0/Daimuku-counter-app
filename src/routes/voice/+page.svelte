@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { api, errText, fmtClock, type PersonalProfile, type ValidationResult } from '$lib/api';
+  import { api, errText, fmtClock, type PersonalProfile, type ValidationResult, type TrainingNoise } from '$lib/api';
   import { t, type Key } from '$lib/i18n';
   import { hasNative, shareFile, stopCounting } from '$lib/native';
   import { liveRunning } from '$lib/live';
@@ -16,6 +16,14 @@
   let speed: Speed = 'medium';
   // speed selected when the current take was recorded
   let recordedSpeed: Speed = 'medium';
+  const NOISES: { id: TrainingNoise; label: Key }[] = [
+    { id: 'juzu', label: 'voice.juzu' },
+    { id: 'bell', label: 'voice.bell' },
+    { id: 'both', label: 'voice.both' },
+  ];
+  let noisy = false;
+  let noise: TrainingNoise = 'juzu';
+  let recordedNoise: TrainingNoise | null = null;
   let n = 5;
   let recording = false;
   let busy = false;
@@ -95,7 +103,7 @@
   }
 
   $: sp = SPEEDS.find((s) => s.id === speed)!;
-  $: done = coverage(profile);
+  $: done = coverage(profile, noisy ? noise : null);
 
   function speedOf(ms: number): Speed {
     if (ms >= 2600) return 'slow';
@@ -112,9 +120,11 @@
     return tk.speed ?? speedOf(takeMs(tk));
   }
 
-  function coverage(p: PersonalProfile | null): Record<Speed, boolean> {
+  function coverage(p: PersonalProfile | null, condition: TrainingNoise | null): Record<Speed, boolean> {
     const c = { slow: false, medium: false, fast: false };
-    for (const tk of p?.takes ?? []) c[takeSpeed(tk)] = true;
+    for (const tk of p?.takes ?? []) {
+      if ((tk.noise ?? null) === condition) c[takeSpeed(tk)] = true;
+    }
     return c;
   }
 
@@ -142,6 +152,7 @@
     try {
       await api.startRecording();
       recordedSpeed = speed;
+      recordedNoise = noisy ? noise : null;
       recording = true;
       secs = 0;
       tick = setInterval(async () => {
@@ -185,7 +196,7 @@
     tick = null;
     speaking = false;
     try {
-      const meta = await api.stopRecording(n, true);
+      const meta = await api.stopRecording(n, true, recordedNoise);
       recording = false;
       takeIndex = meta.id;
       if (meta.duration_ms < 1500) {
@@ -264,6 +275,19 @@
   <h1>{$t('voice.title')}</h1>
   <p class="lead glass">{$t('voice.lead')}</p>
 
+  <div class="seg training-mode two-options">
+    <button class:on={!noisy} aria-pressed={!noisy} disabled={busy || recording || result !== null} on:click={() => (noisy = false)}>{$t('voice.clean')}</button>
+    <button class:on={noisy} aria-pressed={noisy} disabled={busy || recording || result !== null} on:click={() => (noisy = true)}>{$t('voice.noisy')}</button>
+  </div>
+  {#if noisy}
+    <div class="seg training-mode">
+      {#each NOISES as condition}
+        <button class:on={noise === condition.id} aria-pressed={noise === condition.id} disabled={busy || recording || result !== null} on:click={() => (noise = condition.id)}>{$t(condition.label)}</button>
+      {/each}
+    </div>
+    <p class="noise-note">{$t('voice.noisyInstruction')}</p>
+  {/if}
+
   <div class="checks">
     {#each SPEEDS as s}
       <div class="check glass" class:ok={done[s.id]}>
@@ -288,7 +312,7 @@
         </div>
       </div>
       <p class="instr">{$t('voice.instr', { n, how: $t(sp.how) })}</p>
-      <p class="noise-note">{$t('voice.noiseInstruction')}</p>
+      {#if !noisy}<p class="noise-note">{$t('voice.noiseInstruction')}</p>{/if}
     {:else if recording}
       <div class="rec-live">
         <span class="dot" class:on={speaking}></span>
@@ -351,6 +375,7 @@
             <span class="tk-speed" data-speed={takeSpeed(tk)}>{$t(SPEEDS.find((s) => s.id === takeSpeed(tk))!.label)}</span>
             <span class="tk-main">
               {$t('voice.takeLine', { n: tk.n_daimoku })}
+              <span class="condition">{$t(tk.noise ? NOISES.find((c) => c.id === tk.noise)!.label : 'voice.clean')}</span>
               <span class="muted">· {$t('voice.each', { s: (takeMs(tk) / 1000).toFixed(1) })}</span>
             </span>
             {#if confirmDelete === tk.id}
@@ -403,6 +428,10 @@
 </div>
 
 <style>
+  .training-mode { margin-bottom: 12px; }
+  .seg.two-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .training-mode button { white-space: normal; min-width: 0; overflow-wrap: anywhere; }
+  .condition { display: block; font-size: 0.8em; opacity: 0.7; }
   .noise-note { text-align: center; color: var(--accent); font-weight: 600; line-height: 1.5; margin: 12px 0; }
   .page {
     width: 100%;

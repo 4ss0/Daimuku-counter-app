@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.clean": "Sans bruit",
+  "voice.noisy": "Avec bruit",
+  "voice.juzu": "Juzu",
+  "voice.bell": "Cloche",
+  "voice.both": "Juzu et cloche",
+  "voice.noisyInstruction": "Attends 3 secondes en silence. Puis récite le nombre indiqué de daimoku en produisant le bruit choisi. Garde un volume naturel et varie les moments : un bruit par daimoku n’est pas nécessaire.",
   "voice.noiseInstruction": "Après le début de l’enregistrement, gardez le silence pendant 3 secondes pour mesurer le bruit ambiant. Puis commencez à réciter.",
   "voice.noiseWait": "Gardez le silence : {n} s",
   "voice.noiseReady": "Vous pouvez commencer à réciter.",

@@ -53,7 +53,10 @@ export interface LiveSessionSummary {
   session: SessionRecord | null;
 }
 
+export type TrainingNoise = 'juzu' | 'bell' | 'both';
+
 export interface TakeRecord {
+  noise?: TrainingNoise | null;
   id: number;
   n_daimoku: number;
   duration_secs: number;
@@ -116,8 +119,8 @@ export const api = {
   clearProfile: () => change(invoke<void>('clear_personal_profile')),
   deleteTake: (id: number) => change(invoke<PersonalProfile>('delete_profile_take', { id })),
   startRecording: () => invoke<void>('start_recording'),
-  stopRecording: (expected: number, calibrate = false) =>
-    invoke<TrainingTakeMeta>('stop_recording', { expectedDaimokuCount: expected, calibrate }),
+  stopRecording: (expected: number, calibrate = false, noise: TrainingNoise | null = null) =>
+    invoke<TrainingTakeMeta>('stop_recording', { expectedDaimokuCount: expected, calibrate, noise }),
   validateTake: (index: number) => invoke<ValidationResult>('validate_training_take', { index }),
   addTakeToProfile: (index: number, speed?: string) =>
     change(invoke<PersonalProfile>('add_take_to_profile', { index, speed: speed ?? null })),

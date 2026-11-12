@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.clean": "Ohne Geräusche",
+  "voice.noisy": "Mit Geräuschen",
+  "voice.juzu": "Juzu",
+  "voice.bell": "Glocke",
+  "voice.both": "Juzu und Glocke",
+  "voice.noisyInstruction": "Warte 3 Sekunden in Stille. Rezitiere dann die angegebene Anzahl Daimoku und erzeuge dabei das gewählte Geräusch. Verwende eine natürliche Lautstärke und variiere die Zeitpunkte: Ein Geräusch pro Daimoku ist nicht nötig.",
   "voice.noiseInstruction": "Bleibe nach dem Aufnahmestart 3 Sekunden still, damit die App Hintergrundgeräusche messen kann. Beginne dann zu rezitieren.",
   "voice.noiseWait": "Bitte still bleiben: {n} s",
   "voice.noiseReady": "Du kannst jetzt rezitieren.",

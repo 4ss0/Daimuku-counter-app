@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.clean": "Zonder geluid",
+  "voice.noisy": "Met geluid",
+  "voice.juzu": "Juzu",
+  "voice.bell": "Bel",
+  "voice.both": "Juzu en bel",
+  "voice.noisyInstruction": "Wacht 3 seconden in stilte. Reciteer daarna het aangegeven aantal daimoku terwijl je het gekozen geluid maakt. Gebruik een natuurlijk volume en wissel de momenten af: één geluid per daimoku is niet nodig.",
   "voice.noiseInstruction": "Blijf na het starten van de opname 3 seconden stil om het achtergrondgeluid te meten. Begin daarna met reciteren.",
   "voice.noiseWait": "Blijf stil: {n} s",
   "voice.noiseReady": "Je kunt nu beginnen met reciteren.",

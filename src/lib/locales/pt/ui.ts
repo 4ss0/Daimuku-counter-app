@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.clean": "Sem ruído",
+  "voice.noisy": "Com ruído",
+  "voice.juzu": "Juzu",
+  "voice.bell": "Sino",
+  "voice.both": "Juzu e sino",
+  "voice.noisyInstruction": "Espera 3 segundos em silêncio. Depois recita o número indicado de daimoku produzindo o ruído escolhido. Usa um volume natural e varia os momentos: não é necessário um som por daimoku.",
   "voice.noiseInstruction": "Depois de iniciar a gravação, fique em silêncio por 3 segundos para medir o ruído ambiente. Depois comece a recitar.",
   "voice.noiseWait": "Fique em silêncio: {n} s",
   "voice.noiseReady": "Já pode começar a recitar.",

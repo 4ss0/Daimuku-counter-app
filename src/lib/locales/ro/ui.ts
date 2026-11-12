@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.clean": "Fără zgomot",
+  "voice.noisy": "Cu zgomot",
+  "voice.juzu": "Juzu",
+  "voice.bell": "Clopot",
+  "voice.both": "Juzu și clopot",
+  "voice.noisyInstruction": "Așteaptă 3 secunde în liniște. Apoi recită numărul indicat de daimoku producând zgomotul ales. Folosește un volum natural și variază momentele: nu este necesar un sunet pentru fiecare daimoku.",
   "voice.noiseInstruction": "După începerea înregistrării, păstrează liniștea timp de 3 secunde pentru a măsura zgomotul ambiental. Apoi începe să reciți.",
   "voice.noiseWait": "Păstrează liniștea: {n} s",
   "voice.noiseReady": "Acum poți începe să reciți.",

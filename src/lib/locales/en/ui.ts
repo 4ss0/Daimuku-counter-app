@@ -1,6 +1,12 @@
 // The texts of the app's screens in English: the reference for every other
 // language, which must have the same keys (see ../README.md).
 export default {
+  "voice.clean": "Without noise",
+  "voice.noisy": "With noise",
+  "voice.juzu": "Juzu",
+  "voice.bell": "Bell",
+  "voice.both": "Juzu and bell",
+  "voice.noisyInstruction": "Wait silently for 3 seconds. Then recite the indicated number of daimoku while making the selected noise. Use a natural volume and vary when the sounds occur: one sound per daimoku is not required.",
   "voice.noiseInstruction": "After pressing Record, stay silent for 3 seconds to measure background noise. Then start reciting.",
   "voice.noiseWait": "Stay silent: {n} s",
   "voice.noiseReady": "You can start reciting now.",
