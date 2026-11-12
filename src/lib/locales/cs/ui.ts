@@ -1,6 +1,10 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.noiseInstruction": "Po zahájení nahrávání zůstaňte 3 sekundy potichu pro změření okolního hluku. Poté začněte recitovat.",
+  "voice.noiseWait": "Zůstaňte potichu: {n} s",
+  "voice.noiseReady": "Nyní můžete začít recitovat.",
+
   'tab.count': 'Počítání',
   'tab.stats': 'Statistiky',
   'tab.voice': 'Tvůj hlas',

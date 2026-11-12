@@ -47,7 +47,8 @@
   let userTakes = -1;
 
   $: liveCount = running ? Math.max(0, (view?.count ?? 0) - pending) : 0;
-  $: baseToday = todayTotal(sessions);
+  $: completedSessions = running ? sessions.filter((s) => s.id !== view?.session_id) : sessions;
+  $: baseToday = todayTotal(completedSessions);
   $: today = running ? baseToday + liveCount : baseToday;
   // the daily goal in two sessions: morning and evening (see stats.ts).
   // The one chosen (the current one, unless the other is touched) goes on
@@ -66,8 +67,8 @@
     strike($prefs.bell.kind, $prefs.bell.volume).catch(() => {});
   }
   // a milestone of all the Daimoku can be crossed while counting
-  $: if (running && liveCount > 0) noteBadges(sessions, liveCount);
-  $: halfDone = todayHalves(sessions);
+  $: if (running && liveCount > 0) noteBadges(completedSessions, liveCount);
+  $: halfDone = todayHalves(completedSessions);
   $: halfNow = {
     morning: halfDone.morning + (running && sessionHalf === 'morning' ? liveCount : 0),
     evening: halfDone.evening + (running && sessionHalf === 'evening' ? liveCount : 0),
@@ -139,6 +140,7 @@
   async function poll() {
     try {
       const v = await api.liveView();
+      if (!running || busy) return;
       tickHalf();
       const now = performance.now();
       const away = document.hidden || now - lastFrameAt > AWAY_MS;
@@ -149,6 +151,7 @@
       // max: a reply overtaken by a newer one must not bring coins back
       lastRecovered = Math.max(lastRecovered, v.recovered ?? 0);
       view = v;
+      if (v.persistence_error) errorText = v.persistence_error;
       if (v.speaking) lastSpokeAt = now;
       heard = running && (v.speaking || now - lastSpokeAt < SPEAK_HOLD_MS);
       sync(away);
@@ -248,9 +251,9 @@
     clearCoins();
     view = null;
     try {
-      await api.startLive();
       tickHalf();
       sessionHalf = picked ?? nowHalf;
+      await api.startLive(sessionHalf);
       liveHalf.set(sessionHalf);
       liveBase.set(halfDone[sessionHalf]);
       running = true;
@@ -268,6 +271,7 @@
   async function stop() {
     if (busy || !running) return;
     busy = true;
+    errorText = '';
     liveRunning.set(false);
     if (timer) {
       clearInterval(timer);
@@ -275,19 +279,22 @@
     }
     stopCounting();
     try {
-      summary = await api.stopLive(sessionHalf);
+      summary = await api.stopLive();
       corrected = summary.count;
       clearCoins();
       // the session is in the list at once, so the ring keeps showing the
       // total of its session of the day, without counting it twice
-      if (summary.session) sessions = [...sessions, summary.session];
+      if (summary.session) sessions = [...sessions.filter((s) => s.id !== summary?.session?.id), summary.session];
       running = false;
       picked = sessionHalf;
       await refresh();
     } catch (e) {
       errorText = errText(e);
+      // Keep Stop available to retry a failed final write.
+      running = true;
+      liveRunning.set(true);
+      timer = setInterval(poll, POLL_MS);
     } finally {
-      running = false;
       busy = false;
     }
   }
@@ -373,10 +380,10 @@
 
   /** Back on this page while a session is still running: pick it up again. */
   async function reattach() {
-    if (!get(liveRunning) || running) return;
+    if (running) return;
     try {
       const v = await api.liveView();
-      if (v.finished) {
+      if (v.session_id == null) {
         liveRunning.set(false);
         return;
       }
@@ -385,8 +392,11 @@
       lastRecovered = v.recovered ?? 0;
       lastSpokeAt = 0;
       heard = false;
-      sessionHalf = get(liveHalf);
+      sessionHalf = v.session_half ?? get(liveHalf);
+      liveHalf.set(sessionHalf);
+      liveBase.set(todayHalves(sessions.filter((s) => s.id !== v.session_id))[sessionHalf]);
       running = true;
+      liveRunning.set(true);
       timer = setInterval(poll, POLL_MS);
     } catch (e) {
       errorText = errText(e);

@@ -1,6 +1,10 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.noiseInstruction": "După începerea înregistrării, păstrează liniștea timp de 3 secunde pentru a măsura zgomotul ambiental. Apoi începe să reciți.",
+  "voice.noiseWait": "Păstrează liniștea: {n} s",
+  "voice.noiseReady": "Acum poți începe să reciți.",
+
   'tab.count': 'Numărare',
   'tab.stats': 'Statistici',
   'tab.voice': 'Vocea ta',

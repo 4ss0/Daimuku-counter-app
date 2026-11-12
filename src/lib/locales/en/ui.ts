@@ -1,6 +1,10 @@
 // The texts of the app's screens in English: the reference for every other
 // language, which must have the same keys (see ../README.md).
 export default {
+  "voice.noiseInstruction": "After pressing Record, stay silent for 3 seconds to measure background noise. Then start reciting.",
+  "voice.noiseWait": "Stay silent: {n} s",
+  "voice.noiseReady": "You can start reciting now.",
+
   'tab.count': 'Count',
   'tab.stats': 'Statistics',
   'tab.voice': 'Your voice',

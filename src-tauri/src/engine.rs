@@ -704,7 +704,7 @@ impl Engine {
         let node_model = graph.emit_idx.clone();
         Self {
             params: Params::from_model(model),
-            fe: FrontEnd::new(sample_rate),
+            fe: FrontEnd::with_band(sample_rate, model.voice_band),
             cmn: OnlineCmn::new(&model.cep_mean),
             prior: model.cep_mean.clone(),
             raw: Vec::new(),

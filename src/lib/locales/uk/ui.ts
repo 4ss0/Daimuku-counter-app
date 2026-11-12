@@ -1,6 +1,10 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.noiseInstruction": "Після початку запису зберігайте тишу 3 секунди для вимірювання фонового шуму. Потім починайте читати даймоку.",
+  "voice.noiseWait": "Зберігайте тишу: {n} с",
+  "voice.noiseReady": "Тепер можна починати читати даймоку.",
+
   'tab.count': 'Лічба',
   'tab.stats': 'Статистика',
   'tab.voice': 'Ваш голос',

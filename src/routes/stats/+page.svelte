@@ -334,15 +334,15 @@
           {#if openId === s.id}
             <div class="edit">
               <div class="stepper">
-                <button on:click={() => change(s, -1)} aria-label={$t('common.less')}>−</button>
+                <button disabled={s.running} on:click={() => change(s, -1)} aria-label={$t('common.less')}>−</button>
                 <span>{s.count}</span>
-                <button on:click={() => change(s, 1)} aria-label={$t('common.more')}>+</button>
+                <button disabled={s.running} on:click={() => change(s, 1)} aria-label={$t('common.more')}>+</button>
               </div>
               {#if !s.manual && s.detected !== s.count}
                 <span class="det">{$t('count.detected', { n: s.detected })}</span>
               {/if}
               <button class="link share-link" on:click={() => shareSession(s)}><svg class="share-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="2.6" /><circle cx="6" cy="12" r="2.6" /><circle cx="18" cy="19" r="2.6" /><path d="M8.3 10.8l7.4-4.3M8.3 13.2l7.4 4.3" /></svg>{$t('share.button')}</button>
-              <button class="link danger" on:click={() => remove(s)}>{$t('common.delete')}</button>
+              <button class="link danger" disabled={s.running} on:click={() => remove(s)}>{$t('common.delete')}</button>
             </div>
           {/if}
         </li>

@@ -1,4 +1,5 @@
 use crate::audio::RecordedAudio;
+use crate::features::{calibrate_voice, VoiceBand};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::sync::Mutex;
@@ -13,6 +14,7 @@ pub struct TrainingTakeMeta {
 }
 
 struct TrainingTake {
+    voice_band: Option<VoiceBand>,
     audio: RecordedAudio,
     expected_daimoku_count: u32,
     created_at: DateTime<Utc>,
@@ -30,11 +32,27 @@ impl TrainingStore {
     }
 
     pub fn add(&self, audio: RecordedAudio, expected_daimoku_count: u32) -> TrainingTakeMeta {
+        self.add_with_band(audio, expected_daimoku_count, None)
+    }
+
+    pub fn add_calibrated(&self, mut audio: RecordedAudio, expected: u32) -> Result<TrainingTakeMeta, String> {
+        let (start, band) = calibrate_voice(&audio.samples, audio.sample_rate)?;
+        audio.samples.drain(..start);
+        Ok(self.add_with_band(audio, expected, Some(band)))
+    }
+
+    pub fn voice_band(&self, index: usize) -> Result<Option<VoiceBand>, String> {
+        self.takes.lock().unwrap().get(index).map(|t| t.voice_band)
+            .ok_or_else(|| format!("training take {index} not found"))
+    }
+
+    fn add_with_band(&self, audio: RecordedAudio, expected_daimoku_count: u32, voice_band: Option<VoiceBand>) -> TrainingTakeMeta {
         let mut takes = self.takes.lock().unwrap();
         let id = takes.len();
         let created_at = Utc::now();
         let meta = meta_for(id, &audio, expected_daimoku_count, created_at);
         takes.push(TrainingTake {
+            voice_band,
             audio,
             expected_daimoku_count,
             created_at,

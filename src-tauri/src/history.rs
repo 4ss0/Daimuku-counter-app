@@ -5,7 +5,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// The session of the day a record belongs to: chosen on the Count
 /// screen (to continue the morning or the evening session) or when it is
@@ -30,6 +30,8 @@ impl Half {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionRecord {
     pub id: u64,
+    #[serde(default)]
+    pub running: bool,
     pub started_at: DateTime<Utc>,
     pub duration_secs: f32,
     /// Daimoku credited for the session (the user may have corrected it).
@@ -49,6 +51,8 @@ struct HistoryFile {
     next_id: u64,
     daily_goal: u32,
     sessions: Vec<SessionRecord>,
+    #[serde(skip)]
+    active: Option<u64>,
 }
 
 impl Default for HistoryFile {
@@ -58,6 +62,7 @@ impl Default for HistoryFile {
             next_id: 1,
             daily_goal: DEFAULT_DAILY_GOAL,
             sessions: Vec::new(),
+            active: None,
         }
     }
 }
@@ -67,9 +72,10 @@ const MAX_COUNT: u32 = 1_000_000;
 /// A session added by hand lasts at most a day.
 const MAX_MANUAL_SECS: f32 = 86_400.0;
 
+#[derive(Clone)]
 pub struct History {
     path: Option<PathBuf>,
-    inner: Mutex<HistoryFile>,
+    inner: Arc<Mutex<HistoryFile>>,
 }
 
 impl History {
@@ -83,12 +89,13 @@ impl History {
         let data = path.as_deref().map(read_file).unwrap_or_default();
         Self {
             path,
-            inner: Mutex::new(data),
+            inner: Arc::new(Mutex::new(data)),
         }
     }
 
     pub fn list(&self) -> Vec<SessionRecord> {
-        self.inner.lock().unwrap().sessions.clone()
+        self.inner.lock().unwrap().sessions.iter()
+            .filter(|s| !s.running || s.count > 0).cloned().collect()
     }
 
     /// Records a finished session. `detected` is what the counter found,
@@ -105,6 +112,7 @@ impl History {
         let mut g = self.inner.lock().unwrap();
         let rec = SessionRecord {
             id: g.next_id,
+            running: false,
             started_at,
             duration_secs: duration_secs.max(0.0),
             count: count.min(MAX_COUNT),
@@ -116,6 +124,40 @@ impl History {
         g.sessions.push(rec.clone());
         self.persist(&g)?;
         Ok(rec)
+    }
+
+    /// Reserve one durable record; a restart recovers it as a finished session.
+    pub fn begin_live(&self, half: Option<Half>) -> Result<SessionRecord, String> {
+        let mut g = self.inner.lock().unwrap();
+        if g.active.is_some() { return Err("a session is still active".into()); }
+        let mut next = g.clone();
+        let rec = SessionRecord { id: next.next_id, running: true, started_at: Utc::now(),
+            duration_secs: 0.0, count: 0, detected: 0, manual: false, half };
+        next.next_id += 1;
+        next.active = Some(rec.id);
+        next.sessions.push(rec.clone());
+        self.persist(&next)?;
+        *g = next;
+        Ok(rec)
+    }
+
+    pub fn checkpoint_live(&self, id: u64, secs: f32, count: u32, finished: bool) -> Result<Option<SessionRecord>, String> {
+        let mut g = self.inner.lock().unwrap();
+        if g.active != Some(id) { return Err("session is not active".into()); }
+        let mut next = g.clone();
+        let rec = next.sessions.iter_mut().find(|s| s.id == id).ok_or("active session missing")?;
+        rec.duration_secs = secs.max(0.0);
+        rec.count = count.min(MAX_COUNT);
+        rec.detected = rec.count;
+        rec.running = !finished;
+        let result = if finished && count == 0 { None } else { Some(rec.clone()) };
+        if finished {
+            next.active = None;
+            if count == 0 { next.sessions.retain(|s| s.id != id); }
+        }
+        self.persist(&next)?;
+        *g = next;
+        Ok(result)
     }
 
     /// Adds `count` Daimoku chanted without the counter, now.
@@ -148,6 +190,7 @@ impl History {
 
     pub fn set_count(&self, id: u64, count: u32) -> Result<SessionRecord, String> {
         let mut g = self.inner.lock().unwrap();
+        if g.active == Some(id) { return Err("stop the session before editing it".into()); }
         let rec = g
             .sessions
             .iter_mut()
@@ -161,6 +204,7 @@ impl History {
 
     pub fn delete(&self, id: u64) -> Result<(), String> {
         let mut g = self.inner.lock().unwrap();
+        if g.active == Some(id) { return Err("stop the session before deleting it".into()); }
         let before = g.sessions.len();
         g.sessions.retain(|s| s.id != id);
         if g.sessions.len() == before {
@@ -194,6 +238,7 @@ impl History {
         normalize(&mut data);
         let n = data.sessions.len();
         let mut g = self.inner.lock().unwrap();
+        if g.active.is_some() { return Err("stop the session before restoring a backup".into()); }
         self.persist(&data)?;
         *g = data;
         Ok(n)
@@ -214,6 +259,9 @@ impl History {
 }
 
 fn normalize(h: &mut HistoryFile) {
+    h.active = None;
+    h.sessions.retain(|s| !s.running || s.count > 0);
+    for s in &mut h.sessions { s.running = false; }
     // never reuse an id, even if the file was edited by hand
     let max_id = h.sessions.iter().map(|s| s.id).max().unwrap_or(0);
     h.next_id = h.next_id.max(max_id + 1);
@@ -281,6 +329,76 @@ mod tests {
         let c = h2.add_manual(1).unwrap();
         assert!(c.id > b.id, "ids are never reused");
         assert_eq!(History::load_from(Some(p)).list().len(), 2);
+    }
+
+    #[test]
+    fn live_checkpoint_survives_restart_without_double_credit() {
+        let path = tmp("live-recovery");
+        let history = History::load_from(Some(path.clone()));
+        let live = history.begin_live(Some(Half::Evening)).unwrap();
+        history.checkpoint_live(live.id, 10.0, 8, false).unwrap();
+        // Simulate process death: no Stop, no cleanup, just reload disk.
+        let recovered = History::load_from(Some(path.clone()));
+        let records = recovered.list();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].count, 8);
+        assert_eq!(records[0].half, Some(Half::Evening));
+        assert!(!records[0].running);
+        // The still-running original process updates the SAME record at Stop.
+        history.clone().checkpoint_live(live.id, 15.0, 12, true).unwrap();
+        let records = History::load_from(Some(path)).list();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, live.id);
+        assert_eq!(records[0].count, 12);
+        assert_eq!(records[0].detected, 12);
+        assert!(!records[0].running);
+        assert!(history.set_count(live.id, 13).is_ok());
+    }
+
+    #[test]
+    fn live_session_cannot_be_edited_deleted_or_replaced() {
+        let history = History::load_from(None);
+        let backup = history.to_backup();
+        let live = history.begin_live(None).unwrap();
+        assert!(history.begin_live(None).is_err());
+        assert!(history.set_count(live.id, 99).is_err());
+        assert!(history.delete(live.id).is_err());
+        assert!(history.restore_backup(backup.clone()).is_err());
+        // Other records remain editable during counting.
+        let other = history.add_manual(3).unwrap();
+        history.set_count(other.id, 4).unwrap();
+        history.checkpoint_live(live.id, 2.0, 1, true).unwrap();
+        history.delete(live.id).unwrap();
+        history.restore_backup(backup).unwrap();
+    }
+
+    #[test]
+    fn empty_live_sessions_are_not_kept_after_stop_or_restart() {
+        let path = tmp("live-empty");
+        let history = History::load_from(Some(path.clone()));
+        let live = history.begin_live(None).unwrap();
+        assert!(History::load_from(Some(path)).list().is_empty());
+        assert!(history.checkpoint_live(live.id, 10.0, 0, true).unwrap().is_none());
+        assert!(history.list().is_empty());
+        assert!(history.begin_live(None).unwrap().id > live.id);
+    }
+
+    #[test]
+    fn failed_checkpoint_keeps_previous_record_and_can_be_retried() {
+        let path = tmp("live-failure");
+        let history = History::load_from(Some(path.clone()));
+        let live = history.begin_live(None).unwrap();
+        history.checkpoint_live(live.id, 3.0, 2, false).unwrap();
+        // A directory at the temporary-file path makes the next write fail.
+        let blocked = path.with_extension("json.tmp");
+        fs::create_dir(&blocked).unwrap();
+        assert!(history.checkpoint_live(live.id, 5.0, 4, true).is_err());
+        assert_eq!(history.list()[0].count, 2);
+        assert!(history.list()[0].running);
+        assert!(history.delete(live.id).is_err());
+        fs::remove_dir(&blocked).unwrap();
+        history.checkpoint_live(live.id, 5.0, 4, true).unwrap();
+        assert_eq!(History::load_from(Some(path)).list()[0].count, 4);
     }
 
     #[test]

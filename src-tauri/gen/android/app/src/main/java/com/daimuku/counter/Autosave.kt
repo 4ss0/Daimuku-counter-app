@@ -1,5 +1,10 @@
 package com.daimuku.counter
 
+import android.content.ContentValues
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.AtomicFile
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -22,6 +27,9 @@ class Autosave(private val context: Context) {
   private val store = context.getSharedPreferences("autosave", Context.MODE_PRIVATE)
   /** One write at a time, off the page's thread. */
   private val writer = Executors.newSingleThreadExecutor()
+
+  private fun enabled() = !store.getBoolean("disabled", false)
+  private fun localFile() = File(context.filesDir, DEFAULT_NAME)
 
   /** The chosen file, if any. */
   fun target(): Uri? = store.getString(KEY_URI, null)?.let { Uri.parse(it) }
@@ -57,13 +65,13 @@ class Autosave(private val context: Context) {
   /** From now on the saves go to `uri` (already held); the previous file is let go. */
   fun use(uri: Uri) {
     target()?.let { if (it != uri) release(it) }
-    store.edit().putString(KEY_URI, uri.toString()).apply()
+    store.edit().putString(KEY_URI, uri.toString()).putBoolean("owned", false).putBoolean("disabled", false).apply()
   }
 
   /** No more automatic saves. */
   fun forget() {
     target()?.let { release(it) }
-    store.edit().remove(KEY_URI).apply()
+    store.edit().remove(KEY_URI).remove("owned").putBoolean("disabled", true).apply()
   }
 
   /**
@@ -72,10 +80,18 @@ class Autosave(private val context: Context) {
    * gone). Null without a file.
    */
   fun info(): String? {
-    val uri = target() ?: return null
+    if (!enabled()) return null
+    val uri = target()
+    if (uri == null) {
+      val publicDefault = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+      val file = localFile()
+      return JSONObject().put("name", if (publicDefault) "Download/Daimoku Counter/$DEFAULT_NAME" else file.absolutePath)
+        .put("modified", if (!publicDefault && file.exists()) file.lastModified() else JSONObject.NULL)
+        .put("ok", true).toString()
+    }
     var name = uri.lastPathSegment ?: ""
     var modified: Long? = null
-    val allowed = context.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isWritePermission }
+    val allowed = store.getBoolean("owned", false) || context.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isWritePermission }
     var found = false
     if (allowed) {
       try {
@@ -84,8 +100,10 @@ class Autosave(private val context: Context) {
             found = true
             val n = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             if (n >= 0 && !c.isNull(n)) name = c.getString(n)
-            val m = c.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
-            if (m >= 0 && !c.isNull(m)) modified = c.getLong(m)
+            val owned = store.getBoolean("owned", false)
+            val m = c.getColumnIndex(if (owned) MediaStore.MediaColumns.DATE_MODIFIED else DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+            if (m >= 0 && !c.isNull(m)) modified = c.getLong(m) * (if (owned) 1000L else 1L)
+            if (owned) name = "Download/Daimoku Counter/$name"
           }
         }
       } catch (e: Exception) {
@@ -103,13 +121,49 @@ class Autosave(private val context: Context) {
   fun write(src: File, done: (Boolean) -> Unit) {
     writer.execute {
       val uri = target()
-      val ok = uri != null && try {
-        copy(src, uri)
+      val ok = try {
+        if (!enabled()) throw IOException("autosave disabled")
+        if (uri != null) copy(src, uri)
+        else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) createDefault(src)
+        else {
+          // Android 8/9 require user selection for shared storage. Keep a
+          // local atomic copy until the user chooses a destination.
+          val file = AtomicFile(localFile())
+          val output = file.startWrite()
+          try {
+            src.inputStream().use { it.copyTo(output) }
+            file.finishWrite(output)
+          } catch (e: Exception) {
+            file.failWrite(output)
+            throw e
+          }
+        }
         true
       } catch (e: Exception) {
         false
       }
       done(ok)
+    }
+  }
+
+  @android.annotation.TargetApi(Build.VERSION_CODES.Q)
+  private fun createDefault(src: File) {
+    val resolver = context.contentResolver
+    val values = ContentValues().apply {
+      put(MediaStore.MediaColumns.DISPLAY_NAME, DEFAULT_NAME)
+      put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
+      put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/Daimoku Counter")
+      put(MediaStore.MediaColumns.IS_PENDING, 1)
+    }
+    val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+      ?: throw IOException("cannot create automatic backup")
+    try {
+      copy(src, uri)
+      resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+      store.edit().putString(KEY_URI, uri.toString()).putBoolean("owned", true).apply()
+    } catch (e: Exception) {
+      resolver.delete(uri, null, null)
+      throw e
     }
   }
 
@@ -147,6 +201,7 @@ class Autosave(private val context: Context) {
 
   companion object {
     private const val KEY_URI = "uri"
+    private const val DEFAULT_NAME = "daimoku-counter-autosave.json"
     /** Bigger than any backup (a few MB); the page could not take more. */
     private const val MAX_BYTES = 64L * 1024 * 1024
 

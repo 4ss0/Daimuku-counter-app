@@ -129,3 +129,24 @@ One-time setup in the Play Console:
 The products are consumed as soon as they are bought, so they can be given
 again, and they unlock nothing. If Play is missing or the ids do not exist
 yet, the page says that donations are not available.
+
+## Automatic backups and interrupted sessions
+
+Counting checkpoints update one history record in the app data folder as the
+count changes (checked by the audio worker every 100 ms). A restarted process
+recovers the last saved count as a finished session. Stop finalizes that same
+record, without adding the count twice. Active records cannot be edited,
+deleted, or replaced by a backup restore.
+
+Automatic backup is enabled by default when no destination has been selected.
+On Android 10 and later the default JSON file is created in
+`Download/Daimoku Counter/daimoku-counter-autosave.json`. An existing user-chosen
+file is preserved as the destination. On Android 8/9 the default copy is private
+to the app and is removed on uninstall: choose a file in Settings for a backup
+outside the app. Explicitly disabling automatic backup is remembered.
+
+Phone verification is still required: count while receiving a WhatsApp call,
+resume after hanging up, stop during an interruption, and close/reopen the app
+before pressing Stop. Check that the recovered total is kept and that Stop does
+not duplicate it. Also check the backup file and Gongyo controls on a narrow
+screen. The Windows development app's data is not a test fixture.

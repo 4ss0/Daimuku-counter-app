@@ -25,6 +25,7 @@
   } from '$lib/gongyo';
   import { ORIGINAL } from '$lib/gongyoTranslation';
   import { keepScreen } from '$lib/native';
+  import BellButton from '$lib/BellButton.svelte';
   import KaraokeLine from '$lib/KaraokeLine.svelte';
 
   const PREVIEW = pieces('Myo ho ren ge kyo.');
@@ -297,7 +298,7 @@
 
     {#if finished}<p class="end">{$t('gongyo.end')}</p>{/if}
 
-    <div class="controls">
+    <div class="controls" class:has-bell={$prefs.bell.on}>
       <button class="ctl glass" on:click={() => goTo(0)} aria-label={$t('gongyo.restart')} title={$t('gongyo.restart')}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4.5h4.5" /></svg>
       </button>
@@ -314,6 +315,7 @@
       <button class="ctl glass" on:click={() => goTo(index + 1)} aria-label={$t('gongyo.next')} title={$t('gongyo.next')}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
       </button>
+      {#if $prefs.bell.on}<div class="gongyo-bell"><BellButton /></div>{/if}
     </div>
 
     <section class="card glass">
@@ -539,6 +541,23 @@
     margin: 0;
     text-align: center;
     color: var(--green);
+  }
+
+  .gongyo-bell {
+    width: 100%;
+    max-width: 48px;
+    --bell-size: 48px;
+  }
+  .controls.has-bell {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 48px)) minmax(56px, 76px) repeat(2, minmax(0, 48px));
+    gap: clamp(4px, 2vw, 16px);
+  }
+  .controls.has-bell .ctl,
+  .controls.has-bell .go {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1;
   }
 
   .controls {

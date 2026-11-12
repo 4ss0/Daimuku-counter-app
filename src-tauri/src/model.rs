@@ -54,6 +54,8 @@ impl Gmm {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Model {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_band: Option<crate::features::VoiceBand>,
     /// N_CHAIN x MIX x FEAT_DIM
     pub mu: Vec<f32>,
     pub var: Vec<f32>,

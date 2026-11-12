@@ -1,6 +1,6 @@
 use crate::audio::{self, AudioState, LiveView, RecordedAudio};
 use crate::dsp::{count_daimoku_with_profile, DaimokuCountResult, StreamingState};
-use crate::history::{started_before_now, Half, History, SessionRecord};
+use crate::history::{Half, History, SessionRecord};
 use crate::profile::{PersonalProfile, ProfileState};
 use crate::training::{TrainingStore, TrainingTakeMeta};
 use serde::Serialize;
@@ -28,12 +28,17 @@ pub async fn stop_recording(
     audio_state: State<'_, AudioState>,
     training_store: State<'_, TrainingStore>,
     expected_daimoku_count: u32,
+    calibrate: Option<bool>,
 ) -> Result<TrainingTakeMeta, String> {
     let rx = audio_state.stop()?;
     let audio = rx
         .await
         .map_err(|e| format!("audio thread dropped reply: {e}"))?;
-    Ok(training_store.add(audio, expected_daimoku_count))
+    if calibrate.unwrap_or(false) {
+        training_store.add_calibrated(audio, expected_daimoku_count)
+    } else {
+        Ok(training_store.add(audio, expected_daimoku_count))
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -84,6 +89,9 @@ pub fn reset_live_counter(
     state: State<'_, AudioState>,
     sample_rate: u32,
 ) -> Result<(), String> {
+    if state.live_view().session_id.is_some() {
+        return Err("cannot reset an active session".into());
+    }
     if sample_rate == 0 {
         return Err("sample_rate must be > 0".to_string());
     }
@@ -122,20 +130,27 @@ pub struct LiveSessionSummary {
 pub fn start_live_session(
     audio_state: State<'_, AudioState>,
     profile_state: State<'_, ProfileState>,
+    history: State<'_, History>,
+    half: Option<String>,
 ) -> Result<(), String> {
+    let half = half.as_deref().map(Half::parse).transpose()?;
+    if audio_state.live_view().session_id.is_some() {
+        return Err("finish saving the previous session first".into());
+    }
     audio_state.live_set_profile(Some(profile_state.snapshot()));
-    audio_state.start_live()
+    audio_state.start_live()?;
+    if let Err(error) = audio_state.live().begin_history(history.inner().clone(), half) {
+        let _ = audio_state.stop();
+        return Err(error);
+    }
+    Ok(())
 }
 
-/// `half`: the session of the day it continues ("morning" | "evening"),
-/// if chosen on the Count screen.
+/// Finalizes the same record that was credited while counting.
 #[tauri::command]
 pub async fn stop_live_session(
     audio_state: State<'_, AudioState>,
-    history: State<'_, History>,
-    half: Option<String>,
 ) -> Result<LiveSessionSummary, String> {
-    let half = half.as_deref().map(Half::parse).transpose()?;
     let rx = audio_state.stop()?;
     let audio = rx
         .await
@@ -149,12 +164,7 @@ pub async fn stop_live_session(
     if !audio.samples.is_empty() {
         audio_state.set_last_live(audio);
     }
-    let session = if view.count > 0 {
-        let n = view.count as u32;
-        Some(history.add(started_before_now(view.elapsed_secs), view.elapsed_secs, n, n, false, half)?)
-    } else {
-        None
-    };
+    let session = audio_state.live().checkpoint(true)?;
     Ok(LiveSessionSummary {
         count: view.count,
         duration_secs: view.elapsed_secs,
@@ -314,7 +324,7 @@ pub fn add_take_to_profile(
         return Err("take has no declared Daimoku count".to_string());
     }
 
-    profile_state.add_take_with_speed(&audio.samples, audio.sample_rate, expected as u32, speed)?;
+    profile_state.add_calibrated_take(&audio.samples, audio.sample_rate, expected as u32, speed, store.voice_band(index)?)?;
     let new_profile = profile_state.snapshot();
     audio_state.live_set_profile(Some(new_profile.clone()));
 

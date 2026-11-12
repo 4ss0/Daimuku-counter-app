@@ -1,6 +1,10 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.noiseInstruction": "Depois de iniciar a gravação, fique em silêncio por 3 segundos para medir o ruído ambiente. Depois comece a recitar.",
+  "voice.noiseWait": "Fique em silêncio: {n} s",
+  "voice.noiseReady": "Já pode começar a recitar.",
+
   'tab.count': 'Contar',
   'tab.stats': 'Estatísticas',
   'tab.voice': 'Sua voz',

@@ -17,6 +17,19 @@ pub fn set_data_dir(dir: PathBuf) {
     let _ = DATA_DIR.set(dir);
 }
 
+#[cfg(test)]
+pub fn data_dir() -> Option<PathBuf> {
+    // Never use installed application data in tests, on any OS.
+    thread_local! {
+        static TEST_DIR: PathBuf = {
+            let root = std::env::temp_dir().join(format!("daimoku-tests-{}", std::process::id()));
+            root.join(format!("{:?}", std::thread::current().id()).replace(':', "_"))
+        };
+    }
+    Some(TEST_DIR.with(Clone::clone))
+}
+
+#[cfg(not(test))]
 pub fn data_dir() -> Option<PathBuf> {
     if let Some(d) = DATA_DIR.get() {
         return Some(d.clone());
@@ -26,6 +39,14 @@ pub fn data_dir() -> Option<PathBuf> {
 
 /// Folder for files the user saves on purpose (WAV of a session).
 /// Desktop: the Desktop (or home). Mobile: `<app data>/exports`.
+#[cfg(test)]
+pub fn export_dir() -> Option<PathBuf> {
+    let dir = data_dir()?.join("exports");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+#[cfg(not(test))]
 pub fn export_dir() -> Option<PathBuf> {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
@@ -56,5 +77,18 @@ fn prune_old(dir: &std::path::Path) {
         if old {
             let _ = std::fs::remove_file(e.path());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn application_data_is_isolated_even_on_windows() {
+        let actual = super::data_dir().unwrap();
+        assert!(actual.starts_with(std::env::temp_dir()));
+        assert_ne!(Some(actual.clone()), dirs::data_dir().map(|p| p.join("daimuku-counter")));
+        assert_eq!(actual, super::data_dir().unwrap());
+        let other = std::thread::spawn(|| super::data_dir().unwrap()).join().unwrap();
+        assert_ne!(actual, other);
     }
 }

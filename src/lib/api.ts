@@ -19,6 +19,9 @@ export interface RestoreSummary {
 }
 
 export interface LiveView {
+  session_id: number | null;
+  session_half: 'morning' | 'evening' | null;
+  persistence_error: string | null;
   count: number;
   /** Of `count`, the Daimoku added later by the checks (shown as coins). */
   recovered: number;
@@ -31,6 +34,7 @@ export interface LiveView {
 }
 
 export interface SessionRecord {
+  running?: boolean;
   id: number;
   started_at: string; // ISO 8601, UTC
   duration_secs: number;
@@ -82,10 +86,9 @@ export interface ValidationResult {
 }
 
 export const api = {
-  startLive: () => invoke<void>('start_live_session'),
-  /** `half`: the session of the day this one continues. */
-  stopLive: async (half?: 'morning' | 'evening') => {
-    const r = await invoke<LiveSessionSummary>('stop_live_session', { half: half ?? null });
+  startLive: (half: 'morning' | 'evening') => invoke<void>('start_live_session', { half }),
+  stopLive: async () => {
+    const r = await invoke<LiveSessionSummary>('stop_live_session');
     if (r.session) dataChanged();
     return r;
   },
@@ -113,8 +116,8 @@ export const api = {
   clearProfile: () => change(invoke<void>('clear_personal_profile')),
   deleteTake: (id: number) => change(invoke<PersonalProfile>('delete_profile_take', { id })),
   startRecording: () => invoke<void>('start_recording'),
-  stopRecording: (expected: number) =>
-    invoke<TrainingTakeMeta>('stop_recording', { expectedDaimokuCount: expected }),
+  stopRecording: (expected: number, calibrate = false) =>
+    invoke<TrainingTakeMeta>('stop_recording', { expectedDaimokuCount: expected, calibrate }),
   validateTake: (index: number) => invoke<ValidationResult>('validate_training_take', { index }),
   addTakeToProfile: (index: number, speed?: string) =>
     change(invoke<PersonalProfile>('add_take_to_profile', { index, speed: speed ?? null })),

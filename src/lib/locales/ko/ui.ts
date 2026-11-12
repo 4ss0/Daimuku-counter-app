@@ -1,6 +1,10 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.noiseInstruction": "녹음을 시작한 후 주변 소음을 측정할 수 있도록 3초 동안 조용히 기다린 다음 창제를 시작하세요.",
+  "voice.noiseWait": "조용히 기다려 주세요: {n}초",
+  "voice.noiseReady": "이제 창제를 시작하세요.",
+
   'tab.count': '세기',
   'tab.stats': '통계',
   'tab.voice': '내 목소리',

@@ -22,7 +22,7 @@
   let secs = 0;
   let speaking = false;
   let tick: ReturnType<typeof setInterval> | null = null;
-  let t0 = 0;
+  const NOISE_SECONDS = 3;
 
   let takeIndex: number | null = null;
   let result: ValidationResult | null = null;
@@ -143,12 +143,12 @@
       await api.startRecording();
       recordedSpeed = speed;
       recording = true;
-      t0 = Date.now();
       secs = 0;
       tick = setInterval(async () => {
-        secs = (Date.now() - t0) / 1000;
         try {
-          speaking = (await api.liveView()).speaking;
+          const view = await api.liveView();
+          secs = view.elapsed_secs;
+          speaking = secs >= NOISE_SECONDS && view.speaking;
         } catch {
           speaking = false;
         }
@@ -185,7 +185,7 @@
     tick = null;
     speaking = false;
     try {
-      const meta = await api.stopRecording(n);
+      const meta = await api.stopRecording(n, true);
       recording = false;
       takeIndex = meta.id;
       if (meta.duration_ms < 1500) {
@@ -195,7 +195,7 @@
         result = await api.validateTake(meta.id);
       }
     } catch (e) {
-      errorText = errText(e);
+      errorText = String(e).includes('calibration-too-short') ? $t('voice.tooShort') : errText(e);
       recording = false;
     } finally {
       busy = false;
@@ -288,12 +288,16 @@
         </div>
       </div>
       <p class="instr">{$t('voice.instr', { n, how: $t(sp.how) })}</p>
+      <p class="noise-note">{$t('voice.noiseInstruction')}</p>
     {:else if recording}
       <div class="rec-live">
         <span class="dot" class:on={speaking}></span>
-        <span>{$t('voice.recording', { n })}</span>
-        <span class="clock">{fmtClock(secs)}</span>
+        <span role="status" aria-live="polite">{secs < NOISE_SECONDS
+          ? $t('voice.noiseWait', { n: Math.ceil(NOISE_SECONDS - secs) })
+          : $t('voice.recording', { n })}</span>
+        <span class="clock">{fmtClock(Math.max(0, secs - NOISE_SECONDS))}</span>
       </div>
+      {#if secs >= NOISE_SECONDS}<p class="noise-note" role="status">{$t('voice.noiseReady')}</p>{/if}
     {/if}
 
     {#if micTaken && !result}
@@ -302,7 +306,7 @@
     {/if}
 
     {#if !result}
-      <button class="go" class:stop={recording} on:click={recording ? stop : start} disabled={busy || micTaken} aria-label={recording ? $t('voice.finish') : $t('voice.record')}>
+      <button class="go" class:stop={recording} on:click={recording ? stop : start} disabled={busy || micTaken || (recording && secs < NOISE_SECONDS)} aria-label={recording ? $t('voice.finish') : $t('voice.record')}>
         {#if recording}
           <svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" /></svg>
         {:else}
@@ -399,6 +403,7 @@
 </div>
 
 <style>
+  .noise-note { text-align: center; color: var(--accent); font-weight: 600; line-height: 1.5; margin: 12px 0; }
   .page {
     width: 100%;
     max-width: 520px;

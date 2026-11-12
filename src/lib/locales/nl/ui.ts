@@ -1,6 +1,10 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.noiseInstruction": "Blijf na het starten van de opname 3 seconden stil om het achtergrondgeluid te meten. Begin daarna met reciteren.",
+  "voice.noiseWait": "Blijf stil: {n} s",
+  "voice.noiseReady": "Je kunt nu beginnen met reciteren.",
+
   'tab.count': 'Tellen',
   'tab.stats': 'Statistieken',
   'tab.voice': 'Je stem',

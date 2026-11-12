@@ -12,6 +12,8 @@
 
 use crate::base::{decode_wav, BASE_CLIPS};
 use crate::model::Model;
+use crate::features::VoiceBand;
+use crate::train::build_item_with_band;
 use crate::train::{align_item, build_item, train_model, user_take_weight, TrainItem};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -32,6 +34,8 @@ const MIN_TAKE_SECS: f32 = 0.5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TakeRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_band: Option<VoiceBand>,
     pub id: usize,
     pub n_daimoku: u32,
     pub duration_secs: f32,
@@ -193,8 +197,9 @@ fn load_inner() -> ProfileInner {
         version: 1,
         takes: kept_takes,
     };
-    let model = retrain(&base_items, &user_items).unwrap_or_else(base_only_fallback);
-    let slow_model = retrain_slow(&base_items, &user_items, &index.takes);
+    // refresh_model below trains once, with the calibrated band if present.
+    let model = base_only_fallback();
+    let slow_model = None;
     let mut inner = ProfileInner {
         index,
         base_items,
@@ -202,6 +207,7 @@ fn load_inner() -> ProfileInner {
         model,
         slow_model,
     };
+    refresh_model(&mut inner);
     recompute_take_periods(&mut inner);
     inner
 }
@@ -271,6 +277,13 @@ impl ProfileState {
         n_daimoku: u32,
         speed: Option<String>,
     ) -> Result<usize, String> {
+        self.add_calibrated_take(samples, sample_rate, n_daimoku, speed, None)
+    }
+
+    pub fn add_calibrated_take(
+        &self, samples: &[f32], sample_rate: u32, n_daimoku: u32,
+        speed: Option<String>, voice_band: Option<VoiceBand>,
+    ) -> Result<usize, String> {
         let speed = speed.filter(|s| matches!(s.as_str(), "slow" | "medium" | "fast"));
         if n_daimoku == 0 {
             return Err("n_daimoku must be >= 1".to_string());
@@ -293,6 +306,7 @@ impl ProfileState {
             write_wav_f32(&path, samples, sample_rate)?;
         }
         g.index.takes.push(TakeRecord {
+            voice_band: voice_band.and_then(VoiceBand::valid),
             id,
             n_daimoku,
             duration_secs,
@@ -301,8 +315,7 @@ impl ProfileState {
             speed,
         });
         g.user_items.push(item);
-        g.model = retrain(&g.base_items, &g.user_items).unwrap_or_else(|| g.model.clone());
-        g.slow_model = retrain_slow(&g.base_items, &g.user_items, &g.index.takes);
+        refresh_model(g);
         recompute_take_periods(g);
         write_index(&g.index)?;
         Ok(id)
@@ -323,8 +336,7 @@ impl ProfileState {
         if let Some(path) = take_wav_path(id) {
             let _ = fs::remove_file(path);
         }
-        g.model = retrain(&g.base_items, &g.user_items).unwrap_or_else(base_only_fallback);
-        g.slow_model = retrain_slow(&g.base_items, &g.user_items, &g.index.takes);
+        refresh_model(g);
         recompute_take_periods(g);
         write_index(&g.index)
     }
@@ -378,8 +390,7 @@ impl ProfileState {
         }
         g.index = index;
         g.user_items = user_items;
-        g.model = retrain(&g.base_items, &g.user_items).unwrap_or_else(base_only_fallback);
-        g.slow_model = retrain_slow(&g.base_items, &g.user_items, &g.index.takes);
+        refresh_model(g);
         recompute_take_periods(g);
         write_index(&g.index)?;
         Ok(g.index.takes.len())
@@ -393,8 +404,7 @@ impl ProfileState {
         }
         g.index = ProfileIndex { version: 1, takes: Vec::new() };
         g.user_items.clear();
-        g.model = retrain(&g.base_items, &g.user_items).unwrap_or_else(base_only_fallback);
-        g.slow_model = retrain_slow(&g.base_items, &g.user_items, &g.index.takes);
+        refresh_model(g);
         write_index(&g.index)
     }
 }
@@ -470,6 +480,7 @@ fn base_only_fallback() -> Model {
     use crate::features::FEAT_DIM;
     use crate::model::{Gmm, MIX, N_CHAIN};
     Model {
+        voice_band: None,
         mu: vec![0.0; N_CHAIN * MIX * FEAT_DIM],
         var: vec![1.0; N_CHAIN * MIX * FEAT_DIM],
         log_w: vec![-(MIX as f32).ln(); N_CHAIN * MIX],
@@ -483,6 +494,39 @@ fn base_only_fallback() -> Model {
         min_cycle_frames: 40,
         max_cycle_frames: 800,
     }
+}
+
+/// Rebuild all feature sets with one common band. Read one saved recording at
+/// a time, rather than retaining full-rate WAV buffers for the app lifetime.
+fn refresh_model(g: &mut ProfileInner) {
+    let requested = VoiceBand::union(g.index.takes.iter().filter_map(|t| t.voice_band));
+    for band in [requested, None] {
+        let base: Option<Vec<TrainItem>> = BASE_CLIPS.iter().map(|clip| {
+            let (samples, sr) = decode_wav(clip.wav).ok()?;
+            build_item_with_band(&samples, sr, clip.n_cycles, BASE_WEIGHT, band)
+        }).collect();
+        let user: Option<Vec<TrainItem>> = g.index.takes.iter().map(|take| {
+            let bytes = fs::read(take_wav_path(take.id)?).ok()?;
+            let (samples, sr) = decode_wav(&bytes).ok()?;
+            build_item_with_band(&samples, sr, take.n_daimoku as usize, TAKE_WEIGHT, band)
+        }).collect();
+        if let (Some(base), Some(user)) = (base, user) {
+            if let Some(mut model) = retrain(&base, &user) {
+                model.voice_band = band;
+                let mut slow = retrain_slow(&base, &user, &g.index.takes);
+                if let Some(slow) = &mut slow { slow.voice_band = band; }
+                g.base_items = base;
+                g.user_items = user;
+                g.model = model;
+                g.slow_model = slow;
+                return;
+            }
+        }
+    }
+    // An unusable imported take must not install a model/filter mismatch.
+    g.base_items = load_base_items();
+    g.model = retrain(&g.base_items, &[]).unwrap_or_else(base_only_fallback);
+    g.slow_model = retrain_slow(&g.base_items, &[], &[]);
 }
 
 fn recompute_take_periods(inner: &mut ProfileInner) {

@@ -1,6 +1,10 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.noiseInstruction": "Bleibe nach dem Aufnahmestart 3 Sekunden still, damit die App Hintergrundgeräusche messen kann. Beginne dann zu rezitieren.",
+  "voice.noiseWait": "Bitte still bleiben: {n} s",
+  "voice.noiseReady": "Du kannst jetzt rezitieren.",
+
   'tab.count': 'Zählen',
   'tab.stats': 'Statistik',
   'tab.voice': 'Deine Stimme',

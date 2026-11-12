@@ -44,7 +44,11 @@ pub fn user_take_weight(n_takes: usize) -> f32 {
 /// Builds a training item from raw audio. `n_cycles` is 0 for material
 /// that is not a recitation (normal speech used for the garbage model).
 pub fn build_item(samples: &[f32], sr: u32, n_cycles: usize, weight: f32) -> Option<TrainItem> {
-    let frames = extract_frames(samples, sr);
+    build_item_with_band(samples, sr, n_cycles, weight, None)
+}
+
+pub fn build_item_with_band(samples: &[f32], sr: u32, n_cycles: usize, weight: f32, band: Option<VoiceBand>) -> Option<TrainItem> {
+    let frames = extract_frames_with_band(samples, sr, band);
     let n_active = frames.iter().filter(|f| f.active).count();
     if n_active < 30 {
         return None;
@@ -481,6 +485,7 @@ pub fn train_model(items: &[TrainItem], speech: &[TrainItem], init: Option<&Mode
     }
 
     let mut model = Model {
+        voice_band: None,
         mu: Vec::new(),
         var: Vec::new(),
         log_w: Vec::new(),

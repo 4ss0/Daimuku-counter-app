@@ -795,6 +795,38 @@
   }
   .goal-row {
     margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  .goal-row > span {
+    flex: 1 1 8rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .goal-row .inline {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: 100%;
+    min-width: 0;
+    margin-left: auto;
+  }
+  .goal-row input {
+    box-sizing: border-box;
+    width: 14ch;
+    max-width: 100%;
+    min-width: 0;
+    padding-inline: 8px;
+    font-variant-numeric: tabular-nums;
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+  .goal-row input::-webkit-inner-spin-button,
+  .goal-row input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .goal-row .unit {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .goal-split {
     margin: 4px 0 6px;

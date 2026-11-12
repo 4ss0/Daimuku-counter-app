@@ -7,6 +7,9 @@ use std::thread;
 use tokio::sync::oneshot;
 
 use crate::bell::BellFilter;
+use crate::history::{History, Half, SessionRecord};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 use crate::dsp::{DaimokuCountResult, StreamingState};
 use crate::engine::{Engine, EngineState};
 use crate::profile::{base_only_model, placeholder_model, PersonalProfile};
@@ -84,6 +87,9 @@ pub struct LiveView {
     /// was counted (at most `LIVE_VIEW_EVENTS`, oldest first).
     pub recent_events_secs: Vec<f32>,
     pub finished: bool,
+    pub session_id: Option<u64>,
+    pub session_half: Option<Half>,
+    pub persistence_error: Option<String>,
 }
 
 const LIVE_VIEW_EVENTS: usize = 50;
@@ -98,6 +104,14 @@ pub fn state_str(s: StreamingState) -> &'static str {
 
 pub struct LiveCounter {
     inner: Mutex<LiveInner>,
+    saving: Mutex<Option<LiveSaving>>,
+}
+
+struct LiveSaving {
+    history: History,
+    record: SessionRecord,
+    saved_count: u32,
+    error: Option<String>,
 }
 
 struct LiveInner {
@@ -119,6 +133,7 @@ struct LiveInner {
 impl LiveCounter {
     pub fn new(initial_sample_rate: u32) -> Self {
         Self {
+            saving: Mutex::new(None),
             inner: Mutex::new(LiveInner {
                 engine: None,
                 sample_rate: initial_sample_rate,
@@ -128,6 +143,37 @@ impl LiveCounter {
                 finished_result: None,
                 bell: BellFilter::new(initial_sample_rate),
             }),
+        }
+    }
+
+    pub fn begin_history(&self, history: History, half: Option<Half>) -> Result<(), String> {
+        let mut saving = self.saving.lock().unwrap();
+        if saving.is_some() { return Err("finish saving the previous session first".into()); }
+        let record = history.begin_live(half)?;
+        *saving = Some(LiveSaving { history, record, saved_count: 0, error: None });
+        Ok(())
+    }
+
+    pub fn checkpoint(&self, finished: bool) -> Result<Option<SessionRecord>, String> {
+        let mut saving = self.saving.lock().unwrap();
+        let Some(s) = saving.as_mut() else { return Ok(None) };
+        let g = self.inner.lock().unwrap();
+        let Some(engine) = g.engine.as_ref() else { return Ok(None) };
+        let count = (engine.count() as u32).min(1_000_000);
+        let secs = engine.elapsed_secs();
+        drop(g); // disk IO never holds the decoder lock
+        if !finished && count == s.saved_count { return Ok(Some(s.record.clone())); }
+        match s.history.checkpoint_live(s.record.id, secs, count, finished) {
+            Ok(record) => {
+                if finished { *saving = None; }
+                else {
+                    s.record = record.clone().unwrap();
+                    s.saved_count = count;
+                    s.error = None;
+                }
+                Ok(record)
+            }
+            Err(error) => { s.error = Some(error.clone()); Err(error) }
         }
     }
 
@@ -222,7 +268,15 @@ impl LiveCounter {
             period_ms: None,
             recent_events_secs: Vec::new(),
             finished: false,
+            session_id: None,
+            session_half: None,
+            persistence_error: None,
         };
+        let saving = self.saving.lock().unwrap();
+        let session_id = saving.as_ref().map(|s| s.record.id);
+        let session_half = saving.as_ref().and_then(|s| s.record.half);
+        let persistence_error = saving.as_ref().and_then(|s| s.error.clone());
+        drop(saving);
         let g = match self.inner.lock() {
             Ok(g) => g,
             Err(_) => return empty,
@@ -242,6 +296,9 @@ impl LiveCounter {
             period_ms: snap.period_ms,
             recent_events_secs: ev[from..].iter().map(|e| e.frame as f32 * 0.01).collect(),
             finished: engine.is_finished(),
+            session_id,
+            session_half,
+            persistence_error,
         }
     }
 
@@ -399,6 +456,9 @@ impl AudioState {
     /// permission or device is reported to the UI instead of silently
     /// counting nothing.
     fn send_start(&self, keep_secs: Option<u32>) -> Result<(), String> {
+        if self.live.view().session_id.is_some() {
+            return Err("finish saving the previous session first".into());
+        }
         let (reply, rx) = mpsc::channel();
         self.send(AudioCommand::Start { keep_secs, reply })?;
         rx.recv_timeout(std::time::Duration::from_secs(10))
@@ -472,10 +532,31 @@ fn panic_text(p: Box<dyn std::any::Any + Send>) -> String {
 fn audio_thread_main(cmd_rx: mpsc::Receiver<AudioCommand>, live: Arc<LiveCounter>) {
     let mut current: Option<ActiveRecording> = None;
 
-    for cmd in cmd_rx {
+    let mut resume: Option<(Option<u32>, Arc<Mutex<Vec<f32>>>, u32)> = None;
+    loop {
+        let _ = live.checkpoint(false); // errors remain visible in LiveView and are retried
+        if current.as_ref().is_some_and(|r| r.failed.load(Ordering::Relaxed) || r.last_input.lock().unwrap().elapsed() > Duration::from_secs(3)) {
+            let rec = current.take().unwrap();
+            resume = Some((rec.keep_secs, Arc::clone(&rec.buffer), rec.sample_rate));
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(rec)));
+        }
+        // Process Stop before attempting a reopen, so an unavailable microphone
+        // never traps the user in a retry loop.
+        let cmd = match cmd_rx.recv_timeout(Duration::from_millis(if resume.is_some() { 1000 } else { 100 })) {
+            Ok(cmd) => cmd,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if let Some((keep_secs, buffer, sr)) = &resume {
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
+                        ActiveRecording::start(Arc::clone(&live), *keep_secs, Some((Arc::clone(buffer), *sr)))));
+                    if let Ok(Ok(rec)) = result { current = Some(rec); resume = None; }
+                }
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         match cmd {
             AudioCommand::Start { keep_secs, reply } => {
-                if current.is_some() {
+                if current.is_some() || resume.is_some() {
                     let _ = reply.send(Err("already recording".to_string()));
                     continue;
                 }
@@ -483,7 +564,7 @@ fn audio_thread_main(cmd_rx: mpsc::Receiver<AudioCommand>, live: Arc<LiveCounter
                 // on an unexpected device; report it instead of letting
                 // this thread die.
                 let started = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    ActiveRecording::start(Arc::clone(&live), keep_secs)
+                    ActiveRecording::start(Arc::clone(&live), keep_secs, None)
                 }));
                 match started {
                     Ok(Ok(rec)) => {
@@ -502,6 +583,7 @@ fn audio_thread_main(cmd_rx: mpsc::Receiver<AudioCommand>, live: Arc<LiveCounter
                 }
             }
             AudioCommand::Stop(reply_tx) => {
+                let pending = resume.take();
                 let rec = current.take();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     rec.map(ActiveRecording::stop)
@@ -509,8 +591,8 @@ fn audio_thread_main(cmd_rx: mpsc::Receiver<AudioCommand>, live: Arc<LiveCounter
                 .ok()
                 .flatten()
                 .unwrap_or(RecordedAudio {
-                    samples: Vec::new(),
-                    sample_rate: 0,
+                    samples: pending.as_ref().map(|(_, b, _)| std::mem::take(&mut *b.lock().unwrap())).unwrap_or_default(),
+                    sample_rate: pending.map(|(_, _, sr)| sr).unwrap_or(0),
                 });
                 // The stream is torn down now: no more audio will ever
                 // arrive for this session, so this is the one correct
@@ -526,6 +608,9 @@ struct ActiveRecording {
     buffer: Arc<Mutex<Vec<f32>>>,
     sample_rate: u32,
     _stream: cpal::Stream,
+    failed: Arc<AtomicBool>,
+    last_input: Arc<Mutex<Instant>>,
+    keep_secs: Option<u32>,
 }
 
 fn on_stream_error(err: cpal::StreamError) {
@@ -554,7 +639,7 @@ fn downmix_to_mono(data: &[f32], channels: u16) -> Vec<f32> {
 }
 
 impl ActiveRecording {
-    fn start(live: Arc<LiveCounter>, keep_secs: Option<u32>) -> Result<Self, String> {
+    fn start(live: Arc<LiveCounter>, keep_secs: Option<u32>, resume: Option<(Arc<Mutex<Vec<f32>>>, u32)>) -> Result<Self, String> {
         let host = cpal::default_host();
         let device = host
             .default_input_device()
@@ -586,28 +671,43 @@ impl ActiveRecording {
             (sr, ch, vec![fmt], cfg)
         };
 
-        live.reset(sample_rate);
-
-        let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
+        let (sample_rate, config) = if let Some((_, sr)) = &resume {
+            let mut config = config;
+            config.sample_rate = cpal::SampleRate(*sr);
+            (*sr, config)
+        } else { (sample_rate, config) };
+        let buffer = if let Some((buffer, _)) = resume {
+            buffer
+        } else {
+            live.reset(sample_rate);
+            Arc::new(Mutex::new(Vec::<f32>::new()))
+        };
+        let failed = Arc::new(AtomicBool::new(false));
+        let last_input = Arc::new(Mutex::new(Instant::now()));
         let keep_max = keep_secs.map_or(usize::MAX, |s| s as usize * sample_rate as usize);
 
         let build = |sample_format: SampleFormat| -> Result<cpal::Stream, String> {
             match sample_format {
                 SampleFormat::F32 => {
+                    let failed = Arc::clone(&failed);
+                    let last_input = Arc::clone(&last_input);
                     let buf = Arc::clone(&buffer);
                     let live = Arc::clone(&live);
                     device.build_input_stream(
                         &config,
                         move |data: &[f32], _| {
+                            *last_input.lock().unwrap() = Instant::now();
                             let mono = downmix_to_mono(data, channels);
                             keep(&buf, &mono, keep_max);
                             live.push(&mono);
                         },
-                        on_stream_error,
+                        move |err| { on_stream_error(err); failed.store(true, Ordering::Relaxed); },
                         None,
                     )
                 }
                 SampleFormat::I16 => {
+                    let failed = Arc::clone(&failed);
+                    let last_input = Arc::clone(&last_input);
                     let buf = Arc::clone(&buffer);
                     let live = Arc::clone(&live);
                     device.build_input_stream(
@@ -615,15 +715,18 @@ impl ActiveRecording {
                         move |data: &[i16], _| {
                             let as_f32: Vec<f32> =
                                 data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
+                            *last_input.lock().unwrap() = Instant::now();
                             let mono = downmix_to_mono(&as_f32, channels);
                             keep(&buf, &mono, keep_max);
                             live.push(&mono);
                         },
-                        on_stream_error,
+                        move |err| { on_stream_error(err); failed.store(true, Ordering::Relaxed); },
                         None,
                     )
                 }
                 SampleFormat::U16 => {
+                    let failed = Arc::clone(&failed);
+                    let last_input = Arc::clone(&last_input);
                     let buf = Arc::clone(&buffer);
                     let live = Arc::clone(&live);
                     device.build_input_stream(
@@ -633,11 +736,12 @@ impl ActiveRecording {
                                 .iter()
                                 .map(|&s| (s as f32 - 32768.0) / 32768.0)
                                 .collect();
+                            *last_input.lock().unwrap() = Instant::now();
                             let mono = downmix_to_mono(&as_f32, channels);
                             keep(&buf, &mono, keep_max);
                             live.push(&mono);
                         },
-                        on_stream_error,
+                        move |err| { on_stream_error(err); failed.store(true, Ordering::Relaxed); },
                         None,
                     )
                 }
@@ -670,6 +774,9 @@ impl ActiveRecording {
             buffer,
             sample_rate,
             _stream: stream,
+            failed,
+            last_input,
+            keep_secs,
         })
     }
 

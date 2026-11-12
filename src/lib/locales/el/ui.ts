@@ -1,6 +1,10 @@
 import type { Dict } from '../types';
 
 export default {
+  "voice.noiseInstruction": "Μετά την έναρξη της εγγραφής, μείνετε σιωπηλοί για 3 δευτερόλεπτα για τη μέτρηση του θορύβου. Έπειτα αρχίστε την απαγγελία.",
+  "voice.noiseWait": "Μείνετε σιωπηλοί: {n} δ.",
+  "voice.noiseReady": "Μπορείτε τώρα να αρχίσετε την απαγγελία.",
+
   'tab.count': 'Μέτρηση',
   'tab.stats': 'Στατιστικά',
   'tab.voice': 'Η φωνή σου',

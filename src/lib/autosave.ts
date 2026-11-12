@@ -46,6 +46,7 @@ export async function initAutosave() {
   started = true;
   show(await autosaveInfo());
   onDataChange(schedule);
+  if (get(autosave).on && get(autosave).saved === null) schedule();
   // leaving the app: what is waiting is saved right away
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden' && timer) {

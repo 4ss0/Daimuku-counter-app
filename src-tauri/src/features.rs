@@ -24,6 +24,149 @@ const WIN_SECS: f32 = 0.025;
 const PREEMPH: f32 = 0.97;
 const TARGET_SR: u32 = 16_000;
 
+/// A conservative pass-band inferred from calibrated recitations.
+/// Old recordings/models omit this field and retain the original processing.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct VoiceBand {
+    pub low_hz: f64,
+    pub high_hz: f64,
+}
+
+impl VoiceBand {
+    pub fn valid(self) -> Option<Self> {
+        (self.low_hz.is_finite() && self.high_hz.is_finite()
+            && (40.0..=250.0).contains(&self.low_hz)
+            && (2000.0..=7000.0).contains(&self.high_hz)).then_some(self)
+    }
+
+    pub fn union(bands: impl Iterator<Item = Self>) -> Option<Self> {
+        bands.filter_map(Self::valid).reduce(|a, b| Self {
+            low_hz: a.low_hz.min(b.low_hz), high_hz: a.high_hz.max(b.high_hz),
+        })
+    }
+}
+
+struct BandSection {
+    b: [f64; 3],
+    a: [f64; 2],
+    z: [f64; 2],
+}
+
+impl BandSection {
+    fn new(hz: f64, sr: u32, high_pass: bool) -> Self {
+        let w = 2.0 * PI * hz / sr as f64;
+        let c = w.cos();
+        let alpha = w.sin() / std::f64::consts::SQRT_2;
+        let norm = 1.0 + alpha;
+        let b0 = if high_pass { (1.0 + c) / 2.0 } else { (1.0 - c) / 2.0 };
+        let b1 = if high_pass { -(1.0 + c) } else { 1.0 - c };
+        Self { b: [b0 / norm, b1 / norm, b0 / norm],
+            a: [-2.0 * c / norm, (1.0 - alpha) / norm], z: [0.0; 2] }
+    }
+    fn process(&mut self, x: f64) -> f64 {
+        let y = self.b[0] * x + self.z[0];
+        self.z[0] = self.b[1] * x - self.a[0] * y + self.z[1];
+        self.z[1] = self.b[2] * x - self.a[1] * y;
+        y
+    }
+}
+
+struct BandFilter {
+    high: BandSection,
+    low: Option<BandSection>,
+}
+impl BandFilter {
+    fn new(band: VoiceBand, sr: u32) -> Self {
+        Self { high: BandSection::new(band.low_hz, sr, true),
+            low: (band.high_hz < sr as f64 / 2.0)
+                .then(|| BandSection::new(band.high_hz, sr, false)) }
+    }
+    fn process(&mut self, x: f32) -> f32 {
+        let y = self.high.process(x as f64);
+        self.low.as_mut().map_or(y, |low| low.process(y)) as f32
+    }
+}
+
+pub const NOISE_SECONDS: u32 = 3;
+
+/// Use the first three seconds only as a noise reference. Keep 250 ms of
+/// pre-roll and ALL later audio: onset uncertainty must never crop the first Nam.
+/// Sustained rises, rather than isolated peaks, select frames for band estimation.
+pub fn calibrate_voice(samples: &[f32], sr: u32) -> Result<(usize, VoiceBand), String> {
+    if sr < 8000 || samples.len() < sr as usize * NOISE_SECONDS as usize + sr as usize / 2 {
+        return Err("calibration-too-short".into());
+    }
+    let decim = (sr / TARGET_SR).max(1) as usize;
+    let eff = sr as f64 / decim as f64;
+    let audio: Vec<f32> = samples.chunks_exact(decim)
+        .map(|chunk| chunk.iter().sum::<f32>() / decim as f32).collect();
+    let win = (eff * 0.025).round() as usize;
+    let hop = (eff * 0.010).round() as usize;
+    let nfft = win.next_power_of_two();
+    let fft = Fft::new(nfft);
+    let bins = nfft / 2 + 1;
+    let boundary = (eff * NOISE_SECONDS as f64).round() as usize;
+    let spectrum = |start: usize| {
+        let mut re = vec![0.0; nfft];
+        let mut im = vec![0.0; nfft];
+        for i in 0..win {
+            re[i] = audio[start+i] as f64 * (0.5 - 0.5 * (2.0 * PI * i as f64 / (win-1) as f64).cos());
+        }
+        fft.transform(&mut re, &mut im);
+        (0..bins).map(|k| re[k]*re[k] + im[k]*im[k]).collect::<Vec<f64>>()
+    };
+    let noise: Vec<Vec<f64>> = (0..=boundary-win).step_by(hop).map(spectrum).collect();
+    let mut floor = vec![0.0; bins];
+    for k in 0..bins {
+        let mut powers: Vec<f64> = noise.iter().map(|p| p[k]).collect();
+        powers.sort_by(f64::total_cmp);
+        floor[k] = powers[powers.len()/2];
+    }
+    let lo = (80.0 * nfft as f64 / eff).ceil() as usize;
+    let hi = ((7000.0_f64.min(eff*0.47) * nfft as f64 / eff).floor() as usize).min(bins-1);
+    let noise_energy: f64 = floor[lo..=hi].iter().sum();
+    let mut voice = vec![0.0; bins];
+    let mut run_power = vec![0.0; bins];
+    let mut run_len = 0;
+    let mut accepted = 0;
+    for start in (boundary..=audio.len()-win).step_by(hop) {
+        let power = spectrum(start);
+        let energy: f64 = power[lo..=hi].iter().sum();
+        if energy > (noise_energy * 4.0).max(1e-7) {
+            for k in lo..=hi { run_power[k] += (power[k] - floor[k] * 1.5).max(0.0); }
+            run_len += 1;
+        } else {
+            if run_len >= 15 {
+                for k in lo..=hi { voice[k] += run_power[k]; }
+                accepted += run_len;
+            }
+            run_power.fill(0.0);
+            run_len = 0;
+        }
+    }
+    if run_len >= 15 {
+        for k in lo..=hi { voice[k] += run_power[k]; }
+        accepted += run_len;
+    }
+    let total: f64 = voice.iter().sum();
+    let mut band = VoiceBand { low_hz: 50.0, high_hz: 7000.0 };
+    if accepted >= 30 && total > 1e-10 {
+        let quantile = |fraction: f64| {
+            let mut sum = 0.0;
+            for k in lo..=hi {
+                sum += voice[k];
+                if sum >= total*fraction { return k as f64 * eff / nfft as f64; }
+            }
+            hi as f64 * eff / nfft as f64
+        };
+        // Broad margins keep weak consonants and lower voice components.
+        band.low_hz = (quantile(0.0025) * 0.7).clamp(50.0, 120.0);
+        band.high_hz = (quantile(0.9975) * 1.4).clamp(4000.0, 7000.0);
+    }
+    let start = (sr as usize * NOISE_SECONDS as usize).saturating_sub(sr as usize / 4);
+    Ok((start, band))
+}
+
 /// Frames whose mean power is below this are never "active" (about
 /// -54 dBFS RMS): microphone hiss, digital silence.
 const ABS_ENERGY_FLOOR: f32 = -15.0; // ln(3e-7), about -65 dBFS
@@ -190,6 +333,7 @@ fn dct_matrix() -> Vec<f32> {
 type Analysed = (f32, [f32; N_CEP], bool, f32, f32, f32);
 
 pub struct FrontEnd {
+    band_filter: Option<BandFilter>,
     /// Integer decimation factor applied first (box filter), so the FFT
     /// always works near 16-22 kHz whatever the device sample rate is.
     decim: usize,
@@ -231,6 +375,10 @@ pub struct FrontEnd {
 
 impl FrontEnd {
     pub fn new(sample_rate: u32) -> Self {
+        Self::with_band(sample_rate, None)
+    }
+
+    pub fn with_band(sample_rate: u32, band: Option<VoiceBand>) -> Self {
         let sr = sample_rate.max(8_000);
         let decim = ((sr / TARGET_SR) as usize).max(1);
         let eff = sr as f64 / decim as f64;
@@ -247,6 +395,7 @@ impl FrontEnd {
             .collect();
         let voice_bin = ((1000.0 * nfft as f64 / eff) as usize).min(nfft / 2);
         Self {
+            band_filter: band.and_then(VoiceBand::valid).map(|b| BandFilter::new(b, sr)),
             decim,
             dec_acc: 0.0,
             dec_n: 0,
@@ -278,10 +427,12 @@ impl FrontEnd {
     /// Feeds samples, appending finished frames to `out`.
     pub fn push(&mut self, samples: &[f32], out: &mut Vec<RawFrame>) {
         if self.decim == 1 {
-            self.buf.extend_from_slice(samples);
+            for &s in samples {
+                self.buf.push(self.band_filter.as_mut().map_or(s, |f| f.process(s)));
+            }
         } else {
             for &s in samples {
-                self.dec_acc += s;
+                self.dec_acc += self.band_filter.as_mut().map_or(s, |f| f.process(s));
                 self.dec_n += 1;
                 if self.dec_n == self.decim {
                     self.buf.push(self.dec_acc / self.decim as f32);
@@ -472,7 +623,11 @@ impl FrontEnd {
 
 /// Convenience: whole buffer -> frames.
 pub fn extract_frames(samples: &[f32], sample_rate: u32) -> Vec<RawFrame> {
-    let mut fe = FrontEnd::new(sample_rate);
+    extract_frames_with_band(samples, sample_rate, None)
+}
+
+pub fn extract_frames_with_band(samples: &[f32], sample_rate: u32, band: Option<VoiceBand>) -> Vec<RawFrame> {
+    let mut fe = FrontEnd::with_band(sample_rate, band);
     let mut out = Vec::new();
     for chunk in samples.chunks(4096) {
         fe.push(chunk, &mut out);
