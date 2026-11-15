@@ -406,4 +406,20 @@ export default {
   'android.channelCountingText': 'Afișată cât timp contorul ascultă, chiar și cu ecranul stins.',
   'android.channelReminders': 'Mementouri',
   'android.channelRemindersText': 'Mementouri de dimineață și de seară pentru recitare.',
+
+  // guided recording (Voice page)
+  "guide.title": "Înregistrare ghidată",
+  "guide.lead": "O singură înregistrare de aproximativ două minute. Aplicația îți spune ce să reciți și luminează silabele în ritmul tău: urmează-le și oprește-te când se opresc. Fără să numeri.",
+  "guide.tempo": "Ritmul tău: secunde pe daimoku",
+  "guide.start": "Începe",
+  "guide.stageOf": "Partea {i} din {n}",
+  "guide.next": "Pregătește-te",
+  "guide.hintBell": "Sună clopotul în timp ce reciți",
+  "guide.hintJuzu": "Freacă juzu în timp ce reciți",
+  "guide.hintClean": "Doar vocea ta, fără alte sunete",
+  "guide.busy": "Analizez înregistrarea…",
+  "guide.review": "Iată ce a auzit aplicația. Debifează părțile care nu au ieșit bine.",
+  "guide.bellOk": "Clopot recunoscut: de acum aplicația îl elimină singură în timp ce numără.",
+  "guide.bellNo": "Clopot nerecunoscut. Sună-l mai tare în părțile cu clopot și încearcă din nou.",
+  "guide.add": "Adaugă la vocea ta",
 } satisfies Dict;

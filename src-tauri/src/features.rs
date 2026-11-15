@@ -208,7 +208,7 @@ pub struct RawFrame {
 // FFT (iterative radix-2)
 // ---------------------------------------------------------------------------
 
-struct Fft {
+pub(crate) struct Fft {
     n: usize,
     cos: Vec<f64>,
     sin: Vec<f64>,
@@ -216,7 +216,7 @@ struct Fft {
 }
 
 impl Fft {
-    fn new(n: usize) -> Self {
+    pub(crate) fn new(n: usize) -> Self {
         assert!(n.is_power_of_two() && n >= 4);
         let bits = n.trailing_zeros();
         let rev = (0..n)
@@ -227,7 +227,7 @@ impl Fft {
         Self { n, cos, sin, rev }
     }
 
-    fn transform(&self, re: &mut [f64], im: &mut [f64]) {
+    pub(crate) fn transform(&self, re: &mut [f64], im: &mut [f64]) {
         let n = self.n;
         for i in 0..n {
             let j = self.rev[i];

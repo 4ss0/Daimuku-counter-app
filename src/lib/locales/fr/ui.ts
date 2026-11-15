@@ -406,4 +406,20 @@ export default {
   'android.channelCountingText': 'Affiché pendant que le compteur écoute, même écran éteint.',
   'android.channelReminders': 'Rappels',
   'android.channelRemindersText': 'Rappels du matin et du soir pour réciter.',
+
+  // guided recording (Voice page)
+  "guide.title": "Enregistrement guidé",
+  "guide.lead": "Un seul enregistrement d’environ deux minutes. L’appli vous dit quoi réciter et illumine les syllabes à votre rythme : suivez-les et arrêtez-vous quand elles s’arrêtent. Sans compter.",
+  "guide.tempo": "Votre rythme : secondes par daimoku",
+  "guide.start": "Commencer",
+  "guide.stageOf": "Partie {i} sur {n}",
+  "guide.next": "Préparez-vous",
+  "guide.hintBell": "Faites sonner la cloche en récitant",
+  "guide.hintJuzu": "Frottez le juzu en récitant",
+  "guide.hintClean": "Votre voix seule, sans autre bruit",
+  "guide.busy": "Analyse de l’enregistrement…",
+  "guide.review": "Voici ce que l’appli a entendu. Décochez les parties ratées.",
+  "guide.bellOk": "Cloche reconnue : désormais l’appli l’enlève d’elle-même pendant le comptage.",
+  "guide.bellNo": "Cloche non reconnue. Faites-la sonner plus fort dans les parties avec cloche et réessayez.",
+  "guide.add": "Ajouter à votre voix",
 } satisfies Dict;

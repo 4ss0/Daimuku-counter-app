@@ -406,4 +406,20 @@ export default {
   'android.channelCountingText': '计数器聆听时显示（屏幕关闭时也会显示）。',
   'android.channelReminders': '提醒',
   'android.channelRemindersText': '早晚唱题提醒。',
+
+  // guided recording (Voice page)
+  "guide.title": "引导录音",
+  "guide.lead": "只需一次约两分钟的录音。应用会告诉你唱诵什么，并按你的节奏点亮音节：跟着唱，音节停下时就停下，不用数数。",
+  "guide.tempo": "你的节奏：每遍题目的秒数",
+  "guide.start": "开始",
+  "guide.stageOf": "第 {i} 部分，共 {n} 部分",
+  "guide.next": "请准备",
+  "guide.hintBell": "唱诵时敲钟",
+  "guide.hintJuzu": "唱诵时搓动念珠",
+  "guide.hintClean": "只用你的声音，不要有其他声音",
+  "guide.busy": "正在分析录音…",
+  "guide.review": "这是应用听到的结果。取消勾选效果不好的部分。",
+  "guide.bellOk": "已识别钟声：今后应用会在计数时自动去除钟声。",
+  "guide.bellNo": "未能识别钟声。请在有钟的部分敲得更响一些，然后重试。",
+  "guide.add": "添加到我的声音",
 } satisfies Dict;

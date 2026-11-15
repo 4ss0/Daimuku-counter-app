@@ -406,4 +406,20 @@ export default {
   'android.channelCountingText': 'Wordt getoond terwijl de teller luistert, ook met het scherm uit.',
   'android.channelReminders': 'Herinneringen',
   'android.channelRemindersText': 'Herinneringen in de ochtend en de avond om te reciteren.',
+
+  // guided recording (Voice page)
+  "guide.title": "Begeleide opname",
+  "guide.lead": "Eén opname van ongeveer twee minuten. De app zegt wat je reciteert en laat de lettergrepen in jouw tempo oplichten: volg ze en stop wanneer ze stoppen. Zonder te tellen.",
+  "guide.tempo": "Jouw tempo: seconden per daimoku",
+  "guide.start": "Starten",
+  "guide.stageOf": "Deel {i} van {n}",
+  "guide.next": "Maak je klaar",
+  "guide.hintBell": "Sla op de bel terwijl je reciteert",
+  "guide.hintJuzu": "Wrijf de juzu terwijl je reciteert",
+  "guide.hintClean": "Alleen je stem, zonder andere geluiden",
+  "guide.busy": "Opname wordt geanalyseerd…",
+  "guide.review": "Dit heeft de app gehoord. Vink de delen uit die mislukt zijn.",
+  "guide.bellOk": "Bel herkend: vanaf nu haalt de app hem zelf weg tijdens het tellen.",
+  "guide.bellNo": "Bel niet herkend. Sla er harder op in de delen met bel en probeer het opnieuw.",
+  "guide.add": "Aan je stem toevoegen",
 } satisfies Dict;

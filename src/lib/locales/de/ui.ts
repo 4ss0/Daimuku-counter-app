@@ -406,4 +406,20 @@ export default {
   'android.channelCountingText': 'Wird angezeigt, während der Zähler zuhört, auch bei ausgeschaltetem Bildschirm.',
   'android.channelReminders': 'Erinnerungen',
   'android.channelRemindersText': 'Erinnerungen am Morgen und am Abend zum Rezitieren.',
+
+  // guided recording (Voice page)
+  "guide.title": "Geführte Aufnahme",
+  "guide.lead": "Eine einzige Aufnahme von etwa zwei Minuten. Die App sagt dir, was du rezitierst, und lässt die Silben in deinem Tempo aufleuchten: Folge ihnen und höre auf, wenn sie aufhören. Ohne zu zählen.",
+  "guide.tempo": "Dein Tempo: Sekunden pro Daimoku",
+  "guide.start": "Starten",
+  "guide.stageOf": "Teil {i} von {n}",
+  "guide.next": "Mach dich bereit",
+  "guide.hintBell": "Schlage die Glocke, während du rezitierst",
+  "guide.hintJuzu": "Reibe die Juzu, während du rezitierst",
+  "guide.hintClean": "Nur deine Stimme, ohne andere Geräusche",
+  "guide.busy": "Aufnahme wird analysiert…",
+  "guide.review": "Das hat die App gehört. Entferne das Häkchen bei Teilen, die misslungen sind.",
+  "guide.bellOk": "Glocke erkannt: Ab jetzt filtert die App sie beim Zählen von selbst heraus.",
+  "guide.bellNo": "Glocke nicht erkannt. Schlage sie in den Teilen mit Glocke lauter und versuche es erneut.",
+  "guide.add": "Zu deiner Stimme hinzufügen",
 } satisfies Dict;

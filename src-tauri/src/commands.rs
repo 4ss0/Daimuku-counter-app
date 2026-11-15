@@ -2,7 +2,7 @@ use crate::audio::{self, AudioState, LiveView, RecordedAudio};
 use crate::dsp::{count_daimoku_with_profile, DaimokuCountResult, StreamingState};
 use crate::history::{Half, History, SessionRecord};
 use crate::profile::{PersonalProfile, ProfileState};
-use crate::training::{TrainingStore, TrainingTakeMeta};
+use crate::training::{GuidedStage, TrainingStore, TrainingTakeMeta};
 use serde::Serialize;
 use std::path::Path;
 use tauri::State;
@@ -42,6 +42,32 @@ pub async fn stop_recording(
     } else {
         Ok(training_store.add(audio, expected_daimoku_count))
     }
+}
+
+/// What a guided recording was cut into.
+#[derive(Debug, Clone, Serialize)]
+pub struct GuidedTakes {
+    /// One take per stage, in order.
+    pub takes: Vec<TrainingTakeMeta>,
+    /// Partials of a bell found in the stages chanted with one (0: none).
+    pub bell_partials: usize,
+}
+
+/// Ends a guided recording (started with `start_recording`) and cuts it
+/// into one take per stage; `validate_training_take` then says what the
+/// counter hears in each, and `add_guided_takes` adds them to the profile.
+#[tauri::command]
+pub async fn stop_guided_recording(
+    audio_state: State<'_, AudioState>,
+    training_store: State<'_, TrainingStore>,
+    stages: Vec<GuidedStage>,
+) -> Result<GuidedTakes, String> {
+    let rx = audio_state.stop()?;
+    let audio = rx
+        .await
+        .map_err(|e| format!("audio thread dropped reply: {e}"))?;
+    let (takes, bell_partials) = training_store.add_guided(audio, &stages)?;
+    Ok(GuidedTakes { takes, bell_partials })
 }
 
 // -----------------------------------------------------------------------------
@@ -294,7 +320,12 @@ pub fn validate_training_take(
 ) -> Result<ValidationResult, String> {
     let (audio, expected) = store.get_with_expected(index)?;
 
-    let snap = profile_state.snapshot();
+    let mut snap = profile_state.snapshot();
+    // a bell just measured by the guided recording is already taken out
+    let bell = store.bell();
+    if !bell.is_empty() {
+        snap.bell = bell;
+    }
     let analysis = count_daimoku_with_profile(&audio.samples, audio.sample_rate, Some(&snap))
         .ok_or_else(|| {
             "No usable audio in the recording (too short or silent).".to_string()
@@ -331,6 +362,35 @@ pub fn add_take_to_profile(
     let new_profile = profile_state.snapshot();
     audio_state.live_set_profile(Some(new_profile.clone()));
 
+    Ok(new_profile)
+}
+
+/// Adds the chosen takes of a guided recording to the personal profile in
+/// one step (one retraining), with the bell measured in it, if any.
+// async: may wait for the voice model to finish loading
+#[tauri::command(async)]
+pub fn add_guided_takes(
+    store: State<'_, TrainingStore>,
+    profile_state: State<'_, ProfileState>,
+    audio_state: State<'_, AudioState>,
+    indices: Vec<usize>,
+) -> Result<PersonalProfile, String> {
+    let mut takes = Vec::with_capacity(indices.len());
+    for index in indices {
+        let (audio, expected) = store.get_with_expected(index)?;
+        takes.push(crate::profile::NewTake {
+            samples: audio.samples,
+            sample_rate: audio.sample_rate,
+            n_daimoku: expected,
+            speed: store.speed(index)?,
+            voice_band: store.voice_band(index)?,
+            noise: store.noise(index)?,
+        });
+    }
+    let bell = store.bell();
+    profile_state.add_guided(takes, (!bell.is_empty()).then_some(bell))?;
+    let new_profile = profile_state.snapshot();
+    audio_state.live_set_profile(Some(new_profile.clone()));
     Ok(new_profile)
 }
 

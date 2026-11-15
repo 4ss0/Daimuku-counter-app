@@ -407,4 +407,20 @@ export default {
   'android.channelCountingText': 'Shown while the counter listens, also with the screen off.',
   'android.channelReminders': 'Reminders',
   'android.channelRemindersText': 'Morning and evening reminders to chant.',
+
+  // guided recording (Voice page)
+  "guide.title": "Guided recording",
+  "guide.lead": "One recording of about two minutes. The app tells you what to chant and lights up the syllables at your pace: follow them and stop when they stop. No counting.",
+  "guide.tempo": "Your pace: seconds per daimoku",
+  "guide.start": "Start",
+  "guide.stageOf": "Part {i} of {n}",
+  "guide.next": "Get ready",
+  "guide.hintBell": "Ring the bell while you chant",
+  "guide.hintJuzu": "Rub the juzu beads while you chant",
+  "guide.hintClean": "Your voice only, no other sounds",
+  "guide.busy": "Analysing the recording…",
+  "guide.review": "This is what the app heard. Untick the parts that went wrong.",
+  "guide.bellOk": "Bell recognised: from now on the app takes it out by itself while counting.",
+  "guide.bellNo": "Bell not recognised. Ring it louder in the parts with the bell and try again.",
+  "guide.add": "Add to your voice",
 };

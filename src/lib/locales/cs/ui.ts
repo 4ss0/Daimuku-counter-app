@@ -406,4 +406,20 @@ export default {
   'android.channelCountingText': 'Zobrazuje se, zatímco počítadlo poslouchá, i se zhasnutou obrazovkou.',
   'android.channelReminders': 'Připomínky',
   'android.channelRemindersText': 'Ranní a večerní připomínky k recitaci.',
+
+  // guided recording (Voice page)
+  "guide.title": "Nahrávání s průvodcem",
+  "guide.lead": "Jedna nahrávka dlouhá asi dvě minuty. Aplikace ti řekne, co recitovat, a rozsvěcuje slabiky ve tvém tempu: sleduj je a přestaň, když se zastaví. Bez počítání.",
+  "guide.tempo": "Tvoje tempo: sekundy na daimoku",
+  "guide.start": "Začít",
+  "guide.stageOf": "Část {i} z {n}",
+  "guide.next": "Připrav se",
+  "guide.hintBell": "Při recitaci zvoň na zvonek",
+  "guide.hintJuzu": "Při recitaci mni juzu v dlaních",
+  "guide.hintClean": "Jen tvůj hlas, bez dalších zvuků",
+  "guide.busy": "Analyzuji nahrávku…",
+  "guide.review": "Tohle aplikace slyšela. Odškrtni části, které se nepovedly.",
+  "guide.bellOk": "Zvonek rozpoznán: od teď ho aplikace při počítání sama odstraní.",
+  "guide.bellNo": "Zvonek nebyl rozpoznán. V částech se zvonkem zazvoň hlasitěji a zkus to znovu.",
+  "guide.add": "Přidat k tvému hlasu",
 } satisfies Dict;

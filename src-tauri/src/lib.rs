@@ -60,6 +60,7 @@ pub fn run() {
             commands::list_input_devices,
             commands::start_recording,
             commands::stop_recording,
+            commands::stop_guided_recording,
             // live counter (legacy polling API)
             commands::live_status,
             commands::live_snapshot,
@@ -80,6 +81,7 @@ pub fn run() {
             // personal profile
             commands::get_personal_profile,
             commands::add_take_to_profile,
+            commands::add_guided_takes,
             commands::clear_personal_profile,
             commands::delete_profile_take,
             // preferences

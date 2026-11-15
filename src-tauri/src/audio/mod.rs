@@ -126,8 +126,11 @@ struct LiveInner {
     /// Cached result of the one authoritative `finish()` call, if the
     /// recording has actually stopped.
     finished_result: Option<DaimokuCountResult>,
-    /// Takes the bell of the Count screen out of what the engine hears.
+    /// Takes the bell of the Count screen, and the user's own bell, out
+    /// of what the engine hears.
     bell: BellFilter,
+    /// Partials of the user's own bell, for the *next* `reset()`.
+    pending_bell: Vec<f32>,
 }
 
 impl LiveCounter {
@@ -142,6 +145,7 @@ impl LiveCounter {
                 pending_slow: None,
                 finished_result: None,
                 bell: BellFilter::new(initial_sample_rate),
+                pending_bell: Vec::new(),
             }),
         }
     }
@@ -188,7 +192,9 @@ impl LiveCounter {
         }
         g.engine = Some(engine);
         g.finished_result = None;
-        g.bell = BellFilter::new(sample_rate);
+        let mut bell = BellFilter::new(sample_rate);
+        bell.set_partials(&g.pending_bell);
+        g.bell = bell;
     }
 
     /// Selects the model to use for the *next* recording. Does not
@@ -199,10 +205,12 @@ impl LiveCounter {
             Some(p) => {
                 g.pending_model = p.model;
                 g.pending_slow = p.slow_model;
+                g.pending_bell = p.bell;
             }
             None => {
                 g.pending_model = base_only_model();
                 g.pending_slow = None;
+                g.pending_bell = Vec::new();
             }
         }
     }

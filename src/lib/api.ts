@@ -68,6 +68,8 @@ export interface TakeRecord {
 
 export interface PersonalProfile {
   takes: TakeRecord[];
+  /** Partials (Hz) of the user's own bell, once the guided recording has heard it. */
+  bell?: number[];
   base_clip_count: number;
   ref_llr: number;
   min_cycle_ms: number;
@@ -80,6 +82,22 @@ export interface TrainingTakeMeta {
   duration_ms: number;
   sample_rate: number;
   created_at: string;
+}
+
+/** One part of a guided recording: `n` Daimoku chanted between two moments of it. */
+export interface GuidedStage {
+  start_ms: number;
+  end_ms: number;
+  n: number;
+  speed: 'slow' | 'medium' | 'fast';
+  noise: TrainingNoise | null;
+}
+
+export interface GuidedTakes {
+  /** One take per stage, in order. */
+  takes: TrainingTakeMeta[];
+  /** Partials of a bell found in the stages chanted with one (0: none). */
+  bell_partials: number;
 }
 
 export interface ValidationResult {
@@ -121,6 +139,9 @@ export const api = {
   startRecording: () => invoke<void>('start_recording'),
   stopRecording: (expected: number, calibrate = false, noise: TrainingNoise | null = null) =>
     invoke<TrainingTakeMeta>('stop_recording', { expectedDaimokuCount: expected, calibrate, noise }),
+  /** Ends a guided recording and cuts it into one take per stage. */
+  stopGuided: (stages: GuidedStage[]) => invoke<GuidedTakes>('stop_guided_recording', { stages }),
+  addGuidedTakes: (indices: number[]) => change(invoke<PersonalProfile>('add_guided_takes', { indices })),
   validateTake: (index: number) => invoke<ValidationResult>('validate_training_take', { index }),
   addTakeToProfile: (index: number, speed?: string) =>
     change(invoke<PersonalProfile>('add_take_to_profile', { index, speed: speed ?? null })),

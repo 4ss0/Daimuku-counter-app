@@ -66,6 +66,20 @@ pub struct TakeRecord {
 struct ProfileIndex {
     version: u32,
     takes: Vec<TakeRecord>,
+    /// Partials (Hz) of the user's own bell, learned by the guided
+    /// recording (`bell::learn_partials`); empty until then.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    bell: Vec<f32>,
+}
+
+/// One recording of the guided session, ready to join the profile.
+pub struct NewTake {
+    pub samples: Vec<f32>,
+    pub sample_rate: u32,
+    pub n_daimoku: u32,
+    pub speed: Option<String>,
+    pub voice_band: Option<VoiceBand>,
+    pub noise: Option<TrainingNoise>,
 }
 
 /// Snapshot handed to the rest of the app: the trained model plus
@@ -82,6 +96,10 @@ pub struct PersonalProfile {
     /// For the slow controller (not sent to the app's screens).
     #[serde(skip)]
     pub slow_model: Option<Model>,
+    /// Partials (Hz) of the user's own bell: the counter cuts them out of
+    /// the microphone while it rings (`bell::BellFilter::set_partials`).
+    #[serde(default)]
+    pub bell: Vec<f32>,
 }
 
 impl PersonalProfile {
@@ -207,6 +225,7 @@ fn load_inner() -> ProfileInner {
     let index = ProfileIndex {
         version: 1,
         takes: kept_takes,
+        bell: index.bell.clone(),
     };
     // refresh_model below trains once, with the calibrated band if present.
     let model = base_only_fallback();
@@ -270,7 +289,54 @@ impl ProfileState {
             max_cycle_ms: g.model.max_cycle_frames as f32 * 10.0,
             model: g.model.clone(),
             slow_model: g.slow_model.clone(),
+            bell: g.index.bell.clone(),
         }
+    }
+
+    /// Adds the recordings of a guided session at once (one retraining)
+    /// and, if a bell was heard in it, remembers the bell's partials.
+    /// Returns how many recordings were added.
+    pub fn add_guided(&self, takes: Vec<NewTake>, bell: Option<Vec<f32>>) -> Result<usize, String> {
+        // analyse first, outside the lock: an unusable recording is left out
+        let usable: Vec<NewTake> = takes
+            .into_iter()
+            .filter(|t| {
+                t.n_daimoku > 0
+                    && t.sample_rate > 0
+                    && t.samples.len() as f32 / t.sample_rate as f32 >= MIN_TAKE_SECS
+                    && build_item(&t.samples, t.sample_rate, t.n_daimoku as usize, TAKE_WEIGHT).is_some()
+            })
+            .collect();
+        if usable.is_empty() && bell.as_ref().map_or(true, |b| b.is_empty()) {
+            return Err("could not find enough voiced audio in these takes".to_string());
+        }
+        let mut guard = self.guard();
+        let g = guard.as_mut().expect("loaded");
+        let added = usable.len();
+        for t in usable {
+            // never reuse an id: its WAV file would be overwritten
+            let id = g.index.takes.iter().map(|t| t.id + 1).max().unwrap_or(0);
+            if let Some(path) = take_wav_path(id) {
+                write_wav_f32(&path, &t.samples, t.sample_rate)?;
+            }
+            g.index.takes.push(TakeRecord {
+                noise: t.noise,
+                voice_band: if t.noise.is_none() { t.voice_band.and_then(VoiceBand::valid) } else { None },
+                id,
+                n_daimoku: t.n_daimoku,
+                duration_secs: t.samples.len() as f32 / t.sample_rate as f32,
+                period_ms: None,
+                created_at: Utc::now(),
+                speed: t.speed.filter(|s| matches!(s.as_str(), "slow" | "medium" | "fast")),
+            });
+        }
+        if let Some(b) = bell.filter(|b| !b.is_empty()) {
+            g.index.bell = b;
+        }
+        refresh_model(g);
+        recompute_take_periods(g);
+        write_index(&g.index)?;
+        Ok(added)
     }
 
     /// Adds a new take (raw audio + how many Daimoku it contains),
@@ -393,7 +459,8 @@ impl ProfileState {
         if let Some(dir) = takes_dir() {
             let _ = fs::remove_dir_all(&dir);
         }
-        let mut index = ProfileIndex { version: 1, takes: Vec::new() };
+        // the bell is the user's, not the recordings': it stays
+        let mut index = ProfileIndex { version: 1, takes: Vec::new(), bell: g.index.bell.clone() };
         let mut user_items = Vec::new();
         for (id, (rec, samples, sr, item)) in kept.into_iter().enumerate() {
             if let Some(path) = take_wav_path(id) {
@@ -421,7 +488,7 @@ impl ProfileState {
         if let Some(dir) = takes_dir() {
             let _ = fs::remove_dir_all(&dir);
         }
-        g.index = ProfileIndex { version: 1, takes: Vec::new() };
+        g.index = ProfileIndex { version: 1, takes: Vec::new(), bell: Vec::new() };
         g.user_items.clear();
         refresh_model(g);
         write_index(&g.index)
@@ -529,9 +596,12 @@ fn refresh_model(g: &mut ProfileInner) {
             let (samples, sr) = decode_wav(clip.wav).ok()?;
             build_item_with_band(&samples, sr, clip.n_cycles, BASE_WEIGHT, band)
         }).collect();
+        // the takes as the counter will hear them: without the user's bell
+        let bell = &g.index.bell;
         let user: Option<Vec<TrainItem>> = g.index.takes.iter().map(|take| {
             let bytes = fs::read(take_wav_path(take.id)?).ok()?;
             let (samples, sr) = decode_wav(&bytes).ok()?;
+            let samples = if bell.is_empty() { samples } else { crate::bell::without_bell(&samples, sr, bell) };
             build_item_with_band(&samples, sr, take.n_daimoku as usize, TAKE_WEIGHT, band)
         }).collect();
         if let (Some(base), Some(user)) = (base, user) {
@@ -626,6 +696,39 @@ mod tests {
         assert!(after.takes[0].period_ms.is_some());
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn guided_takes_join_the_profile_at_once_with_the_bell() {
+        let s = ProfileState::new();
+        let (samples, sr) = crate::base::decode_wav(crate::base::BASE_CLIPS[1].wav).unwrap();
+        let take = |noise| NewTake {
+            samples: samples.clone(),
+            sample_rate: sr,
+            n_daimoku: 1,
+            speed: Some("fast".to_string()),
+            voice_band: None,
+            noise,
+        };
+        let bell = vec![1875.0, 3480.0, 5456.0];
+        let added = s.add_guided(vec![take(None), take(Some(TrainingNoise::Bell))], Some(bell.clone())).expect("guided");
+        assert_eq!(added, 2);
+        let snap = s.snapshot();
+        assert_eq!(snap.n_takes_helper(), 2);
+        assert_eq!(snap.bell, bell);
+        assert_eq!(snap.takes[0].noise, None);
+        assert_eq!(snap.takes[1].noise, Some(TrainingNoise::Bell));
+        assert_eq!(snap.takes[1].speed.as_deref(), Some("fast"));
+        assert_ne!(snap.takes[0].id, snap.takes[1].id);
+        // nothing to add and no bell: refused; a bell alone is remembered
+        assert!(s.add_guided(Vec::new(), None).is_err());
+        assert_eq!(s.add_guided(Vec::new(), Some(vec![700.0, 1900.0, 3500.0])).unwrap(), 0);
+        assert_eq!(s.snapshot().bell, vec![700.0, 1900.0, 3500.0]);
+        // deleting a take keeps the bell; starting over forgets it
+        s.delete_take(snap.takes[0].id).unwrap();
+        assert_eq!(s.snapshot().bell.len(), 3);
+        s.clear().unwrap();
+        assert!(s.snapshot().bell.is_empty());
     }
 
     #[test]

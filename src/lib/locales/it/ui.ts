@@ -406,4 +406,20 @@ export default {
   'android.channelCountingText': 'Visibile mentre il contatore ascolta, anche a schermo spento.',
   'android.channelReminders': 'Promemoria',
   'android.channelRemindersText': 'Promemoria del mattino e della sera per recitare.',
+
+  // guided recording (Voice page)
+  "guide.title": "Registrazione guidata",
+  "guide.lead": "Una sola registrazione di circa due minuti. L'app ti dice cosa recitare e illumina le sillabe al tuo ritmo: seguile e fermati quando si fermano. Senza contare.",
+  "guide.tempo": "Il tuo ritmo: secondi per daimoku",
+  "guide.start": "Inizia",
+  "guide.stageOf": "Fase {i} di {n}",
+  "guide.next": "Preparati",
+  "guide.hintBell": "Suona la campana mentre reciti",
+  "guide.hintJuzu": "Strofina il juzu mentre reciti",
+  "guide.hintClean": "Solo la voce, senza altri rumori",
+  "guide.busy": "Analizzo la registrazione…",
+  "guide.review": "Ecco cosa ha sentito l'app. Togli la spunta alle fasi venute male.",
+  "guide.bellOk": "Campana riconosciuta: d'ora in poi l'app la toglie da sola mentre conta.",
+  "guide.bellNo": "Campana non riconosciuta. Suonala più forte nelle fasi con la campana e riprova.",
+  "guide.add": "Aggiungi alla tua voce",
 } satisfies Dict;

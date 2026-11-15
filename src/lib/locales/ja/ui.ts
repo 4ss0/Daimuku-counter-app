@@ -406,4 +406,20 @@ export default {
   'android.channelCountingText': 'カウンターが音声を聞いている間（画面オフ時も）表示されます。',
   'android.channelReminders': 'リマインダー',
   'android.channelRemindersText': '朝と夜の唱題のお知らせ。',
+
+  // guided recording (Voice page)
+  "guide.title": "ガイド付き録音",
+  "guide.lead": "約2分の録音を1回だけ行います。唱える内容をアプリが案内し、あなたのテンポに合わせて音節が光ります。光に合わせて唱え、止まったら止めてください。数える必要はありません。",
+  "guide.tempo": "あなたのテンポ：題目1回あたりの秒数",
+  "guide.start": "開始",
+  "guide.stageOf": "パート {i} / {n}",
+  "guide.next": "準備してください",
+  "guide.hintBell": "唱えながら鐘を鳴らしてください",
+  "guide.hintJuzu": "唱えながら数珠をすり合わせてください",
+  "guide.hintClean": "声だけで、ほかの音は立てないでください",
+  "guide.busy": "録音を解析しています…",
+  "guide.review": "アプリが聞き取った結果です。うまくいかなかったパートはチェックを外してください。",
+  "guide.bellOk": "鐘を認識しました。今後はカウント中に自動で鐘の音を取り除きます。",
+  "guide.bellNo": "鐘を認識できませんでした。鐘のパートでもう少し強く鳴らして、やり直してください。",
+  "guide.add": "声に追加",
 } satisfies Dict;

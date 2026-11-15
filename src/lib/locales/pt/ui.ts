@@ -406,4 +406,20 @@ export default {
   'android.channelCountingText': 'Visível enquanto o contador escuta, também com a tela desligada.',
   'android.channelReminders': 'Lembretes',
   'android.channelRemindersText': 'Lembretes da manhã e da noite para recitar.',
+
+  // guided recording (Voice page)
+  "guide.title": "Gravação guiada",
+  "guide.lead": "Uma única gravação de cerca de dois minutos. O app diz o que recitar e ilumina as sílabas no seu ritmo: siga-as e pare quando elas pararem. Sem contar.",
+  "guide.tempo": "Seu ritmo: segundos por daimoku",
+  "guide.start": "Começar",
+  "guide.stageOf": "Parte {i} de {n}",
+  "guide.next": "Prepare-se",
+  "guide.hintBell": "Toque o sino enquanto recita",
+  "guide.hintJuzu": "Esfregue o juzu enquanto recita",
+  "guide.hintClean": "Só a sua voz, sem outros sons",
+  "guide.busy": "Analisando a gravação…",
+  "guide.review": "Isto é o que o app ouviu. Desmarque as partes que não saíram bem.",
+  "guide.bellOk": "Sino reconhecido: a partir de agora o app o remove sozinho enquanto conta.",
+  "guide.bellNo": "Sino não reconhecido. Toque-o mais forte nas partes com sino e tente de novo.",
+  "guide.add": "Adicionar à sua voz",
 } satisfies Dict;

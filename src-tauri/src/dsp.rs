@@ -41,7 +41,16 @@ pub fn count_daimoku_with_profile(
     };
 
     let slow = profile.and_then(|p| p.slow_model.as_ref());
-    let r = count_samples_with(model, slow, samples, sample_rate);
+    // as the live counter hears it: without the user's own bell
+    let filtered;
+    let heard: &[f32] = match profile.filter(|p| !p.bell.is_empty()) {
+        Some(p) => {
+            filtered = crate::bell::without_bell(samples, sample_rate, &p.bell);
+            &filtered
+        }
+        None => samples,
+    };
+    let r = count_samples_with(model, slow, heard, sample_rate);
     let duration_secs = samples.len() as f32 / sample_rate as f32;
 
     let (phrase_count, active_duration_secs) = active_segment_stats(samples, sample_rate);

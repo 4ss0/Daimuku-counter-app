@@ -2,8 +2,21 @@ use crate::audio::RecordedAudio;
 use crate::features::{calibrate_voice, VoiceBand};
 use crate::profile::TrainingNoise;
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
+
+/// One part of a guided recording (see `TrainingStore::add_guided`): the
+/// user chanted `n` Daimoku between `start_ms` and `end_ms` of it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GuidedStage {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub n: u32,
+    /// "slow" | "medium" | "fast"
+    pub speed: Option<String>,
+    /// The noise made on purpose while chanting, if any.
+    pub noise: Option<TrainingNoise>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TrainingTakeMeta {
@@ -15,6 +28,7 @@ pub struct TrainingTakeMeta {
 }
 
 struct TrainingTake {
+    speed: Option<String>,
     noise: Option<TrainingNoise>,
     voice_band: Option<VoiceBand>,
     audio: RecordedAudio,
@@ -24,13 +38,72 @@ struct TrainingTake {
 
 pub struct TrainingStore {
     takes: Mutex<Vec<TrainingTake>>,
+    /// Partials of the bell heard in the last guided recording.
+    bell: Mutex<Vec<f32>>,
 }
 
 impl TrainingStore {
     pub fn new() -> Self {
         Self {
             takes: Mutex::new(Vec::new()),
+            bell: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Cuts a guided recording into one take per stage. The recording
+    /// starts with `NOISE_SECONDS` of silence (the room, for the voice
+    /// band of the stages without noise); the stages with a bell are also
+    /// where the bell's partials are measured. Returns the takes and how
+    /// many partials of a bell were found.
+    pub fn add_guided(&self, audio: RecordedAudio, stages: &[GuidedStage]) -> Result<(Vec<TrainingTakeMeta>, usize), String> {
+        let sr = audio.sample_rate as usize;
+        let room = sr * crate::features::NOISE_SECONDS as usize;
+        if sr < 8000 || stages.is_empty() || audio.samples.len() < room + sr / 2 {
+            return Err("calibration-too-short".into());
+        }
+        let at = |ms: u64| ((ms as usize).saturating_mul(sr) / 1000).min(audio.samples.len());
+        let mut metas = Vec::with_capacity(stages.len());
+        let mut with_bell: Vec<f32> = Vec::new();
+        for st in stages {
+            let (a, b) = (at(st.start_ms).max(room), at(st.end_ms));
+            if st.n == 0 || b < a + sr / 2 {
+                return Err("calibration-too-short".into());
+            }
+            let speed = st.speed.clone();
+            let meta = match st.noise {
+                Some(noise) => {
+                    if matches!(noise, TrainingNoise::Bell | TrainingNoise::Both) {
+                        with_bell.extend_from_slice(&audio.samples[a..b]);
+                    }
+                    // a quarter of a second before the stage, as `add_noisy`
+                    let samples = audio.samples[a.saturating_sub(sr / 4).max(room)..b].to_vec();
+                    self.add_take(RecordedAudio { samples, sample_rate: audio.sample_rate }, st.n, None, Some(noise), speed)
+                }
+                None => {
+                    // the room's silence, then the stage: what `calibrate_voice` expects
+                    let mut samples = audio.samples[..room].to_vec();
+                    samples.extend_from_slice(&audio.samples[a..b]);
+                    let (start, band) = calibrate_voice(&samples, audio.sample_rate)?;
+                    samples.drain(..start);
+                    self.add_take(RecordedAudio { samples, sample_rate: audio.sample_rate }, st.n, Some(band), None, speed)
+                }
+            };
+            metas.push(meta);
+        }
+        let bell = crate::bell::learn_partials(&with_bell, audio.sample_rate);
+        let found = bell.len();
+        *self.bell.lock().unwrap() = bell;
+        Ok((metas, found))
+    }
+
+    /// Partials of the bell heard in the last guided recording (empty: none).
+    pub fn bell(&self) -> Vec<f32> {
+        self.bell.lock().unwrap().clone()
+    }
+
+    pub fn speed(&self, index: usize) -> Result<Option<String>, String> {
+        self.takes.lock().unwrap().get(index).map(|t| t.speed.clone())
+            .ok_or_else(|| format!("training take {index} not found"))
     }
 
     pub fn add(&self, audio: RecordedAudio, expected_daimoku_count: u32) -> TrainingTakeMeta {
@@ -66,11 +139,16 @@ impl TrainingStore {
     }
 
     fn add_with_band(&self, audio: RecordedAudio, expected_daimoku_count: u32, voice_band: Option<VoiceBand>, noise: Option<TrainingNoise>) -> TrainingTakeMeta {
+        self.add_take(audio, expected_daimoku_count, voice_band, noise, None)
+    }
+
+    fn add_take(&self, audio: RecordedAudio, expected_daimoku_count: u32, voice_band: Option<VoiceBand>, noise: Option<TrainingNoise>, speed: Option<String>) -> TrainingTakeMeta {
         let mut takes = self.takes.lock().unwrap();
         let id = takes.len();
         let created_at = Utc::now();
         let meta = meta_for(id, &audio, expected_daimoku_count, created_at);
         takes.push(TrainingTake {
+            speed,
             noise,
             voice_band,
             audio,
@@ -94,6 +172,7 @@ impl TrainingStore {
         let mut takes = self.takes.lock().unwrap();
         let count = takes.len();
         takes.clear();
+        self.bell.lock().unwrap().clear();
         count
     }
 
@@ -166,6 +245,31 @@ mod tests {
         assert_eq!(list[0].duration_ms, 40_000);
         assert_eq!(list[1].expected_daimoku_count, 5);
         assert_eq!(list[1].duration_ms, 20_000);
+    }
+
+    #[test]
+    fn a_guided_recording_is_cut_into_its_stages() {
+        let store = TrainingStore::new();
+        let sr = 16_000u32;
+        // 3 s of silence, then a tone standing in for the voice
+        let mut samples = vec![0.0f32; 3 * sr as usize];
+        samples.extend((0..20 * sr as usize).map(|i| 0.2 * (2.0 * std::f32::consts::PI * 220.0 * i as f32 / sr as f32).sin()));
+        let stage = |start_ms, end_ms, n, noise| GuidedStage { start_ms, end_ms, n, speed: Some("slow".into()), noise };
+        let stages = [stage(4_000, 10_000, 3, Some(TrainingNoise::Bell)), stage(12_000, 18_000, 3, None)];
+        let (metas, bell) = store.add_guided(RecordedAudio { samples, sample_rate: sr }, &stages).expect("guided");
+        assert_eq!(metas.len(), 2);
+        assert_eq!(bell, 0, "a plain tone is not a bell");
+        // the noisy stage keeps 0.25 s before it; the clean one 0.25 s of the room
+        assert_eq!(metas[0].duration_ms, 6_250);
+        assert_eq!(metas[1].duration_ms, 6_250);
+        assert_eq!(metas[0].expected_daimoku_count, 3);
+        assert_eq!(store.noise(0).unwrap(), Some(TrainingNoise::Bell));
+        assert_eq!(store.noise(1).unwrap(), None);
+        assert!(store.voice_band(1).unwrap().is_some());
+        assert_eq!(store.speed(1).unwrap().as_deref(), Some("slow"));
+        // a stage too short to hold anything is an error, nothing is added
+        let short = [stage(4_000, 4_100, 3, None)];
+        assert!(store.add_guided(RecordedAudio { samples: vec![0.0; 10 * sr as usize], sample_rate: sr }, &short).is_err());
     }
 
     #[test]

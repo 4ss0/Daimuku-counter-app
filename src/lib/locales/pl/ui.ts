@@ -406,4 +406,20 @@ export default {
   'android.channelCountingText': 'Widoczne, gdy licznik słucha, także przy wyłączonym ekranie.',
   'android.channelReminders': 'Przypomnienia',
   'android.channelRemindersText': 'Poranne i wieczorne przypomnienia o recytacji.',
+
+  // guided recording (Voice page)
+  "guide.title": "Nagranie z przewodnikiem",
+  "guide.lead": "Jedno nagranie trwające około dwóch minut. Aplikacja mówi, co recytować, i podświetla sylaby w twoim tempie: podążaj za nimi i przestań, gdy się zatrzymają. Bez liczenia.",
+  "guide.tempo": "Twoje tempo: sekundy na daimoku",
+  "guide.start": "Rozpocznij",
+  "guide.stageOf": "Część {i} z {n}",
+  "guide.next": "Przygotuj się",
+  "guide.hintBell": "Uderzaj w dzwonek podczas recytacji",
+  "guide.hintJuzu": "Pocieraj juzu podczas recytacji",
+  "guide.hintClean": "Tylko twój głos, bez innych dźwięków",
+  "guide.busy": "Analizuję nagranie…",
+  "guide.review": "To usłyszała aplikacja. Odznacz części, które się nie udały.",
+  "guide.bellOk": "Dzwonek rozpoznany: od teraz aplikacja sama usuwa go podczas liczenia.",
+  "guide.bellNo": "Dzwonek nierozpoznany. Uderz mocniej w częściach z dzwonkiem i spróbuj ponownie.",
+  "guide.add": "Dodaj do swojego głosu",
 } satisfies Dict;

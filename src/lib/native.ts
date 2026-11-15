@@ -300,13 +300,13 @@ export function autosaveOff() {
   safe((b) => b.autosaveOff?.());
 }
 
-// The screen is kept on while counting (if chosen in Settings) and while
-// Gongyo plays. Each asks under its own name, so that one letting go does
+// The screen is kept on while counting (if chosen in Settings), while
+// Gongyo plays and during a guided voice recording. Each asks under its own name, so that one letting go does
 // not turn the screen off under the other.
-const awake = new Set<'counting' | 'gongyo'>();
+const awake = new Set<'counting' | 'gongyo' | 'voice'>();
 
 /** Keeps the screen on (Android) for `reason`, or stops keeping it for it. */
-export function keepScreen(reason: 'counting' | 'gongyo', on: boolean) {
+export function keepScreen(reason: 'counting' | 'gongyo' | 'voice', on: boolean) {
   if (on) awake.add(reason);
   else awake.delete(reason);
   safe((b) => b.keepScreenOn(awake.size > 0));

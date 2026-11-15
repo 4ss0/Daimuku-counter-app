@@ -406,4 +406,20 @@ export default {
   'android.channelCountingText': '카운터가 듣는 동안 표시됩니다(화면이 꺼져 있어도).',
   'android.channelReminders': '리마인더',
   'android.channelRemindersText': '아침과 저녁 창제 알림.',
+
+  // guided recording (Voice page)
+  "guide.title": "안내 녹음",
+  "guide.lead": "약 2분짜리 녹음 한 번이면 됩니다. 앱이 무엇을 부를지 알려 주고 내 속도에 맞춰 음절에 불이 들어옵니다. 따라 부르다가 멈추면 멈추세요. 셀 필요가 없습니다.",
+  "guide.tempo": "내 속도: 제목 한 번당 초",
+  "guide.start": "시작",
+  "guide.stageOf": "{n}단계 중 {i}단계",
+  "guide.next": "준비하세요",
+  "guide.hintBell": "부르면서 종을 치세요",
+  "guide.hintJuzu": "부르면서 염주를 비비세요",
+  "guide.hintClean": "다른 소리 없이 목소리만 내세요",
+  "guide.busy": "녹음을 분석하는 중…",
+  "guide.review": "앱이 들은 결과입니다. 잘못된 단계는 선택을 해제하세요.",
+  "guide.bellOk": "종을 인식했습니다. 이제부터 세는 동안 앱이 종소리를 스스로 제거합니다.",
+  "guide.bellNo": "종을 인식하지 못했습니다. 종이 있는 단계에서 더 세게 치고 다시 시도하세요.",
+  "guide.add": "내 목소리에 추가",
 } satisfies Dict;

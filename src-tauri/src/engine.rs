@@ -1201,10 +1201,13 @@ impl Engine {
             }
             let mut spans: Vec<u32> = class.iter().map(|e| e.2).collect();
             spans.sort_unstable();
-            // the lower median: of two slow ones, the longer (the base
-            // controller's end of a slow one is only an estimate) made
-            // every step too long for a shorter Daimoku
-            let p = spans[(spans.len() - 1) / 2] as f32;
+            // slow: the lower median. Of two slow ones, the longer (the base
+            // controller's end of a slow one is only an estimate) made every
+            // step too long for a shorter Daimoku. Fast: the upper median, as
+            // before v0.6.1: with two anchors the shorter one made every step
+            // too short and the walk under bell and beads stopped at once
+            // (bench noisy1 with the base model: 16 -> 4 of 17).
+            let p = spans[if slow { (spans.len() - 1) / 2 } else { spans.len() / 2 }] as f32;
             let typical: Vec<&&(u64, u64, u32, Source, bool)> = class.iter().filter(|e| (0.75..=1.33).contains(&(e.2 as f32 / p))).collect();
             if typical.len() < need {
                 continue;

@@ -203,6 +203,68 @@ Daimoku, so these are not all errors).
   With the filter the bell changes nothing: the counts are those of the
   filter alone, which moves the session of 56 by one either way.
 
+- **After v1.0.0, the noise walk and the user's own bell.** The full bench
+  had not been run since v0.6.0 (its audio is not in git). Run on v1.0.0:
+  `new A` noisy1 4/17 (16/17 up to v0.5.x), everything else as before.
+  1. `check_noise`: v0.6.1 made the period of the walk the lower median of
+     the anchors, for two slow anchors. With two fast anchors it is the
+     shorter one, every step is too short and the walk under bell and beads
+     stops at once. Now: lower median for slow, upper (as before v0.6.1)
+     for fast.
+
+     | | v1.0.0 | now |
+     |---|---|---|
+     | new A | TP 59/59, noisy1 4/17, \|err\| 15, strict FP 1 | noisy1 16/17, \|err\| 3, rest identical |
+     | new P3 | TP 59/59, noisy1 16/17, \|err\| 3, strict FP 3 | identical |
+
+     Not checked on the two sessions of v0.6.x (56 Daimoku, 26 s): their
+     audio was not available.
+  2. The user's own bell (`bell.rs`). A bell that is not filtered destroys
+     the count (below, "no filter"). `learn_partials` finds its partials in
+     a recording where it rings, the voice chanting over it: narrow lines
+     20 dB above the sound around them, not harmonics of one pitch (a held
+     note of the voice). `BellFilter::set_partials` then cuts them with the
+     same notches as the app's bells, by itself: while at least two
+     partials above 1 kHz hold 9 dB more than the bands 9% to their sides,
+     and for 3 s after. The partials are learned by the guided recording of
+     the Voice page from its stages with the bell, kept in the profile
+     index, applied to the microphone, to the takes in training and to
+     their validation.
+
+     `examples/bellauto learn`: noisy1, r29, r36, r36_pre, wa0929 hold the
+     same real bell (680.8, 1874.8, 3480.4, 5456.3 Hz in noisy1; the app's
+     "high" bell copies it without the first); nothing is found in the
+     other 12 bench files, the 11 built-in clips, 5 PC takes and 19
+     recordings of other voices.
+
+     `examples/bellauto count <wav> learn` (base model):
+
+     | | no filter | learned + heard |
+     |---|---|---|
+     | app bells mixed into r36, pc0929, c28, live51, r29 (high/medium, 0.5x/1.5x the voice, every 8 s; 428 Daimoku) | 337 | 416 |
+     | r36 + high bell 1.5x | 0/13 | 13/13 |
+     | noisy1 (real bell and beads), total / by B | 16 / 3 | 16 / 9 |
+     | r29, r36, wa0929 (real bell here and there) | 13, 13, 150 | 13, 13, 150 |
+     | files without a bell | | filter never on, counts identical |
+
+     Measured and not adopted: the notches always on with an unchanged
+     model (r36 13 -> 4). Weak spot: a set that misses one of the strong
+     partials can do worse than no filter (noisy1 with only 3480+5456: 7;
+     with only 1875+5456: 12; with the three above 1 kHz: 16).
+  3. Guided recording (Voice page): one recording cut into takes
+     (`TrainingStore::add_guided`, `ProfileState::add_guided`), the stages
+     timed by the page on the engine's clock while it lights up the
+     syllables at the user's pace. Finding the number of Daimoku from the
+     audio instead was measured and is not reliable enough: envelope tempo
+     19/31 takes exact; alignment as n phrases with a penalty on irregular
+     lengths 12/19 (0/4 with beads or bell).
+  4. Measured, nothing changed: training on copies of clean takes mixed
+     with the user's beads (as the "with noise" takes do, weight <= 0.5)
+     raises what B recognises (wa0929 140 -> 147) but counts a truncated
+     phrase (neg/cut_kyo_1017 0 -> 1) and makes noisy1 unstable (16 ->
+     7..16 with the weights). The real "with noise" takes were not
+     available: open.
+
 ## Known weaknesses / open questions
 
 - Tuned on few recordings, one voice; 59 hand-checked phrases only.
